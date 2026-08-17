@@ -15,6 +15,10 @@ _PUBLIC_RESULT_KEYS = (
     "stats",
     "anchors",
     "warnings",
+    "id",
+    "label",
+    "constructions",
+    "variants",
     "overlay_data_uri",
     "reconstruction_data_uri",
 )
@@ -34,7 +38,18 @@ def reconstruct_for_web(
     """Run the normal reconstructor and omit native image arrays from the result."""
     settings = Settings.from_mapping(dict(settings_mapping or {}))
     result = reconstruct(image_bytes, settings=settings)
-    return {key: result[key] for key in _PUBLIC_RESULT_KEYS}
+    optional_defaults = {
+        "id": "strict",
+        "label": "严格 22.5°",
+        "constructions": [],
+        "variants": [],
+    }
+    return {
+        key: result.get(key, optional_defaults[key])
+        if key in optional_defaults
+        else result[key]
+        for key in _PUBLIC_RESULT_KEYS
+    }
 
 
 def reconstruct_for_web_json(image_bytes: bytes, settings_json: str) -> str:

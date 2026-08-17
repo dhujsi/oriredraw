@@ -25,6 +25,30 @@ class ReconstructionSmokeTest(unittest.TestCase):
         self.assertEqual(stats["analysis_size_used"], 150)
         self.assertFalse(stats["source_upscaled"])
 
+    def test_four_corner_photo_correction_rectifies_to_square(self):
+        image = np.full((260, 340, 3), 255, np.uint8)
+        corners = np.array(
+            [[48.0, 31.0], [288.0, 52.0], [310.0, 229.0], [30.0, 214.0]],
+            dtype=np.float32,
+        )
+        cv2.polylines(image, [corners.astype(np.int32)], True, (0, 0, 0), 2)
+        cv2.line(
+            image,
+            tuple(corners[0].astype(int)),
+            tuple(corners[2].astype(int)),
+            (0, 0, 255),
+            2,
+        )
+        normalized = (
+            corners / np.array([image.shape[1] - 1, image.shape[0] - 1])
+        ).tolist()
+        square, _, stats = prepare_paper_square(
+            image, 512, paper_corners=normalized
+        )
+        self.assertEqual(square.shape[0], square.shape[1])
+        self.assertEqual(stats["paper_transform"], "four_corner_perspective")
+        self.assertFalse(stats["source_upscaled"])
+
     def test_cp_export_uses_oriedita_downward_y_coordinates(self):
         rows = edges_to_cp(
             [Edge(np.array([0.0, 0.0]), np.array([511.0, 511.0]), 4)],

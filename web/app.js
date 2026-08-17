@@ -13,12 +13,29 @@ const anchorCount = document.querySelector('#anchor-count');
 const downloadButton = document.querySelector('#download');
 const submitButton = document.querySelector('#submit-button');
 const engineStatus = document.querySelector('#engine-status');
+const paperTool = document.querySelector('#paper-tool');
+const paperModeLabel = document.querySelector('#paper-mode-label');
+const cornerToggle = document.querySelector('#corner-toggle');
+const cornerEditor = document.querySelector('#corner-editor');
+const cornerCanvas = document.querySelector('#corner-canvas');
+const cornerReset = document.querySelector('#corner-reset');
+const angleMode = document.querySelector('#angle-mode');
+const angleInput = document.querySelector('#angle');
+const versionTabs = document.querySelector('#version-tabs');
+const constructionDetails = document.querySelector('#construction-details');
+const constructionCount = document.querySelector('#construction-count');
+const constructionList = document.querySelector('#construction-list');
 
 const worker = new Worker('./pyodide-worker.js', { type: 'module' });
 const pending = new Map();
 let requestId = 0;
 let currentResult = null;
 let engineReady = false;
+let perspectiveEnabled = false;
+let sourceBitmap = null;
+let cornerPoints = [];
+let draggedCorner = -1;
+let currentVariant = null;
 
 function callWorker(type, payload = {}, transfer = []) {
   const id = ++requestId;
@@ -70,9 +87,108 @@ function bindRange(selector, outputSelector, format) {
   update();
 }
 
-bindRange('#angle', '#angle-value', value => `${value.toFixed(1)}°`);
 bindRange('#support', '#support-value', value => `${Math.round(value * 100)}%`);
 bindRange('#algebraic', '#algebraic-value', value => `${value.toFixed(1)}px`);
+
+function updateAngleControl() {
+  const automatic = angleMode.value === 'auto';
+  angleInput.classList.toggle('hidden', automatic);
+  document.querySelector('#angle-value').textContent = automatic
+    ? '自动'
+    : `${Number(angleInput.value).toFixed(1)}°`;
+}
+angleMode.addEventListener('change', updateAngleControl);
+angleInput.addEventListener('input', updateAngleControl);
+updateAngleControl();
+
+function resetCornerPoints() {
+  cornerPoints = [[0.03, 0.03], [0.97, 0.03], [0.97, 0.97], [0.03, 0.97]];
+  drawCornerEditor();
+}
+
+function drawCornerEditor() {
+  if (!sourceBitmap) return;
+  const context = cornerCanvas.getContext('2d');
+  context.clearRect(0, 0, cornerCanvas.width, cornerCanvas.height);
+  context.drawImage(sourceBitmap, 0, 0, cornerCanvas.width, cornerCanvas.height);
+  const points = cornerPoints.map(([x, y]) => [x * cornerCanvas.width, y * cornerCanvas.height]);
+  context.save();
+  context.strokeStyle = '#c7ff2f';
+  context.lineWidth = Math.max(2, cornerCanvas.width / 300);
+  context.shadowColor = 'rgba(0,0,0,.65)';
+  context.shadowBlur = 3;
+  context.beginPath();
+  points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
+  context.closePath();
+  context.stroke();
+  points.forEach(([x, y], index) => {
+    context.beginPath();
+    context.fillStyle = index === draggedCorner ? '#171714' : '#c7ff2f';
+    context.arc(x, y, Math.max(7, cornerCanvas.width / 65), 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#171714';
+    context.stroke();
+    context.fillStyle = index === draggedCorner ? '#c7ff2f' : '#171714';
+    context.font = `700 ${Math.max(9, cornerCanvas.width / 58)}px ui-monospace`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(String(index + 1), x, y);
+  });
+  context.restore();
+}
+
+async function prepareCornerEditor(file) {
+  sourceBitmap?.close?.();
+  sourceBitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 900 / Math.max(sourceBitmap.width, sourceBitmap.height));
+  cornerCanvas.width = Math.max(1, Math.round(sourceBitmap.width * scale));
+  cornerCanvas.height = Math.max(1, Math.round(sourceBitmap.height * scale));
+  resetCornerPoints();
+  paperTool.classList.remove('hidden');
+}
+
+function pointerPosition(event) {
+  const box = cornerCanvas.getBoundingClientRect();
+  return [
+    (event.clientX - box.left) / box.width,
+    (event.clientY - box.top) / box.height,
+  ];
+}
+
+cornerCanvas.addEventListener('pointerdown', event => {
+  const [x, y] = pointerPosition(event);
+  draggedCorner = cornerPoints.reduce((best, point, index) => {
+    const distance = Math.hypot(point[0] - x, point[1] - y);
+    return distance < best.distance ? { index, distance } : best;
+  }, { index: -1, distance: Infinity }).index;
+  cornerCanvas.setPointerCapture(event.pointerId);
+  cornerPoints[draggedCorner] = [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
+  drawCornerEditor();
+});
+cornerCanvas.addEventListener('pointermove', event => {
+  if (draggedCorner < 0) return;
+  const [x, y] = pointerPosition(event);
+  cornerPoints[draggedCorner] = [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
+  drawCornerEditor();
+});
+function releaseCorner(event) {
+  if (draggedCorner < 0) return;
+  draggedCorner = -1;
+  try { cornerCanvas.releasePointerCapture(event.pointerId); } catch (_) { /* already released */ }
+  drawCornerEditor();
+}
+cornerCanvas.addEventListener('pointerup', releaseCorner);
+cornerCanvas.addEventListener('pointercancel', releaseCorner);
+
+cornerToggle.addEventListener('click', () => {
+  perspectiveEnabled = !perspectiveEnabled;
+  cornerEditor.classList.toggle('hidden', !perspectiveEnabled);
+  cornerToggle.classList.toggle('active', perspectiveEnabled);
+  cornerToggle.textContent = perspectiveEnabled ? '已启用四角校正' : '拍照图：调整四角';
+  paperModeLabel.textContent = perspectiveEnabled ? '按四个铆钉做透视还原' : '自动寻找并裁切';
+  if (perspectiveEnabled) drawCornerEditor();
+});
+cornerReset.addEventListener('click', resetCornerPoints);
 
 function selectFile(file) {
   if (!file) return;
@@ -88,11 +204,23 @@ function selectFile(file) {
   transfer.items.add(file);
   input.files = transfer.files;
   fileName.textContent = file.name;
+  prepareSelectedImage(file);
 }
 
 input.addEventListener('change', () => {
-  fileName.textContent = input.files[0]?.name || '尚未选择文件';
+  const file = input.files[0];
+  fileName.textContent = file?.name || '尚未选择文件';
+  if (file) prepareSelectedImage(file);
 });
+
+function prepareSelectedImage(file) {
+  perspectiveEnabled = false;
+  cornerEditor.classList.add('hidden');
+  cornerToggle.classList.remove('active');
+  cornerToggle.textContent = '拍照图：调整四角';
+  paperModeLabel.textContent = '自动寻找并裁切';
+  prepareCornerEditor(file).catch(() => showError('无法读取图片预览。'));
+}
 
 for (const eventName of ['dragenter', 'dragover']) {
   dropZone.addEventListener(eventName, event => {
@@ -122,9 +250,13 @@ uploadForm.addEventListener('submit', async event => {
     const file = input.files[0];
     const buffer = await file.arrayBuffer();
     const settings = {
-      angle_tolerance_deg: Number(document.querySelector('#angle').value),
+      angle_tolerance_mode: angleMode.value,
+      angle_tolerance_deg: Number(angleInput.value),
       output_support: Number(document.querySelector('#support').value),
       algebraic_snap_px: Number(document.querySelector('#algebraic').value),
+      mv_mode: document.querySelector('#mv-mode').value,
+      construction_variants: document.querySelector('#construction-variants').checked,
+      paper_corners: perspectiveEnabled ? cornerPoints : null,
     };
     const data = await callWorker('reconstruct', { buffer, settings }, [buffer]);
     currentResult = data;
@@ -146,11 +278,32 @@ function showError(message) {
 }
 
 function renderResult(data) {
-  preview.src = data.overlay_data_uri;
-  preview.dataset.overlay = data.overlay_data_uri;
-  preview.dataset.clean = data.reconstruction_data_uri;
+  currentVariant = data;
+  renderVersion(data, data);
+  const versions = [data, ...(data.variants || [])];
+  versionTabs.classList.toggle('hidden', versions.length < 2);
+  versionTabs.innerHTML = versions.map((version, index) =>
+    `<button type="button" role="tab" data-version="${index}" class="${index === 0 ? 'active' : ''}" aria-selected="${index === 0}">${escapeHtml(version.label || (index ? `备选 ${index}` : '严格 22.5°'))}</button>`
+  ).join('');
+  versionTabs.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+    versionTabs.querySelectorAll('button').forEach(item => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    currentVariant = versions[Number(button.dataset.version)];
+    renderVersion(currentVariant, data);
+  }));
+  resultContent.classList.remove('hidden');
+}
 
-  warnings.innerHTML = data.warnings.map(message => `<p>${escapeHtml(message)}</p>`).join('');
+function renderVersion(version, root) {
+  preview.src = version.overlay_data_uri;
+  preview.dataset.overlay = version.overlay_data_uri;
+  preview.dataset.clean = version.reconstruction_data_uri;
+
+  warnings.innerHTML = (version.warnings || root.warnings || []).map(message => `<p>${escapeHtml(message)}</p>`).join('');
+  const data = version.stats ? version : root;
   const values = [
     ['可构造射线', data.stats.constructible_rays ?? data.stats.exact_rays],
     ['初始种子射线', data.stats.construction_seed_rays ?? 0],
@@ -173,8 +326,9 @@ function renderResult(data) {
     `<div><strong>${escapeHtml(value ?? 0)}</strong><span>${label}</span></div>`
   ).join('');
 
-  anchorCount.textContent = `${data.anchors.length} 条`;
-  anchorTable.innerHTML = data.anchors.slice(0, 120).map(anchor => `
+  const anchors = root.anchors || [];
+  anchorCount.textContent = `${anchors.length} 条`;
+  anchorTable.innerHTML = anchors.slice(0, 120).map(anchor => `
     <div>
       <span>${escapeHtml(anchor.source || anchor.side)}</span>
       <code>${escapeHtml(anchor.expression)}</code>
@@ -182,7 +336,12 @@ function renderResult(data) {
       <small>误差 ${Number(anchor.snap_error_px).toFixed(2)}px</small>
     </div>
   `).join('');
-  resultContent.classList.remove('hidden');
+  const constructions = version.constructions || [];
+  constructionDetails.classList.toggle('hidden', constructions.length === 0);
+  constructionCount.textContent = `${constructions.length} 条`;
+  constructionList.innerHTML = constructions.map(item => `
+    <div><strong>${escapeHtml(item.label)}</strong><code>${escapeHtml(item.expression)}</code><small>证据 ${Math.round(Number(item.support) * 100)}%</small></div>
+  `).join('');
 }
 
 document.querySelectorAll('.view-tabs button').forEach(button => {
@@ -197,13 +356,14 @@ document.querySelectorAll('.view-tabs button').forEach(button => {
 });
 
 downloadButton.addEventListener('click', () => {
-  if (!currentResult) return;
+  if (!currentResult || !currentVariant) return;
   const sourceName = input.files[0]?.name?.replace(/\.[^.]+$/, '') || 'reconstructed';
-  const blob = new Blob([currentResult.cp], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([currentVariant.cp], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${sourceName}.cp`;
+  const suffix = currentVariant.id && currentVariant.id !== 'strict' ? `-${currentVariant.id}` : '';
+  link.download = `${sourceName}${suffix}.cp`;
   link.click();
   URL.revokeObjectURL(url);
 });

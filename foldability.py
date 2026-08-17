@@ -115,7 +115,8 @@ def _side_little_big_little_passes(
                 None if ray["boundary"] else int(ray["line_type"]),
             )
             for ray in rays
-        ]
+        ],
+        key=lambda item: item[0],
     )
     if len(items) == 2:
         return items[0][1] is None and items[1][1] is None

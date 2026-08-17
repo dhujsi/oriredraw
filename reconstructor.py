@@ -23,7 +23,11 @@ class Settings:
     # Detection tolerance only: every accepted output ray is still snapped to
     # an exact multiple of 22.5 degrees. Short raster strokes need more room
     # than long strokes when their pixel endpoints are rounded.
-    angle_tolerance_deg: float = 6.0
+    # ``auto`` derives a raster admission gate from stroke width and observed
+    # segment length.  This is never a construction-angle tolerance: accepted
+    # strict rays are still replaced by exact multiples of 22.5 degrees.
+    angle_tolerance_mode: str = "auto"
+    angle_tolerance_deg: float = 3.0
     hough_threshold: int = 9
     min_hough_length_px: int = 5
     max_hough_gap_px: int = 2
@@ -36,6 +40,13 @@ class Settings:
     output_support: float = 0.58
     min_run_length_px: float = 5.0
     endpoint_snap_px: float = 6.0
+    # Optional normalized source-image points in TL, TR, BR, BL order.  They
+    # are supplied by the browser's four-rivet photo correction tool.
+    paper_corners: list[list[float]] | None = None
+    # Low-frequency exact constructions are returned as separate variants;
+    # the strict 22.5-degree result remains the default export.
+    construction_variants: bool = True
+    mv_mode: str = "auto"
 
     @classmethod
     def from_mapping(cls, values: dict) -> "Settings":
@@ -51,6 +62,26 @@ class Settings:
         for name, converter in converters.items():
             if name in values and values[name] not in (None, ""):
                 setattr(result, name, converter(values[name]))
+        if values.get("angle_tolerance_mode") in {"auto", "manual"}:
+            result.angle_tolerance_mode = str(values["angle_tolerance_mode"])
+        if values.get("mv_mode") in {"auto", "color", "monochrome"}:
+            result.mv_mode = str(values["mv_mode"])
+        raw_corners = values.get("paper_corners")
+        if raw_corners not in (None, "", []):
+            if isinstance(raw_corners, str):
+                import json
+
+                raw_corners = json.loads(raw_corners)
+            result.paper_corners = [
+                [float(point[0]), float(point[1])] for point in raw_corners
+            ]
+        raw_variants = values.get("construction_variants")
+        if raw_variants is not None:
+            result.construction_variants = (
+                raw_variants
+                if isinstance(raw_variants, bool)
+                else str(raw_variants).lower() not in {"0", "false", "off", "no"}
+            )
         result.angle_tolerance_deg = min(6.0, max(0.5, result.angle_tolerance_deg))
         result.atomic_support = min(0.95, max(0.35, result.atomic_support))
         result.run_support = min(0.95, max(0.30, result.run_support))
@@ -131,6 +162,18 @@ class Edge:
     end: np.ndarray
     line_type: int
     support: float = 1.0
+
+
+@dataclass
+class ConstructionProposal:
+    kind: str
+    start: np.ndarray
+    end: np.ndarray
+    support: float
+    continuous_run: float
+    novel_coverage: float
+    expression: str
+    label: str
 
 
 @dataclass
@@ -390,8 +433,75 @@ def _paper_bbox(image: np.ndarray) -> tuple[int, int, int, int]:
 def prepare_paper_square(
     image: np.ndarray,
     maximum_analysis_size: int = 512,
+    paper_corners: list[list[float]] | None = None,
 ) -> tuple[np.ndarray, tuple[int, int, int, int], dict]:
     """Crop and square the paper without inventing higher raster resolution."""
+    if paper_corners is not None:
+        points = np.asarray(paper_corners, dtype=np.float32)
+        if points.shape != (4, 2) or not np.all(np.isfinite(points)):
+            raise ReconstructionError("四角校正点格式无效；需要左上、右上、右下、左下四点。")
+        if float(np.max(np.abs(points))) <= 1.000001:
+            points = points * np.array(
+                [image.shape[1] - 1, image.shape[0] - 1], dtype=np.float32
+            )
+        contour = points.reshape((-1, 1, 2))
+        if not cv2.isContourConvex(contour):
+            raise ReconstructionError("四个铆钉必须按左上、右上、右下、左下围成凸四边形。")
+        area = abs(float(cv2.contourArea(contour)))
+        if area < float(image.shape[0] * image.shape[1]) * 0.015:
+            raise ReconstructionError("四角圈出的纸张区域太小，请把铆钉放到纸张四角。")
+        side_lengths = [
+            float(np.linalg.norm(points[(index + 1) % 4] - points[index]))
+            for index in range(4)
+        ]
+        native_paper_size = int(
+            round(
+                max(
+                    (side_lengths[0] + side_lengths[2]) / 2.0,
+                    (side_lengths[1] + side_lengths[3]) / 2.0,
+                )
+            )
+        )
+        if native_paper_size < 60 or min(side_lengths) < 30.0:
+            raise ReconstructionError("四角圈出的纸张分辨率不足。")
+        analysis_size = min(maximum_analysis_size, native_paper_size)
+        maximum = float(analysis_size - 1)
+        destination = np.array(
+            [[0.0, 0.0], [maximum, 0.0], [maximum, maximum], [0.0, maximum]],
+            dtype=np.float32,
+        )
+        transform = cv2.getPerspectiveTransform(points, destination)
+        square = cv2.warpPerspective(
+            image,
+            transform,
+            (analysis_size, analysis_size),
+            flags=(
+                cv2.INTER_AREA
+                if native_paper_size > analysis_size
+                else cv2.INTER_LINEAR
+            ),
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        x0 = max(0, int(math.floor(float(np.min(points[:, 0])))))
+        y0 = max(0, int(math.floor(float(np.min(points[:, 1])))))
+        x1 = min(
+            image.shape[1] - 1,
+            int(math.ceil(float(np.max(points[:, 0])))),
+        )
+        y1 = min(
+            image.shape[0] - 1,
+            int(math.ceil(float(np.max(points[:, 1])))),
+        )
+        return square, (x0, y0, x1, y1), {
+            "native_paper_size": native_paper_size,
+            "analysis_size_used": analysis_size,
+            "source_upscaled": False,
+            "paper_transform": "four_corner_perspective",
+            "paper_corners_source_px": [
+                [round(float(value), 4) for value in point] for point in points
+            ],
+        }
+
     x0, y0, x1, y1 = _paper_bbox(image)
     crop = image[y0 : y1 + 1, x0 : x1 + 1]
     native_paper_size = max(crop.shape[:2])
@@ -409,6 +519,7 @@ def prepare_paper_square(
         "native_paper_size": native_paper_size,
         "analysis_size_used": analysis_size,
         "source_upscaled": False,
+        "paper_transform": "automatic_axis_aligned_crop",
     }
 
 
@@ -417,6 +528,23 @@ def _closest_orientation(angle: float) -> tuple[int, float]:
     errors = [min(abs(angle - target), math.pi - abs(angle - target)) for target in ALLOWED_ANGLES]
     index = int(np.argmin(errors))
     return index, errors[index]
+
+
+def _angle_admission_tolerance_deg(
+    length: float, settings: Settings
+) -> float:
+    """Raster-only direction gate; exact construction happens afterwards."""
+
+    if settings.angle_tolerance_mode == "manual":
+        return settings.angle_tolerance_deg
+    # Endpoint quantisation and a thick/blurred ridge can rotate a short pixel
+    # segment even when the underlying crease is exact.  Long observations are
+    # held much more tightly.  Four-corner rectification happens before this.
+    endpoint_uncertainty = max(0.8, settings.evidence_distance_px)
+    estimated = math.degrees(
+        math.atan2(2.0 * endpoint_uncertainty, max(3.0, float(length)))
+    )
+    return float(np.clip(estimated, 0.65, 3.0))
 
 
 def _boundary_hits(offset: float, orientation: int, size: int) -> list[tuple[float, np.ndarray, str]]:
@@ -458,7 +586,7 @@ def _extract_hough_clusters(ink: np.ndarray, settings: Settings) -> tuple[list[t
         length = math.hypot(dx, dy)
         orientation, angle_error = _closest_orientation(math.atan2(dy, dx))
         angle_error_deg = math.degrees(angle_error)
-        if angle_error_deg > settings.angle_tolerance_deg:
+        if angle_error_deg > _angle_admission_tolerance_deg(length, settings):
             rejected_angle += 1
             continue
         theta = ALLOWED_ANGLES[orientation]
@@ -756,7 +884,9 @@ def _vertex_candidates(ink: np.ndarray, settings: Settings) -> tuple[np.ndarray,
     rejected = 0
     for x1, y1, x2, y2 in lines[:, 0]:
         orientation, error = _closest_orientation(math.atan2(float(y2 - y1), float(x2 - x1)))
-        if math.degrees(error) > settings.angle_tolerance_deg:
+        if math.degrees(error) > _angle_admission_tolerance_deg(
+            math.hypot(float(x2 - x1), float(y2 - y1)), settings
+        ):
             rejected += 1
             continue
         endpoints.extend(([float(x1), float(y1)], [float(x2), float(y2)]))
@@ -1063,7 +1193,9 @@ def _lsd_vertex_candidates(
             orientation, error = _closest_orientation(
                 math.atan2(float(end[1] - start[1]), float(end[0] - start[0]))
             )
-            if length < 3.0 or math.degrees(error) > settings.angle_tolerance_deg:
+            if length < 3.0 or math.degrees(error) > _angle_admission_tolerance_deg(
+                length, settings
+            ):
                 rejected += 1
                 continue
             theta = ALLOWED_ANGLES[orientation]
@@ -4010,7 +4142,8 @@ def _reconstruct_lsd_rays(
                     math.atan2(y2 - y1, x2 - x1)
                 )
                 if (
-                    math.degrees(error) > settings.angle_tolerance_deg
+                    math.degrees(error)
+                    > _angle_admission_tolerance_deg(length, settings)
                     or length < 3.0
                 ):
                     rejected_angle += 1
@@ -7137,6 +7270,500 @@ def _recover_camv_supported_paths(
     }
 
 
+def _discover_exact_construction_proposals(
+    square: np.ndarray,
+    ink: np.ndarray,
+    edges: list[Edge],
+    settings: Settings,
+) -> tuple[dict[str, list[ConstructionProposal]], dict]:
+    """Explain residual strokes with exact, auditable construction rules.
+
+    The strict graph is rasterised first and removed from the source ink.  A
+    fallback rule is considered only near a remaining observed stroke.  This
+    keeps the construction grammar exact without enumerating arbitrary rays.
+    """
+
+    size = ink.shape[0]
+    maximum = float(size - 1)
+    base = _planarize_edges(list(edges))
+    base_mask = np.zeros_like(ink)
+    for edge in base:
+        cv2.line(
+            base_mask,
+            tuple(np.rint(edge.start).astype(int)),
+            tuple(np.rint(edge.end).astype(int)),
+            255,
+            2,
+            cv2.LINE_AA,
+        )
+    base_distance = cv2.distanceTransform(
+        np.where(base_mask > 0, 0, 255).astype(np.uint8), cv2.DIST_L2, 5
+    )
+    residual = np.where(
+        (ink > 0)
+        & (base_distance > max(2.0, settings.evidence_distance_px + 0.5)),
+        255,
+        0,
+    ).astype(np.uint8)
+    residual[:3, :] = 0
+    residual[-3:, :] = 0
+    residual[:, :3] = 0
+    residual[:, -3:] = 0
+    observations_raw = cv2.HoughLinesP(
+        residual,
+        1,
+        np.pi / 720.0,
+        threshold=6,
+        minLineLength=4,
+        maxLineGap=3,
+    )
+    if observations_raw is None:
+        return {}, {
+            "construction_residual_pixels": int(np.count_nonzero(residual)),
+            "construction_residual_observations": 0,
+            "construction_candidates": 0,
+        }
+
+    observations = []
+    for x1, y1, x2, y2 in observations_raw[:, 0]:
+        start = np.array([float(x1), float(y1)])
+        end = np.array([float(x2), float(y2)])
+        length = float(np.linalg.norm(end - start))
+        if length >= 4.0:
+            observations.append((start, end, length))
+    observations.sort(key=lambda item: -item[2])
+    observations = observations[:180]
+
+    node_map: dict[tuple[float, float], np.ndarray] = {}
+    for edge in base:
+        for point in (edge.start, edge.end):
+            node_map.setdefault(
+                (round(float(point[0]), 5), round(float(point[1]), 5)),
+                point.copy(),
+            )
+    nodes = list(node_map.values())
+    incident: dict[tuple[float, float], list[float]] = {
+        key: [] for key in node_map
+    }
+    for edge in base:
+        for start, end in ((edge.start, edge.end), (edge.end, edge.start)):
+            delta = end - start
+            length = float(np.linalg.norm(delta))
+            if length <= 1e-8:
+                continue
+            key = (round(float(start[0]), 5), round(float(start[1]), 5))
+            angle = math.atan2(float(delta[1]), float(delta[0])) % (
+                2.0 * math.pi
+            )
+            if not any(
+                abs(math.atan2(math.sin(angle - old), math.cos(angle - old)))
+                <= 1e-7
+                for old in incident[key]
+            ):
+                incident[key].append(angle)
+    for values in incident.values():
+        values.sort()
+
+    inverse_ink = np.where(ink > 0, 0, 255).astype(np.uint8)
+    ink_distance = cv2.distanceTransform(inverse_ink, cv2.DIST_L2, 5)
+
+    def point_key(point: np.ndarray) -> tuple[float, float]:
+        return round(float(point[0]), 4), round(float(point[1]), 4)
+
+    def nearest_contact(start: np.ndarray, direction: np.ndarray) -> np.ndarray | None:
+        contacts: list[tuple[float, np.ndarray]] = []
+        for axis, target in ((0, 0.0), (0, maximum), (1, 0.0), (1, maximum)):
+            if abs(float(direction[axis])) <= 1e-10:
+                continue
+            parameter = float((target - start[axis]) / direction[axis])
+            point = start + parameter * direction
+            if (
+                parameter > 1.0
+                and -1e-6 <= float(point[0]) <= maximum + 1e-6
+                and -1e-6 <= float(point[1]) <= maximum + 1e-6
+            ):
+                contacts.append((parameter, point))
+        for edge in base:
+            segment = edge.end - edge.start
+            matrix = np.column_stack((direction, -segment))
+            if abs(float(np.linalg.det(matrix))) <= 1e-10:
+                continue
+            parameter, edge_parameter = np.linalg.solve(
+                matrix, edge.start - start
+            )
+            if (
+                float(parameter) > 1.0
+                and -1e-7 <= float(edge_parameter) <= 1.0 + 1e-7
+            ):
+                contacts.append(
+                    (float(parameter), start + float(parameter) * direction)
+                )
+        return min(contacts, key=lambda item: item[0])[1] if contacts else None
+
+    def profile(start: np.ndarray, end: np.ndarray) -> tuple[float, float, float]:
+        delta = end - start
+        length = float(np.linalg.norm(delta))
+        if length < 3.0:
+            return 0.0, 0.0, 0.0
+        count = max(9, int(length * 2.2))
+        parameters = np.linspace(min(1.0, length * 0.08), max(1.0, length * 0.92), count)
+        points = start + parameters[:, None] * delta / length
+        xs = np.clip(np.rint(points[:, 0]).astype(int), 0, size - 1)
+        ys = np.clip(np.rint(points[:, 1]).astype(int), 0, size - 1)
+        supported = ink_distance[ys, xs] <= settings.evidence_distance_px
+        padded = np.pad(supported.astype(np.int8), (1, 1))
+        changes = np.diff(padded)
+        run_starts = np.where(changes == 1)[0]
+        run_ends = np.where(changes == -1)[0]
+        runs = run_ends - run_starts
+        novel = supported & (
+            base_distance[ys, xs]
+            > max(2.0, settings.evidence_distance_px + 0.5)
+        )
+        return (
+            float(np.mean(supported)),
+            float(np.max(runs)) / len(supported) if len(runs) else 0.0,
+            float(np.mean(novel)),
+        )
+
+    proposals: dict[str, dict[tuple, ConstructionProposal]] = {
+        "flat_fold": {},
+        "angle_bisector": {},
+        "segment_division": {},
+    }
+
+    def add_proposal(
+        kind: str,
+        start: np.ndarray,
+        end: np.ndarray,
+        expression: str,
+        label: str,
+    ) -> None:
+        length = float(np.linalg.norm(end - start))
+        if length < 4.0:
+            return
+        support, continuous_run, novel_coverage = profile(start, end)
+        if (
+            support < max(0.82, settings.output_support + 0.18)
+            or continuous_run < 0.38
+            or novel_coverage < 0.12
+        ):
+            return
+        key = tuple(sorted((point_key(start), point_key(end))))
+        candidate = ConstructionProposal(
+            kind,
+            start.copy(),
+            end.copy(),
+            support,
+            continuous_run,
+            novel_coverage,
+            expression,
+            label,
+        )
+        previous = proposals[kind].get(key)
+        if previous is None or (
+            candidate.support,
+            candidate.continuous_run,
+            candidate.novel_coverage,
+        ) > (
+            previous.support,
+            previous.continuous_run,
+            previous.novel_coverage,
+        ):
+            proposals[kind][key] = candidate
+
+    # Removing the already-explained graph also erases a short neighbourhood
+    # around each junction.  Residual Hough fragments therefore normally start
+    # several pixels away from their exact parent node.
+    anchor_radius = max(14.0, settings.evidence_distance_px * 5.0)
+    for raw_start, raw_end, raw_length in observations:
+        endpoint_options = (raw_start, raw_end)
+        for observed_endpoint in endpoint_options:
+            nearby = sorted(
+                (
+                    (float(np.linalg.norm(node - observed_endpoint)), node)
+                    for node in nodes
+                ),
+                key=lambda item: item[0],
+            )[:3]
+            for distance, anchor in nearby:
+                if distance > anchor_radius:
+                    continue
+                far = raw_end if np.linalg.norm(raw_end - anchor) >= np.linalg.norm(raw_start - anchor) else raw_start
+                raw_direction = far - anchor
+                raw_direction_length = float(np.linalg.norm(raw_direction))
+                if raw_direction_length < 3.0:
+                    continue
+                raw_direction /= raw_direction_length
+                match_tolerance = math.radians(
+                    min(
+                        6.0,
+                        max(
+                            2.0,
+                            _angle_admission_tolerance_deg(raw_length, settings) + 1.0,
+                        ),
+                    )
+                )
+                key = (round(float(anchor[0]), 5), round(float(anchor[1]), 5))
+                angles = incident.get(key, [])
+                total = len(angles)
+
+                # Oriedita's angle-bisector action selects an existing vertex
+                # angle and extends the exact bisector to its first target.
+                if total >= 2:
+                    for index, first_angle in enumerate(angles):
+                        second_angle = angles[(index + 1) % total]
+                        sector = (second_angle - first_angle) % (2.0 * math.pi)
+                        if sector <= math.radians(2.0):
+                            continue
+                        direction_angle = (first_angle + sector / 2.0) % (2.0 * math.pi)
+                        direction = np.array(
+                            [math.cos(direction_angle), math.sin(direction_angle)], dtype=float
+                        )
+                        error = math.acos(float(np.clip(direction @ raw_direction, -1.0, 1.0)))
+                        if error > match_tolerance:
+                            continue
+                        end = nearest_contact(anchor, direction)
+                        if end is None:
+                            continue
+                        add_proposal(
+                            "angle_bisector",
+                            anchor,
+                            end,
+                            f"∠({math.degrees(first_angle):.6g}°, {math.degrees(second_angle):.6g}°) / 2 → 首个交点",
+                            "已有夹角的精确角平分线",
+                        )
+
+                # Port of Oriedita's odd-ray angular-flat-fold completion:
+                # alternating sector sum, divided by two, inside each sector.
+                if total >= 3 and total % 2 == 1:
+                    sectors = [
+                        (angles[(index + 1) % total] - angles[index])
+                        % (2.0 * math.pi)
+                        for index in range(total)
+                    ]
+                    for index, first_angle in enumerate(angles):
+                        alternating = sum(
+                            (1.0 if offset % 2 == 0 else -1.0)
+                            * sectors[(index + offset) % total]
+                            for offset in range(total)
+                        )
+                        half = alternating / 2.0
+                        if not 1e-7 < half < sectors[index] - 1e-7:
+                            continue
+                        direction_angle = (first_angle + half) % (2.0 * math.pi)
+                        direction = np.array(
+                            [math.cos(direction_angle), math.sin(direction_angle)], dtype=float
+                        )
+                        error = math.acos(float(np.clip(direction @ raw_direction, -1.0, 1.0)))
+                        if error > match_tolerance:
+                            continue
+                        end = nearest_contact(anchor, direction)
+                        if end is None:
+                            continue
+                        add_proposal(
+                            "flat_fold",
+                            anchor,
+                            end,
+                            f"奇数 {total} 射线交替夹角和 / 2 = {math.degrees(half):.6g}° → 首个交点",
+                            "三线/奇数射线推可平折补线",
+                        )
+
+                # Target-segment rational division is tested against the far
+                # endpoint of the observed residual stroke.  A division point
+                # is never promoted to a free seed.
+                for target_index, target in enumerate(base):
+                    target_delta = target.end - target.start
+                    target_length_squared = float(target_delta @ target_delta)
+                    if target_length_squared < 36.0:
+                        continue
+                    fractions: set[tuple[int, int]] = set()
+                    for denominator in range(2, 9):
+                        for numerator in range(1, denominator):
+                            divisor = math.gcd(numerator, denominator)
+                            fractions.add(
+                                (numerator // divisor, denominator // divisor)
+                            )
+                    for numerator, denominator in fractions:
+                        fraction = numerator / denominator
+                        destination = target.start + fraction * target_delta
+                        direction = destination - anchor
+                        length = float(np.linalg.norm(direction))
+                        if length < 4.0:
+                            continue
+                        direction /= length
+                        error = math.acos(float(np.clip(direction @ raw_direction, -1.0, 1.0)))
+                        if error > match_tolerance:
+                            continue
+                        first_contact = nearest_contact(anchor, direction)
+                        if first_contact is None or float(np.linalg.norm(first_contact - destination)) > 1.25:
+                            continue
+                        add_proposal(
+                            "segment_division",
+                            anchor,
+                            destination,
+                            f"已有节点 → 目标线段 {numerator}/{denominator} 点（目标线 {target_index + 1}）",
+                            f"连接目标线段 {denominator} 等分点",
+                        )
+
+    flattened = {
+        kind: sorted(
+            values.values(),
+            key=lambda item: (
+                -item.support,
+                -item.continuous_run,
+                -item.novel_coverage,
+                point_key(item.start),
+                point_key(item.end),
+            ),
+        )
+        for kind, values in proposals.items()
+        if values
+    }
+    return flattened, {
+        "construction_residual_pixels": int(np.count_nonzero(residual)),
+        "construction_residual_observations": len(observations),
+        "construction_candidates": sum(len(values) for values in flattened.values()),
+        "construction_candidates_by_strategy": {
+            kind: len(values) for kind, values in flattened.items()
+        },
+    }
+
+
+def _build_exact_construction_variants(
+    square: np.ndarray,
+    ink: np.ndarray,
+    edges: list[Edge],
+    settings: Settings,
+    base_stats: dict,
+) -> tuple[list[dict], dict]:
+    proposals, diagnostics = _discover_exact_construction_proposals(
+        square, ink, edges, settings
+    )
+    if not proposals:
+        return [], diagnostics
+
+    size = square.shape[0]
+
+    def structure_report(values: list[Edge]) -> dict:
+        return audit_camv_structure(
+            [
+                GeometrySegment(
+                    edge.line_type,
+                    (float(edge.start[0]), float(edge.start[1])),
+                    (float(edge.end[0]), float(edge.end[1])),
+                )
+                for edge in _add_boundaries(values, size)
+            ]
+        )
+
+    initial_report = structure_report(edges)
+    labels = {
+        "flat_fold": "可平折补线版",
+        "angle_bisector": "角平分构造版",
+        "segment_division": "线段等分构造版",
+    }
+    variants: list[dict] = []
+    admitted_by_strategy: dict[str, int] = {}
+    for kind in ("flat_fold", "angle_bisector", "segment_division"):
+        candidates = proposals.get(kind, [])
+        if not candidates:
+            continue
+        selected: list[ConstructionProposal] = []
+        working = list(edges)
+        current_report = initial_report
+        for candidate in candidates:
+            trial = _planarize_edges(
+                working
+                + [
+                    Edge(
+                        candidate.start.copy(),
+                        candidate.end.copy(),
+                        4,
+                        candidate.support,
+                    )
+                ]
+            )
+            trial_report = structure_report(trial)
+            # cAMV is a hard, high-weight signal, but not an absolute veto:
+            # exceptionally strong observed constructions may preserve or move
+            # one violation.  The odd-ray completion itself may not worsen it.
+            allowed_extra = 0 if kind == "flat_fold" else 1
+            if (
+                trial_report["structure_violation_count"]
+                > current_report["structure_violation_count"] + allowed_extra
+            ):
+                continue
+            working = trial
+            current_report = trial_report
+            selected.append(candidate)
+            if len(selected) >= 5:
+                break
+        if not selected:
+            continue
+
+        colored, mv_stats, camv_full = _assign_and_optimize_mv(
+            square, working, settings.mv_mode
+        )
+        all_edges = _add_boundaries(colored, size)
+        camv_structure = structure_report(colored)
+        overlay, reconstruction = _render_images(square, all_edges)
+        variant_stats = {
+            **base_stats,
+            **mv_stats,
+            "internal_segments": len(colored),
+            "total_cp_segments": len(all_edges),
+            "camv_structural_completeness_score": camv_structure[
+                "structural_completeness_score"
+            ],
+            "camv_structure_violation_count": camv_structure[
+                "violation_count"
+            ],
+            "camv_structure": camv_structure,
+            "camv_full": camv_full,
+            "construction_variant": kind,
+            "construction_lines_added": len(selected),
+        }
+        constructions = [
+            {
+                "kind": item.kind,
+                "label": item.label,
+                "expression": item.expression,
+                "support": round(item.support, 9),
+                "continuous_run": round(item.continuous_run, 9),
+                "novel_coverage": round(item.novel_coverage, 9),
+                "start_px": [round(float(value), 6) for value in item.start],
+                "end_px": [round(float(value), 6) for value in item.end],
+            }
+            for item in selected
+        ]
+        variant_warnings = [
+            f"本版本在严格 22.5° 结果上新增 {len(selected)} 条“{labels[kind]}”精确构造；"
+            "每条线都由残余笔画像素触发，并保留父规则与证据，不是自由角度拟合。"
+        ]
+        if camv_structure["violation_count"]:
+            variant_warnings.append(
+                f"新增后仍有 {camv_structure['violation_vertex_count']} 个 cAMV 结构可疑节点；"
+                "该指标没有被当作绝对否决条件。"
+            )
+        variants.append(
+            {
+                "id": kind.replace("_", "-"),
+                "label": labels[kind],
+                "cp": edges_to_cp(all_edges, size),
+                "stats": variant_stats,
+                "warnings": variant_warnings,
+                "constructions": constructions,
+                "overlay_data_uri": _png_data_uri(overlay),
+                "reconstruction_data_uri": _png_data_uri(reconstruction),
+            }
+        )
+        admitted_by_strategy[kind] = len(selected)
+    diagnostics["construction_versions_emitted"] = len(variants)
+    diagnostics["construction_lines_admitted_by_strategy"] = admitted_by_strategy
+    return variants, diagnostics
+
+
 def _edge_mv_evidence(square: np.ndarray, edge: Edge) -> dict:
     """Measure deterministic red/blue evidence along one planar edge."""
 
@@ -7198,22 +7825,14 @@ def _edge_mv_evidence(square: np.ndarray, edge: Edge) -> dict:
 def _assign_and_optimize_mv(
     square: np.ndarray,
     edges: list[Edge],
+    mv_mode: str = "auto",
 ) -> tuple[list[Edge], dict, dict]:
     """Classify red/blue locally, then let full cAMV revise only weak calls."""
 
     size = square.shape[0]
     evidence = [_edge_mv_evidence(square, edge) for edge in edges]
-    assigned = [
-        Edge(
-            edge.start.copy(),
-            edge.end.copy(),
-            2 if item["red_probability"] >= 0.5 else 3,
-            edge.support,
-        )
-        for edge, item in zip(edges, evidence)
-    ]
 
-    def full_report(values: list[Edge]) -> dict:
+    def full_report(values: list[Edge], *, include_mv: bool = True) -> dict:
         all_edges = _add_boundaries(values, size)
         segments: list[GeometrySegment] = []
         internal_row = 0
@@ -7233,8 +7852,69 @@ def _assign_and_optimize_mv(
         return audit_camv_structure(
             segments,
             folding_types={2, 3},
-            include_mv=True,
+            include_mv=include_mv,
         )
+
+    color_evidence_segments = sum(
+        item["coverage"] >= 0.10
+        and item["red_score"] + item["blue_score"] >= 40.0
+        for item in evidence
+    )
+    detected_monochrome = color_evidence_segments == 0
+    use_monochrome = mv_mode == "monochrome" or (
+        mv_mode == "auto" and detected_monochrome
+    )
+    if use_monochrome:
+        # A black line contains geometry but no M/V observation.  Keep the
+        # established safe export convention (mountain) and explicitly skip
+        # M/V rules; cAMV must not fabricate a unique colouring from nothing.
+        assigned = [
+            Edge(edge.start.copy(), edge.end.copy(), 2, edge.support)
+            for edge in edges
+        ]
+        report = full_report(assigned, include_mv=False)
+        uncertain = [
+            {
+                "edge_index": index,
+                "start": [round(float(value), 6) for value in edge.start],
+                "end": [round(float(value), 6) for value in edge.end],
+                "initial_type": 2,
+                "final_type": 2,
+                **item,
+            }
+            for index, (edge, item) in enumerate(zip(edges, evidence))
+        ]
+        return assigned, {
+            "mv_input_mode": "monochrome",
+            "mv_assignment_source": "all_mountain_safe_default",
+            "mv_color_evidence_segments": color_evidence_segments,
+            "mv_red_segments": len(assigned),
+            "mv_blue_segments": 0,
+            "mv_ambiguous_segments": len(assigned),
+            "mv_strong_segments": 0,
+            "mv_camv_single_flips": 0,
+            "mv_camv_pair_flips": 0,
+            "mv_camv_changed_segments": 0,
+            "mv_camv_changed_edge_indices": [],
+            "mv_camv_violations_before": 0,
+            "mv_camv_violations_after": 0,
+            "camv_full_violations_before": report["violation_count"],
+            "camv_full_violations_after": report["violation_count"],
+            "camv_full_passes": None,
+            "mv_average_confidence": 0.0,
+            "mv_optimization_history": [],
+            "mv_most_uncertain_segments": uncertain[:40],
+        }, report
+
+    assigned = [
+        Edge(
+            edge.start.copy(),
+            edge.end.copy(),
+            2 if item["red_probability"] >= 0.5 else 3,
+            edge.support,
+        )
+        for edge, item in zip(edges, evidence)
+    ]
 
     initial_types = [edge.line_type for edge in assigned]
     report = full_report(assigned)
@@ -7396,6 +8076,9 @@ def _assign_and_optimize_mv(
         key=lambda item: (item["confidence"], item["edge_index"]),
     )
     stats = {
+        "mv_input_mode": "color",
+        "mv_assignment_source": "image_then_camv_weak_revision",
+        "mv_color_evidence_segments": color_evidence_segments,
         "mv_red_segments": sum(edge.line_type == 2 for edge in assigned),
         "mv_blue_segments": sum(edge.line_type == 3 for edge in assigned),
         "mv_ambiguous_segments": len(ambiguous_indices),
@@ -7492,7 +8175,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     settings = settings or Settings()
     image = _decode_image(data)
     square, (x0, y0, x1, y1), scale_stats = prepare_paper_square(
-        image, settings.analysis_size
+        image, settings.analysis_size, settings.paper_corners
     )
     size = square.shape[0]
     ink, _, evidence_stats = _adaptive_geometry_evidence(square)
@@ -7715,6 +8398,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     internal_edges, mv_stats, camv_full = _assign_and_optimize_mv(
         square,
         internal_edges,
+        settings.mv_mode,
     )
     graph_stats = {
         **ray_stats,
@@ -7864,7 +8548,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             f"边界拓扑 {counts['boundary_topology']}）。"
             "这是高权重完备性信号，但不会单独否决结果。"
         )
-    if camv_full["violation_count"]:
+    if camv_full["mv_checks"]["enabled"] and camv_full["violation_count"]:
         counts = camv_full["rule_counts"]
         warnings.append(
             "完整 cAMV 仍有 "
@@ -7874,17 +8558,43 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             f"big-little-big {counts['little_big_little']}）。"
             "程序不会翻转强红/强蓝折痕来强行消除这些异常。"
         )
+    if graph_stats.get("mv_input_mode") == "monochrome":
+        warnings.append(
+            "检测为纯黑线 CP：几何照常重建，内部线统一按峰线导出；"
+            "由于图片没有红蓝证据，本版本不运行 Maekawa 与 big-little-big 改色，"
+            "也不会把 cAMV 推测颜色冒充识别结果。"
+        )
     if hough_stats["angle_rejected_segments"]:
         warnings.append(
             f"有 {hough_stats['angle_rejected_segments']} 个图像线段偏离 22.5° 系，已忽略。"
         )
     if len(internal_edges) > 700:
         warnings.append("当前结果切分较细；这是原型阶段的已知问题，可继续合并同射线上的冗余小段。")
+    variants: list[dict] = []
+    construction_variant_stats = {
+        "construction_residual_pixels": 0,
+        "construction_residual_observations": 0,
+        "construction_candidates": 0,
+        "construction_versions_emitted": 0,
+    }
+    if settings.construction_variants:
+        variants, construction_variant_stats = _build_exact_construction_variants(
+            square,
+            ink,
+            internal_edges,
+            effective_settings,
+            stats,
+        )
+    stats.update(construction_variant_stats)
     return {
+        "id": "strict",
+        "label": "严格 22.5°",
         "cp": cp_text,
         "stats": stats,
         "anchors": anchors,
         "warnings": warnings,
+        "constructions": [],
+        "variants": variants,
         "overlay_data_uri": _png_data_uri(overlay),
         "reconstruction_data_uri": _png_data_uri(reconstruction),
         "overlay_image": overlay,

@@ -3,17 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>√2 Ray CP — 22.5° 折痕重建</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta name="description" content="在浏览器中把 22.5° 系折痕图重建为 Oriedita .cp 文件。">
+  <title>Oriedraw · 22.5° 折痕重建</title>
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <main class="shell">
     <header class="hero">
       <div>
-        <p class="eyebrow">√2 RAY CP / PROTOTYPE 01</p>
+        <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
         <h1>从图片重新搭建<br><span>22.5° 折痕射线</span></h1>
       </div>
-      <p class="intro">先从四角和四边中点取线，再选择至多一个 <em>a+b√2</em> 核心点；此后只允许由已有射线交点或射线与纸边的交点继续推导。</p>
+      <div class="intro-block">
+        <p class="intro">先从四角和四边中点取线，再选择至多一个 <em>a+b√2</em> 核心点；此后只允许由已有射线交点或纸边交点继续推导。</p>
+        <p class="privacy">图片仅在你的浏览器中处理，不会上传服务器。</p>
+      </div>
     </header>
 
     <section class="workspace">
@@ -22,16 +26,49 @@
           <label class="drop-zone" id="drop-zone">
             <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
             <span class="drop-index">01</span>
-            <strong>放入正方形 CP 图</strong>
-            <small>PNG / JPG · 建议 800px 以上</small>
+            <strong>放入包含 CP 纸张的图片</strong>
+            <small>截图自动裁纸；拍照图可校正四角 · PNG / JPG · 12 MB</small>
             <span class="file-name" id="file-name">尚未选择文件</span>
           </label>
 
-          <div class="parameter">
-            <div><label for="angle">角度容差</label><output id="angle-value">6.0°</output></div>
-            <input id="angle" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="6">
-            <small>只影响图片证据筛选；输出角度始终严格为 22.5° 倍数。</small>
+          <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
+            <span></span><p>正在准备浏览器识别引擎…</p>
           </div>
+
+          <div class="paper-tool hidden" id="paper-tool">
+            <div class="paper-tool-head">
+              <div><strong>纸张范围</strong><small id="paper-mode-label">自动寻找并裁切</small></div>
+              <button type="button" id="corner-toggle">拍照图：调整四角</button>
+            </div>
+            <div class="corner-editor hidden" id="corner-editor">
+              <canvas id="corner-canvas" aria-label="拖动四个铆钉到纸张四角"></canvas>
+              <div class="corner-help"><span>左上</span><span>右上</span><span>右下</span><span>左下</span></div>
+              <small>四个点放在同一张平整纸的外框角上。程序先把梯形还原为正方形，再识别折痕。</small>
+              <button type="button" id="corner-reset">重置铆钉</button>
+            </div>
+          </div>
+
+          <div class="parameter mode-parameter">
+            <div><label for="mv-mode">线条颜色</label></div>
+            <select id="mv-mode" name="mv_mode">
+              <option value="auto">自动判断红蓝 / 纯黑</option>
+              <option value="color">强制按红蓝图识别</option>
+              <option value="monochrome">纯黑线：统一按峰线导出</option>
+            </select>
+            <small>纯黑图没有峰谷信息；程序只重建几何，不用 cAMV 猜颜色。</small>
+          </div>
+
+          <details class="advanced">
+            <summary>高级图像参数</summary>
+            <div class="parameter">
+              <div><label for="angle-mode">像素线方向误差</label><output id="angle-value">自动</output></div>
+              <select id="angle-mode" name="angle_tolerance_mode">
+                <option value="auto">自动（推荐）</option>
+                <option value="manual">手动上限</option>
+              </select>
+              <input id="angle" class="hidden" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="3">
+              <small>只判断模糊像素是否可能来自合法线；不会把近似角度写进 .cp。四角校正后自动上限为 3°。</small>
+            </div>
 
           <div class="parameter">
             <div><label for="support">线段证据</label><output id="support-value">58%</output></div>
@@ -43,27 +80,34 @@
             <div><label for="algebraic">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div>
             <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
           </div>
+          </details>
 
-          <button class="primary" type="submit"><span>开始重建</span><b>→</b></button>
+          <label class="variant-option">
+            <input id="construction-variants" type="checkbox" checked>
+            <span><strong>生成精确备选构造版本</strong><small>仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
+          </label>
+
+          <button class="primary" id="submit-button" type="submit" disabled>
+            <span>开始重建</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
         </form>
 
         <div class="rule-card">
           <span>硬性规则</span>
-          <p>不能拖动终点，不能输入长度，不能生成自由角度线。</p>
+          <p>默认版本仍只用 22.5° 系。备选版本也不能拖动终点或输入长度；每条非 22.5° 线必须由已有线、可平折条件或精确等分点推导。</p>
         </div>
       </aside>
 
       <section class="results panel">
         <div class="empty-state" id="empty-state">
-          <div class="ray-mark"><i></i><i></i><i></i><i></i></div>
+          <div class="ray-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
           <p>等待一张折痕图</p>
           <small>重建结果会在这里与原图叠加显示</small>
         </div>
 
-        <div id="loading" class="loading hidden">
-          <span></span>
-          <p>正在寻找合法射线、交点并反复执行 cAMV 复核…</p>
-          <small>复杂图可能需要数分钟甚至更久，请保持页面开启</small>
+        <div id="loading" class="loading hidden" aria-live="polite">
+          <span></span><p>正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small>复杂图可能需要数分钟甚至更久，请保持页面开启</small>
         </div>
 
         <div id="result-content" class="hidden">
@@ -75,9 +119,11 @@
             <button id="download" class="download">下载 .cp</button>
           </div>
 
-          <div class="view-tabs">
-            <button class="active" data-view="overlay">叠加检查</button>
-            <button data-view="clean">纯重建</button>
+          <div class="version-tabs hidden" id="version-tabs" role="tablist" aria-label="构造版本"></div>
+
+          <div class="view-tabs" role="tablist" aria-label="预览方式">
+            <button class="active" data-view="overlay" role="tab" aria-selected="true">叠加检查</button>
+            <button data-view="clean" role="tab" aria-selected="false">纯重建</button>
           </div>
           <figure class="preview"><img id="preview-image" alt="折痕重建预览"></figure>
 
@@ -85,13 +131,17 @@
           <div id="stats" class="stats"></div>
 
           <details class="anchors">
-            <summary>查看种子与逐代构造来源 <span id="anchor-count"></span></summary>
+            <summary>查看种子与迭代构造来源 <span id="anchor-count"></span></summary>
             <div class="anchor-table" id="anchor-table"></div>
+          </details>
+          <details class="constructions hidden" id="construction-details">
+            <summary>查看本版本新增的精确构造 <span id="construction-count"></span></summary>
+            <div class="construction-list" id="construction-list"></div>
           </details>
         </div>
       </section>
     </section>
   </main>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

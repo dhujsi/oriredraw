@@ -18,6 +18,7 @@ from reconstructor import (
     _recover_camv_supported_paths,
     _edge_mv_evidence,
     _assign_and_optimize_mv,
+    _discover_exact_construction_proposals,
     _propagate_constructible_rays,
     _recover_fragmented_rays_from_primary,
     _recover_exact_skeleton_node_edges,
@@ -32,6 +33,143 @@ from reconstructor import (
 
 
 class RootTwoGeometryTest(unittest.TestCase):
+    def test_monochrome_mv_mode_keeps_geometry_and_skips_color_inference(self):
+        image = np.full((101, 101, 3), 255, dtype=np.uint8)
+        center = np.array([50.0, 50.0])
+        edges = [
+            Edge(center.copy(), np.array([100.0, 50.0]), 4),
+            Edge(center.copy(), np.array([50.0, 0.0]), 4),
+            Edge(center.copy(), np.array([0.0, 50.0]), 4),
+            Edge(center.copy(), np.array([50.0, 100.0]), 4),
+        ]
+        for edge in edges:
+            cv2.line(
+                image,
+                tuple(edge.start.astype(int)),
+                tuple(edge.end.astype(int)),
+                (0, 0, 0),
+                1,
+            )
+        assigned, stats, report = _assign_and_optimize_mv(image, edges)
+        self.assertEqual(stats["mv_input_mode"], "monochrome")
+        self.assertEqual({edge.line_type for edge in assigned}, {2})
+        self.assertFalse(report["mv_checks"]["enabled"])
+
+    def test_residual_angle_bisector_is_exact_construction_candidate(self):
+        size = 256
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        anchor = np.array([96.0, 96.0])
+        first = np.array([230.0, 96.0])
+        second_angle = math.radians(67.5)
+        second = anchor + 140.0 * np.array(
+            [math.cos(second_angle), math.sin(second_angle)]
+        )
+        bisector_angle = math.radians(33.75)
+        direction = np.array(
+            [math.cos(bisector_angle), math.sin(bisector_angle)]
+        )
+        parameter = min(
+            (size - 1 - anchor[0]) / direction[0],
+            (size - 1 - anchor[1]) / direction[1],
+        )
+        destination = anchor + parameter * direction
+        edges = [
+            Edge(anchor.copy(), first, 4),
+            Edge(anchor.copy(), second, 4),
+        ]
+        for start, end in (
+            (anchor, first),
+            (anchor, second),
+            (anchor, destination),
+        ):
+            cv2.line(
+                image,
+                tuple(np.rint(start).astype(int)),
+                tuple(np.rint(end).astype(int)),
+                (0, 0, 0),
+                2,
+            )
+        ink = (np.min(image, axis=2) < 245).astype(np.uint8) * 255
+        proposals, _ = _discover_exact_construction_proposals(
+            image, ink, edges, Settings()
+        )
+        self.assertIn("angle_bisector", proposals)
+        candidate = proposals["angle_bisector"][0]
+        angle = math.degrees(
+            math.atan2(
+                float(candidate.end[1] - candidate.start[1]),
+                float(candidate.end[0] - candidate.start[0]),
+            )
+        ) % 360.0
+        self.assertAlmostEqual(angle, 33.75, places=6)
+
+    def test_three_rays_can_infer_exact_flat_fold_fourth_ray(self):
+        size = 220
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        anchor = np.array([110.0, 110.0])
+        edges = [
+            Edge(anchor.copy(), np.array([219.0, 110.0]), 4),
+            Edge(anchor.copy(), np.array([110.0, 219.0]), 4),
+            Edge(anchor.copy(), np.array([0.0, 110.0]), 4),
+        ]
+        destination = np.array([110.0, 0.0])
+        for edge in edges:
+            cv2.line(
+                image,
+                tuple(edge.start.astype(int)),
+                tuple(edge.end.astype(int)),
+                (0, 0, 0),
+                2,
+            )
+        cv2.line(image, (110, 110), (110, 0), (0, 0, 0), 2)
+        ink = (np.min(image, axis=2) < 245).astype(np.uint8) * 255
+        proposals, _ = _discover_exact_construction_proposals(
+            image, ink, edges, Settings()
+        )
+        self.assertIn("flat_fold", proposals)
+        candidate = proposals["flat_fold"][0]
+        self.assertLess(np.linalg.norm(candidate.end - destination), 1e-6)
+
+    def test_target_segment_division_point_is_not_a_free_seed(self):
+        size = 240
+        image = np.full((size, size, 3), 255, dtype=np.uint8)
+        anchor = np.array([40.0, 40.0])
+        target_start = np.array([40.0, 190.0])
+        target_end = np.array([220.0, 190.0])
+        destination = target_start + (3.0 / 8.0) * (target_end - target_start)
+        edges = [
+            Edge(anchor.copy(), np.array([180.0, 40.0]), 4),
+            Edge(anchor.copy(), np.array([40.0, 150.0]), 4),
+            Edge(target_start, target_end, 4),
+        ]
+        for edge in edges:
+            cv2.line(
+                image,
+                tuple(np.rint(edge.start).astype(int)),
+                tuple(np.rint(edge.end).astype(int)),
+                (0, 0, 0),
+                2,
+            )
+        cv2.line(
+            image,
+            tuple(anchor.astype(int)),
+            tuple(np.rint(destination).astype(int)),
+            (0, 0, 0),
+            2,
+        )
+        ink = (np.min(image, axis=2) < 245).astype(np.uint8) * 255
+        proposals, _ = _discover_exact_construction_proposals(
+            image, ink, edges, Settings()
+        )
+        self.assertIn("segment_division", proposals)
+        matching = [
+            item
+            for item in proposals["segment_division"]
+            if np.linalg.norm(item.end - destination) < 1e-6
+        ]
+        self.assertTrue(matching)
+        self.assertIn("3/8", matching[0].expression)
+
     def test_red_blue_evidence_is_measured_without_ai(self):
         image = np.full((101, 101, 3), 255, dtype=np.uint8)
         edge = Edge(np.array([10.0, 50.0]), np.array([90.0, 50.0]), 4)
