@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="在浏览器中把 22.5° 系折痕图重建为 Oriedita .cp 文件。">
+  <title>Oriedraw · 22.5° 折痕重建</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
+        <h1>从图片重新搭建<br><span>22.5° 折痕射线</span></h1>
+      </div>
+      <div class="intro-block">
+        <p class="intro">先从四角和四边中点取线，再选择至多一个 <em>a+b√2</em> 核心点；此后只允许由已有射线交点或纸边交点继续推导。</p>
+        <p class="privacy">图片仅在你的浏览器中处理，不会上传服务器。</p>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <aside class="controls panel">
+        <form id="upload-form">
+          <label class="drop-zone" id="drop-zone">
+            <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
+            <span class="drop-index">01</span>
+            <strong>放入正方形 CP 图</strong>
+            <small>PNG / JPG · 文件上限 12 MB</small>
+            <span class="file-name" id="file-name">尚未选择文件</span>
+          </label>
+
+          <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
+            <span></span><p>正在准备浏览器识别引擎…</p>
+          </div>
+
+          <div class="parameter">
+            <div><label for="angle">角度容差</label><output id="angle-value">6.0°</output></div>
+            <input id="angle" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="6">
+            <small>只影响图像证据筛选；输出角度始终严格为 22.5° 的倍数。</small>
+          </div>
+
+          <div class="parameter">
+            <div><label for="support">线段证据</label><output id="support-value">58%</output></div>
+            <input id="support" name="output_support" type="range" min="0.35" max="0.85" step="0.01" value="0.58">
+            <small>提高可减少误线，降低可找回较短或较淡的线。</small>
+          </div>
+
+          <div class="parameter">
+            <div><label for="algebraic">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div>
+            <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
+          </div>
+
+          <button class="primary" id="submit-button" type="submit" disabled>
+            <span>开始重建</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </form>
+
+        <div class="rule-card">
+          <span>硬性规则</span>
+          <p>不能拖动终点，不能输入长度，不能生成自由角度线。</p>
+        </div>
+      </aside>
+
+      <section class="results panel">
+        <div class="empty-state" id="empty-state">
+          <div class="ray-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <p>等待一张折痕图</p>
+          <small>重建结果会在这里与原图叠加显示</small>
+        </div>
+
+        <div id="loading" class="loading hidden" aria-live="polite">
+          <span></span><p>正在寻找合法射线与交点…</p><small>复杂图可能需要几十秒</small>
+        </div>
+
+        <div id="result-content" class="hidden">
+          <div class="result-head">
+            <div>
+              <p class="eyebrow">RECONSTRUCTION</p>
+              <h2>识别结果</h2>
+            </div>
+            <button id="download" class="download">下载 .cp</button>
+          </div>
+
+          <div class="view-tabs" role="tablist" aria-label="预览方式">
+            <button class="active" data-view="overlay" role="tab" aria-selected="true">叠加检查</button>
+            <button data-view="clean" role="tab" aria-selected="false">纯重建</button>
+          </div>
+          <figure class="preview"><img id="preview-image" alt="折痕重建预览"></figure>
+
+          <div id="warnings" class="warnings"></div>
+          <div id="stats" class="stats"></div>
+
+          <details class="anchors">
+            <summary>查看种子与迭代构造来源 <span id="anchor-count"></span></summary>
+            <div class="anchor-table" id="anchor-table"></div>
+          </details>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
