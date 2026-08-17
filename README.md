@@ -16,7 +16,7 @@
 
 静态页面位于 `web/`。GitHub Actions 发布时会把 `foldability.py`、`reconstructor.py` 和 `web_bridge.py` 一起装入站点，由 Pyodide 在 Web Worker 中运行原有 Python、NumPy 和 OpenCV 算法。
 
-浏览器首次打开需要下载 Python/OpenCV 运行环境；加载完成后，图片只在本机浏览器中处理。
+浏览器首次打开需要下载 Python/OpenCV 运行环境；加载完成后，图片只在本机浏览器中处理。复杂图的完整射线传播、cAMV 几何复核和峰谷复核可能需要数分钟甚至更久，请保持页面开启。
 
 本地预览：
 

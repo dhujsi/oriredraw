@@ -160,6 +160,8 @@ function renderResult(data) {
     ['内部线段', data.stats.internal_segments],
     ['cAMV 结构分', `${Math.round((data.stats.camv_structural_completeness_score ?? 0) * 100)}%`],
     ['cAMV 可疑节点', data.stats.camv_structure?.violation_vertex_count ?? 0],
+    ['cAMV 补回射线', data.stats.camv_path_committed_arms ?? 0],
+    ['cAMV 几何复核轮次', data.stats.camv_path_recheck_rounds ?? 0],
     ['峰线 / 红', data.stats.mv_red_segments ?? 0],
     ['谷线 / 蓝', data.stats.mv_blue_segments ?? 0],
     ['红蓝模糊线', data.stats.mv_ambiguous_segments ?? 0],

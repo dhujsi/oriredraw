@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import math
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -6851,6 +6852,291 @@ def _repair_near_focus_camv_violations(
     }
 
 
+def _recover_camv_supported_paths(
+    square: np.ndarray,
+    ink: np.ndarray,
+    edges: list[Edge],
+    settings: Settings,
+) -> tuple[list[Edge], dict]:
+    """Use strong raster evidence to complete paths exposed by cAMV.
+
+    The normal recall passes intentionally avoid inventing geometry merely to
+    satisfy foldability.  This final pass is narrower: it starts only at an
+    already-existing cAMV-invalid node, follows a strict 22.5-degree ray, and
+    stops at the first exact contact with another crease or the paper border.
+    A contact that becomes odd can nominate the next arm, so a missing chain
+    may be recovered over several rounds.  The whole chain is transactional:
+    if the best audited state does not strictly improve the initial structure,
+    every tentative arm is discarded.
+    """
+
+    size = ink.shape[0]
+    maximum = float(size - 1)
+    initial = _planarize_edges(list(edges))
+    working = list(initial)
+    skeletons = [
+        (_thin_binary_mask(mask) > 0).astype(np.uint8)
+        for mask in _color_geometry_masks(square, ink)
+    ]
+
+    def point_key(point: np.ndarray) -> tuple[float, float]:
+        return round(float(point[0]), 5), round(float(point[1]), 5)
+
+    def edge_key(start: np.ndarray, end: np.ndarray) -> tuple:
+        return tuple(sorted((point_key(start), point_key(end))))
+
+    def structure_report(values: list[Edge]) -> dict:
+        all_edges = _add_boundaries(_planarize_edges(values), size)
+        return audit_camv_structure(
+            [
+                GeometrySegment(
+                    edge.line_type,
+                    (float(edge.start[0]), float(edge.start[1])),
+                    (float(edge.end[0]), float(edge.end[1])),
+                )
+                for edge in all_edges
+            ]
+        )
+
+    def color_profile(start: np.ndarray, end: np.ndarray) -> tuple[float, float, float]:
+        delta = end - start
+        length = float(np.linalg.norm(delta))
+        if length <= 1e-8:
+            return 0.0, 0.0, 0.0
+        direction = delta / length
+        normal = np.array([-direction[1], direction[0]], dtype=float)
+        trim = min(1.5, length * 0.12)
+        sample_t = np.linspace(
+            trim,
+            length - trim,
+            max(9, int(length * 3.0)),
+        )
+        best = (0.0, 0.0, 0.0)
+        for skeleton in skeletons:
+            bands: list[np.ndarray] = []
+            for shift in np.linspace(-1.25, 1.25, 11):
+                points = (
+                    start
+                    + sample_t[:, None] * direction
+                    + shift * normal
+                )
+                xs = np.clip(
+                    np.rint(points[:, 0]).astype(int), 0, size - 1
+                )
+                ys = np.clip(
+                    np.rint(points[:, 1]).astype(int), 0, size - 1
+                )
+                bands.append(skeleton[ys, xs] > 0)
+            stacked = np.stack(bands)
+            union = np.any(stacked, axis=0).astype(np.uint8)
+            padded = np.pad(union, (1, 1), mode="constant")
+            changes = np.diff(padded.astype(np.int8))
+            starts = np.where(changes == 1)[0]
+            ends = np.where(changes == -1)[0]
+            runs = ends - starts
+            best = max(
+                best,
+                (
+                    float(np.mean(union)),
+                    max(float(np.mean(band)) for band in stacked),
+                    float(np.max(runs)) / len(union) if len(runs) else 0.0,
+                ),
+            )
+        return best
+
+    def nearest_contact(
+        values: list[Edge], start: np.ndarray, direction: np.ndarray
+    ) -> np.ndarray | None:
+        contacts: list[tuple[float, np.ndarray]] = []
+        for axis, target in (
+            (0, 0.0),
+            (0, maximum),
+            (1, 0.0),
+            (1, maximum),
+        ):
+            if abs(float(direction[axis])) <= 1e-10:
+                continue
+            parameter = float((target - start[axis]) / direction[axis])
+            point = start + parameter * direction
+            if (
+                parameter > 0.5
+                and -1e-6 <= float(point[0]) <= maximum + 1e-6
+                and -1e-6 <= float(point[1]) <= maximum + 1e-6
+            ):
+                contacts.append((parameter, point))
+
+        for edge in values:
+            segment = edge.end - edge.start
+            matrix = np.column_stack((direction, -segment))
+            if abs(float(np.linalg.det(matrix))) <= 1e-10:
+                continue
+            parameter, edge_parameter = np.linalg.solve(
+                matrix, edge.start - start
+            )
+            if (
+                float(parameter) > 0.5
+                and -1e-7 <= float(edge_parameter) <= 1.0 + 1e-7
+            ):
+                contacts.append(
+                    (float(parameter), start + float(parameter) * direction)
+                )
+        if not contacts:
+            return None
+        return min(contacts, key=lambda item: item[0])[1]
+
+    def canonical_node(values: list[Edge], point: np.ndarray) -> np.ndarray | None:
+        candidates = [
+            endpoint
+            for edge in values
+            for endpoint in (edge.start, edge.end)
+            if np.linalg.norm(endpoint - point) <= 1e-4
+        ]
+        return candidates[0].copy() if candidates else None
+
+    initial_report = structure_report(initial)
+    best = list(initial)
+    best_report = initial_report
+    best_added_arms = 0
+    attempted_arms = 0
+    tentative_arms = 0
+    rounds = 0
+    seen_edges = {edge_key(edge.start, edge.end) for edge in working}
+    minimum_union = max(0.84, min(0.90, settings.output_support + 0.30))
+    minimum_center = max(0.70, min(0.80, settings.output_support + 0.16))
+
+    for _ in range(16):
+        current_report = structure_report(working)
+        if not current_report["structure_violation_count"]:
+            best = list(working)
+            best_report = current_report
+            break
+
+        proposals: list[tuple[int, float, float, int, list[Edge], dict, list[Edge]]] = []
+        for violation in current_report["violations"]:
+            if violation["rule"] not in {"number_of_folds", "kawasaki_angles"}:
+                continue
+            reported_point = np.array(violation["point"], dtype=float)
+            start = canonical_node(working, reported_point)
+            if start is None:
+                continue
+
+            incident_directions: list[np.ndarray] = []
+            for edge in working:
+                if np.linalg.norm(edge.start - start) <= 1e-4:
+                    delta = edge.end - start
+                elif np.linalg.norm(edge.end - start) <= 1e-4:
+                    delta = edge.start - start
+                else:
+                    continue
+                length = float(np.linalg.norm(delta))
+                if length > 1e-8:
+                    incident_directions.append(delta / length)
+
+            arms: list[tuple[float, float, float, Edge]] = []
+            for theta in ALLOWED_ANGLES:
+                base_direction = np.array(
+                    [math.cos(theta), math.sin(theta)], dtype=float
+                )
+                for sign in (-1.0, 1.0):
+                    direction = sign * base_direction
+                    if any(
+                        float(direction @ existing) >= 1.0 - 1e-8
+                        for existing in incident_directions
+                    ):
+                        continue
+                    end = nearest_contact(working, start, direction)
+                    if end is None or float(np.linalg.norm(end - start)) < 3.0:
+                        continue
+                    key = edge_key(start, end)
+                    if key in seen_edges:
+                        continue
+                    union, center, run = color_profile(start, end)
+                    attempted_arms += 1
+                    # This pass is allowed to move an incompleteness frontier,
+                    # so evidence must be substantially stronger than normal
+                    # output admission. A small run threshold tolerates a real
+                    # line interrupted by a dense crossing.
+                    if (
+                        union < minimum_union
+                        or center < minimum_center
+                        or run < 0.12
+                    ):
+                        continue
+                    arms.append(
+                        (union, center, run, Edge(start.copy(), end.copy(), 4, union))
+                    )
+
+            arms.sort(key=lambda item: (-item[0], -item[1], -item[2]))
+            arms = arms[:6]
+            for arm_count in (1, 2):
+                for selected in itertools.combinations(arms, arm_count):
+                    additions = [item[3] for item in selected]
+                    candidate = _planarize_edges(working + additions)
+                    candidate_report = structure_report(candidate)
+                    if any(
+                        np.linalg.norm(
+                            np.array(item["point"], dtype=float) - start
+                        )
+                        <= 1e-4
+                        for item in candidate_report["violations"]
+                    ):
+                        continue
+                    # A strong arm may move the frontier to its exact contact.
+                    # Permit at most one temporary extra violation; the final
+                    # transaction is still committed only on strict gain.
+                    if (
+                        candidate_report["structure_violation_count"]
+                        > current_report["structure_violation_count"] + 1
+                    ):
+                        continue
+                    proposal_minimum_union = min(item[0] for item in selected)
+                    average_center = sum(item[1] for item in selected) / arm_count
+                    proposals.append(
+                        (
+                            candidate_report["structure_violation_count"],
+                            -proposal_minimum_union,
+                            -average_center,
+                            arm_count,
+                            candidate,
+                            candidate_report,
+                            additions,
+                        )
+                    )
+
+        if not proposals:
+            break
+        _, _, _, _, working, current_report, additions = min(
+            proposals, key=lambda item: item[:4]
+        )
+        rounds += 1
+        tentative_arms += len(additions)
+        seen_edges.update(edge_key(edge.start, edge.end) for edge in additions)
+        if (
+            current_report["structure_violation_count"]
+            < best_report["structure_violation_count"]
+        ):
+            best = list(working)
+            best_report = current_report
+            best_added_arms = tentative_arms
+
+    improved = (
+        best_report["structure_violation_count"]
+        < initial_report["structure_violation_count"]
+    )
+    result = _planarize_edges(best if improved else initial)
+    return result, {
+        "camv_path_recheck_rounds": rounds,
+        "camv_path_arms_examined": attempted_arms,
+        "camv_path_tentative_arms": tentative_arms,
+        "camv_path_committed_arms": best_added_arms if improved else 0,
+        "camv_path_recheck_improved": int(improved),
+        "camv_path_violations_before": initial_report["structure_violation_count"],
+        "camv_path_violations_after": best_report["structure_violation_count"]
+        if improved
+        else initial_report["structure_violation_count"],
+    }
+
+
 def _edge_mv_evidence(square: np.ndarray, edge: Edge) -> dict:
     """Measure deterministic red/blue evidence along one planar edge."""
 
@@ -7381,10 +7667,48 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         internal_edges, size
     )
     local_cycle_stats["local_cycle_lineheads_pruned"] = local_cycle_lineheads
+    pipeline = "fused_22_5_graph"
+    if lsd_lines:
+        lines = lsd_lines
+
+    # Sparse monochrome patterns can still lack enough endpoint votes. Retain
+    # the exact Hough rays as a final, conservative fallback. This decision
+    # must happen before cAMV and M/V assignment: replacing the graph later
+    # would leave both reports describing geometry that is no longer exported.
+    fallback_stats = {
+        "sparse_ray_fallback_used": 0,
+        "sparse_ray_fallback_segments": 0,
+    }
+    if len(internal_edges) < max(4, len(lines) // 2):
+        fallback_runs, fallback_distance = _supported_runs(
+            lines, ink, effective_settings
+        )
+        fallback_edges = _edges_from_runs(
+            lines,
+            fallback_runs,
+            fallback_distance,
+            effective_settings,
+        )
+        if len(fallback_edges) > len(internal_edges):
+            internal_edges = _planarize_edges(
+                _remove_boundary_coincident_edges(fallback_edges, size)
+            )
+            fallback_stats["sparse_ray_fallback_used"] = 1
+            fallback_stats["sparse_ray_fallback_segments"] = len(internal_edges)
+            fallback_stats["supported_runs"] = len(fallback_runs)
+            pipeline = "sparse_ray_fallback"
+
     internal_edges, camv_repair_stats = _repair_near_focus_camv_violations(
         internal_edges,
         lsd_lines,
         ink,
+        effective_settings,
+    )
+    internal_edges = _planarize_edges(internal_edges)
+    internal_edges, camv_path_stats = _recover_camv_supported_paths(
+        square,
+        ink,
+        internal_edges,
         effective_settings,
     )
     internal_edges = _planarize_edges(internal_edges)
@@ -7405,29 +7729,11 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         **graph_chord_stats,
         **one_ended_stats,
         **local_cycle_stats,
+        **fallback_stats,
         **camv_repair_stats,
+        **camv_path_stats,
         **mv_stats,
     }
-    pipeline = "fused_22_5_graph"
-    if lsd_lines:
-        lines = lsd_lines
-
-    # Sparse monochrome patterns can still lack enough endpoint votes. Retain
-    # the exact Hough rays as a final, conservative fallback.
-    if len(internal_edges) < max(4, len(lines) // 2):
-        fallback_runs, fallback_distance = _supported_runs(
-            lines, ink, effective_settings
-        )
-        fallback_edges = _edges_from_runs(
-            lines,
-            fallback_runs,
-            fallback_distance,
-            effective_settings,
-        )
-        if len(fallback_edges) > len(internal_edges):
-            internal_edges = _remove_boundary_coincident_edges(fallback_edges, size)
-            graph_stats["supported_runs"] = len(fallback_runs)
-            pipeline = "sparse_ray_fallback"
     all_edges = _add_boundaries(internal_edges, size)
     camv_structure = audit_camv_structure(
         [
@@ -7540,6 +7846,14 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "settings": asdict(settings),
     }
     warnings = []
+    if graph_stats.get("camv_path_recheck_improved"):
+        warnings.append(
+            "cAMV 结构复核触发强证据补线："
+            f"经过 {graph_stats['camv_path_recheck_rounds']} 轮，"
+            f"补回 {graph_stats['camv_path_committed_arms']} 条精确节点间射线，"
+            f"结构异常由 {graph_stats['camv_path_violations_before']} 降至 "
+            f"{graph_stats['camv_path_violations_after']}。"
+        )
     if camv_structure["violation_count"]:
         counts = camv_structure["rule_counts"]
         warnings.append(

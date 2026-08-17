@@ -15,6 +15,7 @@ from reconstructor import (
     _planarize_edges,
     _prune_post_planar_lineheads,
     _repair_near_focus_camv_violations,
+    _recover_camv_supported_paths,
     _edge_mv_evidence,
     _assign_and_optimize_mv,
     _propagate_constructible_rays,
@@ -158,6 +159,86 @@ class RootTwoGeometryTest(unittest.TestCase):
         )
         self.assertEqual(stats["camv_near_focus_repairs"], 0)
         self.assertGreater(stats["camv_protected_reanchors_rejected"], 0)
+
+    def test_camv_recheck_recovers_only_strong_exact_contact_arm(self):
+        size = 101
+        square = np.full((size, size, 3), 255, dtype=np.uint8)
+        ink = np.zeros((size, size), dtype=np.uint8)
+        center = np.array([50.0, 50.0])
+        west = np.array([0.0, 50.0])
+        north = np.array([50.0, 0.0])
+        south = np.array([50.0, 100.0])
+        east = np.array([100.0, 50.0])
+        edges = [
+            Edge(center.copy(), west, 4),
+            Edge(center.copy(), north, 4),
+            Edge(center.copy(), south, 4),
+        ]
+        for endpoint in (west, north, south, east):
+            cv2.line(
+                square,
+                tuple(center.astype(int)),
+                tuple(endpoint.astype(int)),
+                (0, 0, 255),
+                1,
+            )
+            cv2.line(
+                ink,
+                tuple(center.astype(int)),
+                tuple(endpoint.astype(int)),
+                255,
+                1,
+            )
+
+        recovered, stats = _recover_camv_supported_paths(
+            square, ink, edges, Settings()
+        )
+
+        self.assertEqual(stats["camv_path_violations_before"], 1)
+        self.assertEqual(stats["camv_path_violations_after"], 0)
+        self.assertEqual(stats["camv_path_committed_arms"], 1)
+        self.assertTrue(
+            any(
+                np.linalg.norm(edge.start - center) < 1e-6
+                and np.linalg.norm(edge.end - east) < 1e-6
+                for edge in recovered
+            )
+        )
+
+    def test_camv_recheck_rolls_back_without_missing_line_evidence(self):
+        size = 101
+        square = np.full((size, size, 3), 255, dtype=np.uint8)
+        ink = np.zeros((size, size), dtype=np.uint8)
+        center = np.array([50.0, 50.0])
+        endpoints = (
+            np.array([0.0, 50.0]),
+            np.array([50.0, 0.0]),
+            np.array([50.0, 100.0]),
+        )
+        edges = [Edge(center.copy(), endpoint.copy(), 4) for endpoint in endpoints]
+        for endpoint in endpoints:
+            cv2.line(
+                square,
+                tuple(center.astype(int)),
+                tuple(endpoint.astype(int)),
+                (0, 0, 255),
+                1,
+            )
+            cv2.line(
+                ink,
+                tuple(center.astype(int)),
+                tuple(endpoint.astype(int)),
+                255,
+                1,
+            )
+
+        recovered, stats = _recover_camv_supported_paths(
+            square, ink, edges, Settings()
+        )
+
+        self.assertEqual(stats["camv_path_recheck_improved"], 0)
+        self.assertEqual(stats["camv_path_committed_arms"], 0)
+        self.assertEqual(len(recovered), len(edges))
 
     def test_unsupported_local_cycle_edge_is_removed(self):
         size = 121

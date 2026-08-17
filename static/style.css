@@ -90,7 +90,7 @@ h1 span { color: var(--green); }
 .results { padding: 26px; min-width: 0; }
 .empty-state, .loading { min-height: 620px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .empty-state p, .loading p { margin: 22px 0 4px; font-weight: 700; }
-.empty-state small { color: var(--muted); }
+.empty-state small, .loading small { color: var(--muted); }
 .ray-mark { width: 100px; height: 100px; position: relative; }
 .ray-mark i { position: absolute; left: 50%; top: 50%; width: 90px; height: 1px; background: var(--ink); transform-origin: left; }
 .ray-mark i:nth-child(2) { transform: rotate(22.5deg); }
@@ -127,4 +127,3 @@ h1 span { color: var(--green); }
   .workspace { min-height: 0; }
   .stats { grid-template-columns: repeat(2, 1fr); }
 }
-
