@@ -1,0 +1,4 @@
+Flask>=3.0,<4
+numpy>=2.0,<3
+opencv-python>=4.10,<5
+
