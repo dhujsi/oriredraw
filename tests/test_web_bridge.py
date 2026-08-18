@@ -5,7 +5,11 @@ from unittest.mock import patch
 import numpy as np
 import cv2
 
-from web_bridge import reconstruct_for_web_json, rectify_for_web_json
+from web_bridge import (
+    _filter_anchors_to_final_output,
+    reconstruct_for_web_json,
+    rectify_for_web_json,
+)
 
 
 class WebBridgeTest(unittest.TestCase):
@@ -33,6 +37,32 @@ class WebBridgeTest(unittest.TestCase):
         settings = mocked.call_args.kwargs["settings"]
         self.assertEqual(settings.angle_tolerance_deg, 4.5)
         self.assertEqual(settings.construction_offset_tolerance_px, 5.4)
+
+    def test_playback_anchors_are_limited_to_final_cp_lines(self):
+        result = {
+            "cp": "2 -200 0 200 0\n",
+            "stats": {"analysis_size_used": 101},
+            "anchors": [
+                {
+                    "angle": 0.0,
+                    "line_offset_px": 50.0,
+                    "anchor_point_px": [0.0, 50.0],
+                    "generation": 0,
+                    "source": "kept",
+                },
+                {
+                    "angle": 0.0,
+                    "line_offset_px": 25.0,
+                    "anchor_point_px": [0.0, 25.0],
+                    "generation": 0,
+                    "source": "discarded",
+                },
+            ],
+        }
+
+        _filter_anchors_to_final_output(result)
+
+        self.assertEqual([item["source"] for item in result["anchors"]], ["kept"])
 
     def test_rectify_bridge_returns_downloadable_square_png(self):
         image = np.full((160, 220, 3), 255, np.uint8)
