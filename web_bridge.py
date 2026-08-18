@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Callable, Mapping
 
 import numpy as np
@@ -38,6 +39,79 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
+def _final_cp_segments(cp_text: str, maximum: float) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Return only internal final-output CP segments in reconstruction pixels."""
+    if maximum <= 0:
+        return []
+    segments: list[tuple[np.ndarray, np.ndarray]] = []
+    for row in str(cp_text or "").splitlines():
+        parts = row.split()
+        if len(parts) < 5:
+            continue
+        try:
+            line_type = int(parts[0])
+            values = [float(value) for value in parts[1:5]]
+        except ValueError:
+            continue
+        if line_type not in {2, 3}:
+            continue
+        x1, y1, x2, y2 = [
+            (value + 200.0) * maximum / 400.0 for value in values
+        ]
+        segments.append(
+            (
+                np.array([x1, y1], dtype=float),
+                np.array([x2, y2], dtype=float),
+            )
+        )
+    return segments
+
+
+def _filter_anchors_to_final_output(result: dict[str, Any]) -> None:
+    """Keep construction rays that actually survive into the exported CP.
+
+    The reconstructor intentionally retains more exact construction rays than
+    the graph emitted at the end. Those rays are useful diagnostics, but a
+    derivation player must not present pruned search/repair geometry as part of
+    the final construction history.
+    """
+    anchors = list(result.get("anchors") or [])
+    size = int(result.get("stats", {}).get("analysis_size_used") or 0)
+    maximum = float(size - 1)
+    segments = _final_cp_segments(result.get("cp", ""), maximum)
+    if not anchors or not segments:
+        result["anchors"] = [] if anchors else anchors
+        return
+
+    filtered: list[dict[str, Any]] = []
+    for anchor in anchors:
+        try:
+            angle = math.radians(float(anchor["angle"]))
+            offset = float(anchor["line_offset_px"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        direction = np.array([math.cos(angle), math.sin(angle)], dtype=float)
+        normal = np.array([-direction[1], direction[0]], dtype=float)
+        used = False
+        for start, end in segments:
+            delta = end - start
+            length = float(np.linalg.norm(delta))
+            if length <= 1e-7:
+                continue
+            parallel = abs(float(delta @ direction) / length)
+            if parallel < 0.999999:
+                continue
+            if (
+                abs(float(normal @ start) - offset) <= 0.12
+                and abs(float(normal @ end) - offset) <= 0.12
+            ):
+                used = True
+                break
+        if used:
+            filtered.append(anchor)
+    result["anchors"] = filtered
+
+
 def reconstruct_for_web(
     image_bytes: bytes,
     settings_mapping: Mapping[str, Any] | None = None,
@@ -50,6 +124,7 @@ def reconstruct_for_web(
         settings=settings,
         progress_callback=progress_callback,
     )
+    _filter_anchors_to_final_output(result)
     optional_defaults = {
         "id": "strict",
         "label": "严格 22.5°",
