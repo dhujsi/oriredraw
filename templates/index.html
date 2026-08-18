@@ -8,12 +8,18 @@
   <link rel="stylesheet" href="./style.css">
   <style>
     .shell { padding-bottom: 18px; }
-    .hero { position: relative; }
     .workspace { min-height: 0; }
     .empty-state, .loading { min-height: 0; height: 100%; }
-    .page-tools { position: absolute; top: 15px; right: 0; display: flex; align-items: center; gap: 7px; z-index: 2; }
-    .page-tools a, .page-tools button { min-height: 32px; border: 1px solid var(--line); background: rgba(251, 250, 246, .94); color: var(--ink); padding: 6px 9px; font: 700 10px/1.2 ui-monospace, Consolas, monospace; text-decoration: none; cursor: pointer; }
-    .page-tools a:hover, .page-tools button:hover { border-color: var(--ink); background: #fff; }
+    .page-tools { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 14px; padding: 10px 2px 0; border-top: 1px solid var(--line); }
+    .page-tools a, .page-tools button { display: inline-flex; align-items: center; gap: 6px; min-height: 0; border: 0; background: none; color: var(--muted); padding: 3px 1px; font: 700 10px/1.2 ui-monospace, Consolas, monospace; text-decoration: none; cursor: pointer; opacity: .78; }
+    .page-tools a:hover, .page-tools button:hover { color: var(--ink); opacity: 1; }
+    .page-tools .github-mark { width: 15px; height: 15px; fill: currentColor; flex: 0 0 auto; }
+    #language-toggle { width: 24px; justify-content: center; font-size: 0; }
+    #language-toggle::after { content: '🇨🇳'; font: 16px/1 sans-serif; }
+    html[lang="en"] #language-toggle::after { content: '🇬🇧'; }
+    .lang-en { display: none; }
+    html[lang="en"] .lang-zh { display: none; }
+    html[lang="en"] .lang-en { display: inline; }
     .input-notice { padding: 15px 16px; border-left-width: 4px; }
     .input-notice strong { font-size: 17px; }
     .input-notice p { margin-top: 7px; font-size: 13px; line-height: 1.7; }
@@ -54,12 +60,8 @@
       .input-notice strong { font-size: 16px; }
       .input-notice p { font-size: 12px; line-height: 1.6; }
     }
-    @media (max-width: 900px) {
-      .page-tools { position: static; grid-column: 1 / -1; justify-self: end; order: -1; }
-    }
     @media (max-width: 520px) {
-      .page-tools { justify-self: stretch; }
-      .page-tools a { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .page-tools { justify-content: center; }
       .welcome-actions { flex-direction: column; }
       .welcome-actions a, .welcome-actions button { text-align: center; }
     }
@@ -68,10 +70,6 @@
 <body>
   <main class="shell">
     <header class="hero">
-      <nav class="page-tools" aria-label="Project links">
-        <a id="repository-link" href="https://github.com/dhujsi/oriredraw" target="_blank" rel="noopener noreferrer">GitHub · dhujsi/oriredraw</a>
-        <button id="language-toggle" type="button">EN</button>
-      </nav>
       <div>
         <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
         <h1 data-i18n-html="heroTitle">将图片 CP 重绘为<br><span>.cp 文件</span></h1>
@@ -89,62 +87,193 @@
             <span data-i18n="start">开始重绘</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
+
           <label class="drop-zone" id="drop-zone">
             <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
             <strong data-i18n="upload">选择、拖入或粘贴 CP 图片</strong>
             <small data-i18n="uploadMeta">PNG / JPG · 最大 12 MB</small>
             <span class="file-name" id="file-name" data-i18n="noFile">尚未选择文件</span>
           </label>
+
           <div class="input-notice">
             <strong data-i18n="requirementsTitle">上传要求</strong>
-            <p data-i18n="requirements1">仅支持白底红蓝线或白底黑线。CP 本体尽量无遮挡并保持正方形，程序会自动裁剪周围其他区域。暂时仅支持 22.5° 系设计。</p>
+            <p><span class="lang-zh">仅支持白底红蓝线或白底黑线。CP 务必完整、不缺角，尽量无遮挡并保持接近正方形；程序会自动裁剪外围无关区域。暂时仅支持 22.5° 系设计。</span><span class="lang-en">White-background red/blue lines or white-background black lines only. The CP must be complete with all four corners visible, as unobstructed as possible, and approximately square; irrelevant surrounding areas are cropped automatically. Currently only 22.5°-system designs are supported.</span></p>
             <p data-i18n="requirements2">如果是拍照产生透视变形的 CP，可先用下方“透视校正”拉成正方形，再交给豆包等 AI 处理成白底线稿。</p>
           </div>
+
           <details class="paper-tool" id="paper-tool">
             <summary data-closed-label="展开" data-open-label="收起">
               <span class="paper-tool-copy"><strong id="rectify-title" data-i18n="perspective">透视校正</strong><small data-i18n="perspectiveSummary">拍照变形时，先把纸张四角拉正成正方形</small></span>
             </summary>
             <div class="paper-tool-body">
               <small class="paper-mode-label" id="paper-mode-label" data-i18n="perspectiveMode">只负责四角还原，不会开始 CP 识别</small>
-              <label class="rectify-picker"><input id="rectify-input" type="file" accept="image/png,image/jpeg"><span data-i18n="rectifyPick">选择或粘贴需要拉正的变形图</span></label>
+              <label class="rectify-picker">
+                <input id="rectify-input" type="file" accept="image/png,image/jpeg">
+                <span data-i18n="rectifyPick">选择或粘贴需要拉正的变形图</span>
+              </label>
               <button type="button" id="corner-toggle" disabled data-i18n="adjustCorners">调整四角锚点</button>
-              <div class="rectified-result hidden" id="rectified-result"><img id="rectified-preview" alt="四角透视还原后的正方形图片"><div><small id="rectified-meta"></small><button type="button" id="rectified-download">下载正方形 PNG</button></div></div>
+              <div class="rectified-result hidden" id="rectified-result">
+                <img id="rectified-preview" alt="四角透视还原后的正方形图片">
+                <div><small id="rectified-meta"></small><button type="button" id="rectified-download">下载正方形 PNG</button></div>
+              </div>
               <div class="corner-editor hidden" id="corner-editor" role="dialog" aria-modal="true" aria-labelledby="corner-title">
                 <div class="corner-dialog">
-                  <div class="corner-editor-head"><div><strong id="corner-title" data-i18n="cornerTitle">校准图片四角</strong><small id="corner-instruction" data-i18n="cornerInstruction">先在原图粗调四角，再裁剪放大继续精调</small></div><button type="button" id="corner-done" class="corner-done" data-i18n="cornerDone">完成并生成正方形</button></div>
-                  <div class="corner-stage"><canvas class="corner-main-canvas" id="corner-canvas" aria-label="拖动四个十字准星到目标四角"></canvas><div class="corner-loupe" id="corner-loupe" aria-live="polite"><span id="corner-loupe-label">1 左上 · 局部放大</span><canvas id="corner-loupe-canvas" width="200" height="200" aria-label="当前准星局部放大视图"></canvas></div></div>
-                  <div class="corner-editor-foot"><div><div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div><small data-i18n="cornerHelp">依次对准左上、右上、右下、左下；输出保持原图可用分辨率。</small></div><div class="corner-actions"><button type="button" id="corner-crop" class="corner-crop" data-i18n="cornerCrop">按四角裁剪并放大</button><button type="button" id="corner-full" data-i18n="cornerFull">查看原图</button><button type="button" id="corner-reset" data-i18n="cornerReset">重置四角</button><button type="button" id="corner-disable" data-i18n="cancel">取消</button></div></div>
+                  <div class="corner-editor-head">
+                    <div>
+                      <strong id="corner-title" data-i18n="cornerTitle">校准图片四角</strong>
+                      <small id="corner-instruction" data-i18n="cornerInstruction">先在原图粗调四角，再裁剪放大继续精调</small>
+                    </div>
+                    <button type="button" id="corner-done" class="corner-done" data-i18n="cornerDone">完成并生成正方形</button>
+                  </div>
+                  <div class="corner-stage">
+                    <canvas class="corner-main-canvas" id="corner-canvas" aria-label="拖动四个十字准星到目标四角"></canvas>
+                    <div class="corner-loupe" id="corner-loupe" aria-live="polite">
+                      <span id="corner-loupe-label">1 左上 · 局部放大</span>
+                      <canvas id="corner-loupe-canvas" width="200" height="200" aria-label="当前准星局部放大视图"></canvas>
+                    </div>
+                  </div>
+                  <div class="corner-editor-foot">
+                    <div>
+                      <div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div>
+                      <small data-i18n="cornerHelp">依次对准左上、右上、右下、左下；输出保持原图可用分辨率。</small>
+                    </div>
+                    <div class="corner-actions">
+                      <button type="button" id="corner-crop" class="corner-crop" data-i18n="cornerCrop">按四角裁剪并放大</button>
+                      <button type="button" id="corner-full" data-i18n="cornerFull">查看原图</button>
+                      <button type="button" id="corner-reset" data-i18n="cornerReset">重置四角</button>
+                      <button type="button" id="corner-disable" data-i18n="cancel">取消</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </details>
+
           <details class="advanced">
             <summary data-i18n="advanced">高级设置</summary>
-            <div class="parameter mode-parameter"><div><label for="mv-mode" data-i18n="mvMode">线条颜色</label></div><select id="mv-mode" name="mv_mode"><option value="auto" data-i18n="mvAuto">自动判断红蓝 / 纯黑</option><option value="color" data-i18n="mvColor">强制按红蓝图识别</option><option value="monochrome" data-i18n="mvMono">纯黑线：统一按峰线导出</option></select><small data-i18n="mvHint">纯黑图没有峰谷信息；程序只重绘几何，不用 cAMV 猜颜色。</small></div>
-            <div class="parameter"><div><label for="angle-mode" data-i18n="angle">像素线方向误差</label><output id="angle-value">自动</output></div><select id="angle-mode" name="angle_tolerance_mode"><option value="auto" data-i18n="autoRecommended">自动（推荐）</option><option value="manual" data-i18n="manual">手动上限</option></select><input id="angle" class="hidden" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="3"><small data-i18n="angleHint">只判断模糊像素是否可能来自合法线；不会把近似角度写进 .cp。四角校正后自动上限为 3°。</small></div>
-            <div class="parameter"><div><label for="support" data-i18n="support">线段证据</label><output id="support-value">58%</output></div><input id="support" name="output_support" type="range" min="0.35" max="0.85" step="0.01" value="0.58"><small data-i18n="supportHint">提高可减少误线，降低可找回较短或较淡的线。</small></div>
-            <div class="parameter"><div><label for="algebraic" data-i18n="sqrtSnap">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div><input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3"></div>
-            <div class="parameter"><div><label for="construction-offset" data-i18n="offset">构造与观测偏移上限</label><output id="construction-offset-value">4.8px</output></div><input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8"><small data-i18n="offsetHint">只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。</small></div>
-            <label class="variant-option"><input id="construction-variants" type="checkbox" checked><span><strong data-i18n="variants">生成精确备选构造版本</strong><small data-i18n="variantsHint">仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span></label>
+            <div class="parameter mode-parameter">
+              <div><label for="mv-mode" data-i18n="mvMode">线条颜色</label></div>
+              <select id="mv-mode" name="mv_mode">
+                <option value="auto" data-i18n="mvAuto">自动判断红蓝 / 纯黑</option>
+                <option value="color" data-i18n="mvColor">强制按红蓝图识别</option>
+                <option value="monochrome" data-i18n="mvMono">纯黑线：统一按峰线导出</option>
+              </select>
+              <small data-i18n="mvHint">纯黑图没有峰谷信息；程序只重绘几何，不用 cAMV 猜颜色。</small>
+            </div>
+
+            <div class="parameter">
+              <div><label for="angle-mode" data-i18n="angle">像素线方向误差</label><output id="angle-value">自动</output></div>
+              <select id="angle-mode" name="angle_tolerance_mode">
+                <option value="auto" data-i18n="autoRecommended">自动（推荐）</option>
+                <option value="manual" data-i18n="manual">手动上限</option>
+              </select>
+              <input id="angle" class="hidden" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="3">
+              <small data-i18n="angleHint">只判断模糊像素是否可能来自合法线；不会把近似角度写进 .cp。四角校正后自动上限为 3°。</small>
+            </div>
+
+            <div class="parameter">
+              <div><label for="support" data-i18n="support">线段证据</label><output id="support-value">58%</output></div>
+              <input id="support" name="output_support" type="range" min="0.35" max="0.85" step="0.01" value="0.58">
+              <small data-i18n="supportHint">提高可减少误线，降低可找回较短或较淡的线。</small>
+            </div>
+
+            <div class="parameter">
+              <div><label for="algebraic" data-i18n="sqrtSnap">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div>
+              <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
+            </div>
+
+            <div class="parameter">
+              <div><label for="construction-offset" data-i18n="offset">构造与观测偏移上限</label><output id="construction-offset-value">4.8px</output></div>
+              <input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8">
+              <small data-i18n="offsetHint">只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。</small>
+            </div>
+
+            <label class="variant-option">
+              <input id="construction-variants" type="checkbox" checked>
+              <span><strong data-i18n="variants">生成精确备选构造版本</strong><small data-i18n="variantsHint">仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
+            </label>
           </details>
         </form>
       </aside>
+
       <section class="results panel">
-        <div class="empty-state" id="empty-state"><p class="empty-ready-title" data-i18n="waiting">等待一张折痕图</p><div class="engine-status" id="engine-status" data-state="loading" aria-live="polite"><span></span><p data-i18n="engineLoading">正在准备浏览器识别引擎…</p></div><small class="empty-ready-copy" data-i18n="emptyCopy">重绘结果会在这里与原图叠加显示</small></div>
-        <div id="loading" class="loading hidden" aria-live="polite"><span></span><p id="loading-stage" data-i18n="loadingInitial">正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small data-i18n="loadingSlow">复杂图可能需要数分钟甚至更久，请保持页面开启</small><div class="progress-block"><div class="progress-track" id="loading-progress" role="progressbar" aria-label="重绘进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><b id="loading-progress-value">0%</b></div></div>
+        <div class="empty-state" id="empty-state">
+          <p class="empty-ready-title" data-i18n="waiting">等待一张折痕图</p>
+          <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
+            <span></span><p data-i18n="engineLoading">正在准备浏览器识别引擎…</p>
+          </div>
+          <small class="empty-ready-copy" data-i18n="emptyCopy">重绘结果会在这里与原图叠加显示</small>
+        </div>
+
+        <div id="loading" class="loading hidden" aria-live="polite">
+          <span></span><p id="loading-stage" data-i18n="loadingInitial">正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small data-i18n="loadingSlow">复杂图可能需要数分钟甚至更久，请保持页面开启</small>
+          <div class="progress-block">
+            <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重绘进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+            <b id="loading-progress-value">0%</b>
+          </div>
+        </div>
+
         <div id="result-content" class="hidden">
-          <div class="result-head"><div><p class="eyebrow">REDRAW</p><h2 data-i18n="resultTitle">重绘结果</h2></div><button id="download" class="download" data-i18n="download">下载 .cp</button></div>
+          <div class="result-head">
+            <div>
+              <p class="eyebrow">REDRAW</p>
+              <h2 data-i18n="resultTitle">重绘结果</h2>
+            </div>
+            <button id="download" class="download" data-i18n="download">下载 .cp</button>
+          </div>
+
           <div class="version-tabs hidden" id="version-tabs" role="tablist" aria-label="构造版本"></div>
-          <div class="view-tabs" role="tablist" aria-label="预览方式"><button class="active" data-view="overlay" role="tab" aria-selected="true" data-i18n="overlay">叠加检查</button><button data-view="clean" role="tab" aria-selected="false" data-i18n="clean">纯重绘</button></div>
-          <div class="result-visuals"><figure class="preview"><img id="preview-image" alt="折痕重绘预览"></figure><aside class="core-point-card" id="core-point-card"><span>CORE POINT</span><canvas id="core-point-canvas" width="180" height="180" aria-label="核心点位置示意"></canvas><strong id="core-point-title" data-i18n="coreNone">未使用额外核心点</strong><code id="core-point-coordinate">—</code><small data-i18n="coreHint">坐标采用纸张中心为原点的归一化 a+b√2 表示。</small></aside></div>
-          <div id="warnings" class="warnings"></div><div id="stats" class="stats"></div>
-          <details class="anchors"><summary><span data-i18n="anchors">查看种子与迭代构造来源</span> <span id="anchor-count"></span></summary><div class="anchor-table" id="anchor-table"></div></details>
-          <details class="constructions hidden" id="construction-details"><summary><span data-i18n="constructions">查看本版本新增的精确构造</span> <span id="construction-count"></span></summary><div class="construction-list" id="construction-list"></div></details>
+
+          <div class="view-tabs" role="tablist" aria-label="预览方式">
+            <button class="active" data-view="overlay" role="tab" aria-selected="true" data-i18n="overlay">叠加检查</button>
+            <button data-view="clean" role="tab" aria-selected="false" data-i18n="clean">纯重绘</button>
+          </div>
+          <div class="result-visuals">
+            <figure class="preview"><img id="preview-image" alt="折痕重绘预览"></figure>
+            <aside class="core-point-card" id="core-point-card">
+              <span>CORE POINT</span>
+              <canvas id="core-point-canvas" width="180" height="180" aria-label="核心点位置示意"></canvas>
+              <strong id="core-point-title" data-i18n="coreNone">未使用额外核心点</strong>
+              <code id="core-point-coordinate">—</code>
+              <small data-i18n="coreHint">坐标采用纸张中心为原点的归一化 a+b√2 表示。</small>
+            </aside>
+          </div>
+
+          <div id="warnings" class="warnings"></div>
+          <div id="stats" class="stats"></div>
+
+          <details class="anchors">
+            <summary><span data-i18n="anchors">查看种子与迭代构造来源</span> <span id="anchor-count"></span></summary>
+            <div class="anchor-table" id="anchor-table"></div>
+          </details>
+          <details class="constructions hidden" id="construction-details">
+            <summary><span data-i18n="constructions">查看本版本新增的精确构造</span> <span id="construction-count"></span></summary>
+            <div class="construction-list" id="construction-list"></div>
+          </details>
         </div>
       </section>
     </section>
+
+    <nav class="page-tools" aria-label="Project links">
+      <a id="repository-link" href="https://github.com/dhujsi/oriredraw" target="_blank" rel="noopener noreferrer">
+        <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.81c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <button id="language-toggle" type="button" aria-label="Switch to English">🇨🇳</button>
+    </nav>
   </main>
-  <dialog class="welcome-dialog" id="welcome-dialog"><div class="welcome-dialog-inner"><h2 data-i18n="welcomeTitle">欢迎使用 Oriedraw</h2><p data-i18n="welcomeBody">项目仍在持续迭代。遇到识别问题、异常结果，或者有改进建议，欢迎在 GitHub Issues 提交反馈。图片只在当前浏览器中处理。</p><div class="welcome-actions"><a href="https://github.com/dhujsi/oriredraw/issues" target="_blank" rel="noopener noreferrer" data-i18n="welcomeIssues">前往 GitHub Issues</a><button id="welcome-close" type="button" data-i18n="welcomeClose">知道了</button></div></div></dialog>
+
+  <dialog class="welcome-dialog" id="welcome-dialog">
+    <div class="welcome-dialog-inner">
+      <h2 data-i18n="welcomeTitle">欢迎使用 Oriedraw</h2>
+      <p data-i18n="welcomeBody">项目仍在持续迭代。遇到识别问题、异常结果，或者有改进建议，欢迎在 GitHub Issues 提交反馈。图片只在当前浏览器中处理。</p>
+      <div class="welcome-actions">
+        <a href="https://github.com/dhujsi/oriredraw/issues" target="_blank" rel="noopener noreferrer" data-i18n="welcomeIssues">前往 GitHub Issues</a>
+        <button id="welcome-close" type="button" data-i18n="welcomeClose">知道了</button>
+      </div>
+    </div>
+  </dialog>
+
   <script type="module" src="./i18n.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
