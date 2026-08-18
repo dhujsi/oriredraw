@@ -19,6 +19,8 @@ const cornerToggle = document.querySelector('#corner-toggle');
 const cornerEditor = document.querySelector('#corner-editor');
 const cornerCanvas = document.querySelector('#corner-canvas');
 const cornerReset = document.querySelector('#corner-reset');
+const cornerDone = document.querySelector('#corner-done');
+const cornerDisable = document.querySelector('#corner-disable');
 const angleMode = document.querySelector('#angle-mode');
 const angleInput = document.querySelector('#angle');
 const versionTabs = document.querySelector('#version-tabs');
@@ -112,27 +114,38 @@ function drawCornerEditor() {
   context.clearRect(0, 0, cornerCanvas.width, cornerCanvas.height);
   context.drawImage(sourceBitmap, 0, 0, cornerCanvas.width, cornerCanvas.height);
   const points = cornerPoints.map(([x, y]) => [x * cornerCanvas.width, y * cornerCanvas.height]);
+  const markerScale = Math.max(1, Math.max(cornerCanvas.width, cornerCanvas.height) / 1200);
+  const markerArm = 11 * markerScale;
+  const markerGap = 2.5 * markerScale;
   context.save();
   context.strokeStyle = '#c7ff2f';
-  context.lineWidth = Math.max(2, cornerCanvas.width / 300);
-  context.shadowColor = 'rgba(0,0,0,.65)';
-  context.shadowBlur = 3;
+  context.lineWidth = 1.25 * markerScale;
+  context.shadowColor = 'rgba(0,0,0,.9)';
+  context.shadowBlur = 1.5 * markerScale;
   context.beginPath();
   points.forEach(([x, y], index) => index ? context.lineTo(x, y) : context.moveTo(x, y));
   context.closePath();
   context.stroke();
   points.forEach(([x, y], index) => {
+    const active = index === draggedCorner;
     context.beginPath();
-    context.fillStyle = index === draggedCorner ? '#171714' : '#c7ff2f';
-    context.arc(x, y, Math.max(7, cornerCanvas.width / 65), 0, Math.PI * 2);
-    context.fill();
-    context.strokeStyle = '#171714';
+    context.strokeStyle = active ? '#ff4b3e' : '#c7ff2f';
+    context.lineWidth = 1.25 * markerScale;
+    context.moveTo(x - markerArm, y);
+    context.lineTo(x - markerGap, y);
+    context.moveTo(x + markerGap, y);
+    context.lineTo(x + markerArm, y);
+    context.moveTo(x, y - markerArm);
+    context.lineTo(x, y - markerGap);
+    context.moveTo(x, y + markerGap);
+    context.lineTo(x, y + markerArm);
     context.stroke();
-    context.fillStyle = index === draggedCorner ? '#c7ff2f' : '#171714';
-    context.font = `700 ${Math.max(9, cornerCanvas.width / 58)}px ui-monospace`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(String(index + 1), x, y);
+    context.shadowBlur = 2 * markerScale;
+    context.fillStyle = active ? '#ff4b3e' : '#c7ff2f';
+    context.font = `700 ${10 * markerScale}px ui-monospace`;
+    context.textAlign = 'left';
+    context.textBaseline = 'bottom';
+    context.fillText(String(index + 1), x + 7 * markerScale, y - 7 * markerScale);
   });
   context.restore();
 }
@@ -140,7 +153,7 @@ function drawCornerEditor() {
 async function prepareCornerEditor(file) {
   sourceBitmap?.close?.();
   sourceBitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 900 / Math.max(sourceBitmap.width, sourceBitmap.height));
+  const scale = Math.min(1, 1600 / Math.max(sourceBitmap.width, sourceBitmap.height));
   cornerCanvas.width = Math.max(1, Math.round(sourceBitmap.width * scale));
   cornerCanvas.height = Math.max(1, Math.round(sourceBitmap.height * scale));
   resetCornerPoints();
@@ -157,10 +170,13 @@ function pointerPosition(event) {
 
 cornerCanvas.addEventListener('pointerdown', event => {
   const [x, y] = pointerPosition(event);
-  draggedCorner = cornerPoints.reduce((best, point, index) => {
-    const distance = Math.hypot(point[0] - x, point[1] - y);
+  const box = cornerCanvas.getBoundingClientRect();
+  const nearest = cornerPoints.reduce((best, point, index) => {
+    const distance = Math.hypot((point[0] - x) * box.width, (point[1] - y) * box.height);
     return distance < best.distance ? { index, distance } : best;
-  }, { index: -1, distance: Infinity }).index;
+  }, { index: -1, distance: Infinity });
+  if (nearest.distance > 30) return;
+  draggedCorner = nearest.index;
   cornerCanvas.setPointerCapture(event.pointerId);
   cornerPoints[draggedCorner] = [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
   drawCornerEditor();
@@ -180,15 +196,37 @@ function releaseCorner(event) {
 cornerCanvas.addEventListener('pointerup', releaseCorner);
 cornerCanvas.addEventListener('pointercancel', releaseCorner);
 
+function closeCornerEditor() {
+  cornerEditor.classList.add('hidden');
+  document.body.classList.remove('corner-editor-open');
+}
+
 cornerToggle.addEventListener('click', () => {
-  perspectiveEnabled = !perspectiveEnabled;
-  cornerEditor.classList.toggle('hidden', !perspectiveEnabled);
+  perspectiveEnabled = true;
+  cornerEditor.classList.remove('hidden');
+  document.body.classList.add('corner-editor-open');
   cornerToggle.classList.toggle('active', perspectiveEnabled);
-  cornerToggle.textContent = perspectiveEnabled ? '已启用四角校正' : '拍照图：调整四角';
-  paperModeLabel.textContent = perspectiveEnabled ? '按四个铆钉做透视还原' : '自动寻找并裁切';
-  if (perspectiveEnabled) drawCornerEditor();
+  cornerToggle.textContent = '重新调整四角';
+  paperModeLabel.textContent = '按四个准星做透视还原';
+  drawCornerEditor();
 });
 cornerReset.addEventListener('click', resetCornerPoints);
+cornerDone.addEventListener('click', () => {
+  closeCornerEditor();
+  cornerToggle.focus();
+});
+cornerDisable.addEventListener('click', () => {
+  perspectiveEnabled = false;
+  closeCornerEditor();
+  cornerToggle.classList.remove('active');
+  cornerToggle.textContent = '拍照图：调整四角';
+  paperModeLabel.textContent = '自动寻找并裁切';
+  cornerToggle.focus();
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || cornerEditor.classList.contains('hidden')) return;
+  cornerDone.click();
+});
 
 function selectFile(file) {
   if (!file) return;
@@ -216,6 +254,7 @@ input.addEventListener('change', () => {
 function prepareSelectedImage(file) {
   perspectiveEnabled = false;
   cornerEditor.classList.add('hidden');
+  document.body.classList.remove('corner-editor-open');
   cornerToggle.classList.remove('active');
   cornerToggle.textContent = '拍照图：调整四角';
   paperModeLabel.textContent = '自动寻找并裁切';
@@ -235,6 +274,23 @@ for (const eventName of ['dragleave', 'drop']) {
   });
 }
 dropZone.addEventListener('drop', event => selectFile(event.dataTransfer.files[0]));
+
+window.addEventListener('paste', event => {
+  const imageItem = Array.from(event.clipboardData?.items || []).find(item =>
+    item.kind === 'file' && ['image/png', 'image/jpeg'].includes(item.type)
+  );
+  if (!imageItem) return;
+  event.preventDefault();
+  const clipboardFile = imageItem.getAsFile();
+  if (!clipboardFile) return;
+  const extension = clipboardFile.type === 'image/jpeg' ? 'jpg' : 'png';
+  const pastedFile = new File(
+    [clipboardFile],
+    `clipboard-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`,
+    { type: clipboardFile.type, lastModified: Date.now() },
+  );
+  selectFile(pastedFile);
+});
 
 uploadForm.addEventListener('submit', async event => {
   event.preventDefault();

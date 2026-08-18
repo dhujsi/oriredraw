@@ -26,8 +26,8 @@
           <label class="drop-zone" id="drop-zone">
             <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
             <span class="drop-index">01</span>
-            <strong>放入包含 CP 纸张的图片</strong>
-            <small>截图自动裁纸；拍照图可校正四角 · PNG / JPG · 12 MB</small>
+            <strong>选择、拖入或粘贴 CP 图片</strong>
+            <small>点击选择 · 拖到这里 · Ctrl+V 粘贴 · PNG / JPG · 12 MB</small>
             <span class="file-name" id="file-name">尚未选择文件</span>
           </label>
 
@@ -40,11 +40,29 @@
               <div><strong>纸张范围</strong><small id="paper-mode-label">自动寻找并裁切</small></div>
               <button type="button" id="corner-toggle">拍照图：调整四角</button>
             </div>
-            <div class="corner-editor hidden" id="corner-editor">
-              <canvas id="corner-canvas" aria-label="拖动四个铆钉到纸张四角"></canvas>
-              <div class="corner-help"><span>左上</span><span>右上</span><span>右下</span><span>左下</span></div>
-              <small>四个点放在同一张平整纸的外框角上。程序先把梯形还原为正方形，再识别折痕。</small>
-              <button type="button" id="corner-reset">重置铆钉</button>
+            <div class="corner-editor hidden" id="corner-editor" role="dialog" aria-modal="true" aria-labelledby="corner-title">
+              <div class="corner-dialog">
+                <div class="corner-editor-head">
+                  <div>
+                    <strong id="corner-title">校准纸张四角</strong>
+                    <small>拖动十字准星，使中心空隙精确对准纸张外框角</small>
+                  </div>
+                  <button type="button" id="corner-done" class="corner-done">完成校准</button>
+                </div>
+                <div class="corner-stage">
+                  <canvas id="corner-canvas" aria-label="拖动四个十字准星到纸张四角"></canvas>
+                </div>
+                <div class="corner-editor-foot">
+                  <div>
+                    <div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div>
+                    <small>十字中心留空，不会盖住角点。四角必须属于同一张平整纸。</small>
+                  </div>
+                  <div class="corner-actions">
+                    <button type="button" id="corner-reset">重置四角</button>
+                    <button type="button" id="corner-disable">改用自动裁纸</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
