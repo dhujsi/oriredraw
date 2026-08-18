@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 
 from web_bridge import (
+    _build_playback_trace,
     _filter_anchors_to_final_output,
     reconstruct_for_web_json,
     rectify_for_web_json,
@@ -34,6 +35,7 @@ class WebBridgeTest(unittest.TestCase):
 
         self.assertEqual(payload["stats"]["internal_segments"], 1)
         self.assertNotIn("overlay_image", payload)
+        self.assertIn("playback_trace", payload)
         settings = mocked.call_args.kwargs["settings"]
         self.assertEqual(settings.angle_tolerance_deg, 4.5)
         self.assertEqual(settings.construction_offset_tolerance_px, 5.4)
@@ -63,6 +65,100 @@ class WebBridgeTest(unittest.TestCase):
         _filter_anchors_to_final_output(result)
 
         self.assertEqual([item["source"] for item in result["anchors"]], ["kept"])
+
+    def test_playback_trace_keeps_only_final_rays_and_required_auxiliary_ancestors(self):
+        result = {
+            "cp": "2 -200 0 200 0\n2 0 -200 0 200\n",
+            "stats": {"analysis_size_used": 101},
+            "anchors": [
+                {
+                    "angle": 0.0,
+                    "line_offset_px": 50.0,
+                    "anchor_point_px": [0.0, 50.0],
+                    "generation": 0,
+                    "source": "结果种子",
+                    "parents": None,
+                },
+                {
+                    "angle": 45.0,
+                    "line_offset_px": 0.0,
+                    "anchor_point_px": [0.0, 0.0],
+                    "generation": 0,
+                    "source": "纯辅助种子",
+                    "parents": None,
+                },
+                {
+                    "angle": 90.0,
+                    "line_offset_px": -50.0,
+                    "anchor_point_px": [50.0, 50.0],
+                    "generation": 1,
+                    "source": "第 1 代交点",
+                    "parents": [0, 1],
+                },
+                {
+                    "angle": 0.0,
+                    "line_offset_px": 25.0,
+                    "anchor_point_px": [0.0, 25.0],
+                    "generation": 0,
+                    "source": "无关候选",
+                    "parents": None,
+                },
+            ],
+        }
+
+        _build_playback_trace(result)
+
+        trace = {item["source"]: item for item in result["playback_trace"]}
+        self.assertEqual(
+            set(trace),
+            {"结果种子", "纯辅助种子", "第 1 代交点"},
+        )
+        self.assertFalse(trace["纯辅助种子"]["forms_output"])
+        self.assertTrue(trace["结果种子"]["forms_output"])
+        self.assertTrue(trace["第 1 代交点"]["forms_output"])
+        self.assertEqual(trace["结果种子"]["last_used_generation"], 1)
+        self.assertEqual(trace["纯辅助种子"]["last_used_generation"], 1)
+        self.assertEqual(len(trace["结果种子"]["formed_segments_px"]), 1)
+        self.assertEqual(len(trace["第 1 代交点"]["formed_segments_px"]), 1)
+
+    def test_playback_trace_falls_back_to_geometric_parent_recovery(self):
+        result = {
+            "cp": "2 -200 0 200 0\n",
+            "stats": {"analysis_size_used": 101},
+            "anchors": [
+                {
+                    "angle": 90.0,
+                    "line_offset_px": -50.0,
+                    "anchor_point_px": [50.0, 0.0],
+                    "generation": 0,
+                    "source": "辅助 A",
+                    "parents": None,
+                },
+                {
+                    "angle": 45.0,
+                    "line_offset_px": 0.0,
+                    "anchor_point_px": [0.0, 0.0],
+                    "generation": 0,
+                    "source": "辅助 B",
+                    "parents": None,
+                },
+                {
+                    "angle": 0.0,
+                    "line_offset_px": 50.0,
+                    "anchor_point_px": [50.0, 50.0],
+                    "generation": 1,
+                    "source": "第 1 代交点",
+                    "parents": [99, 98],
+                },
+            ],
+        }
+
+        _build_playback_trace(result)
+
+        self.assertEqual(
+            {item["source"] for item in result["playback_trace"]},
+            {"辅助 A", "辅助 B", "第 1 代交点"},
+        )
 
     def test_rectify_bridge_returns_downloadable_square_png(self):
         image = np.full((160, 220, 3), 255, np.uint8)
