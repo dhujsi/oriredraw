@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="在浏览器中把 22.5° 系折痕图重建为 Oriedita .cp 文件。">
-  <title>Oriedraw · 22.5° 折痕重建</title>
+  <meta name="description" content="在浏览器中把 CP 图片重建为 Oriedita .cp 文件。">
+  <title>Oriedraw · CP 折痕重建</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
@@ -12,11 +12,11 @@
     <header class="hero">
       <div>
         <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
-        <h1>从图片重新搭建<br><span>22.5° 折痕射线</span></h1>
+        <h1>把 CP 图片重建成<br><span>Oriedita .cp</span></h1>
       </div>
       <div class="intro-block">
-        <p class="intro">先从四角和四边中点取线，再选择至多一个 <em>a+b√2</em> 核心点；此后只允许由已有射线交点或纸边交点继续推导。</p>
-        <p class="privacy">图片仅在你的浏览器中处理，不会上传服务器。</p>
+        <p class="intro">识别白底红蓝线或黑线 CP，并按构造规则还原折痕。</p>
+        <p class="privacy">图片只在浏览器中处理，不会上传服务器。</p>
       </div>
     </header>
 
@@ -26,63 +26,63 @@
           <label class="drop-zone" id="drop-zone">
             <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
             <span class="drop-index">01</span>
-            <strong>选择、拖入或粘贴白底 CP 线稿</strong>
-            <small>仅支持白底红蓝线或白底黑线 · PNG / JPG · 12 MB</small>
+            <strong>选择、拖入或粘贴 CP 图片</strong>
+            <small>白底红蓝线 / 黑线 · PNG / JPG · 最大 12 MB</small>
             <span class="file-name" id="file-name">尚未选择文件</span>
           </label>
 
           <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
-            <span></span><p>正在准备浏览器识别引擎…</p>
+            <span></span><p>正在准备识别引擎…</p>
           </div>
 
           <div class="input-notice">
-            <strong>不接受照片、灰底或黑底图</strong>
-            <p>请先交给豆包等 AI 图片工具处理成白底红蓝线或白底黑线，再上传识别。</p>
+            <strong>照片请先转成白底线稿</strong>
+            <p>照片、灰底和黑底图不适合直接识别，可先用图片工具处理成白底红蓝线或黑线。</p>
           </div>
 
           <div class="parameter mode-parameter">
             <div><label for="mv-mode">线条颜色</label></div>
             <select id="mv-mode" name="mv_mode">
-              <option value="auto">自动判断红蓝 / 纯黑</option>
-              <option value="color">强制按红蓝图识别</option>
-              <option value="monochrome">纯黑线：统一按峰线导出</option>
+              <option value="auto">自动判断红蓝 / 黑线</option>
+              <option value="color">按红蓝线识别</option>
+              <option value="monochrome">黑线：统一按峰线导出</option>
             </select>
-            <small>纯黑图没有峰谷信息；程序只重建几何，不用 cAMV 猜颜色。</small>
+            <small>黑线图没有峰谷信息，因此只能重建几何。</small>
           </div>
 
           <details class="advanced">
             <summary>高级图像参数</summary>
             <div class="parameter">
-              <div><label for="angle-mode">像素线方向误差</label><output id="angle-value">自动</output></div>
+              <div><label for="angle-mode">方向容差</label><output id="angle-value">自动</output></div>
               <select id="angle-mode" name="angle_tolerance_mode">
                 <option value="auto">自动（推荐）</option>
                 <option value="manual">手动上限</option>
               </select>
               <input id="angle" class="hidden" name="angle_tolerance_deg" type="range" min="0.5" max="6" step="0.5" value="3">
-              <small>只判断模糊像素是否可能来自合法线；不会把近似角度写进 .cp。四角校正后自动上限为 3°。</small>
+              <small>用于容忍锯齿和模糊，不会改变最终构造角度。自动模式最高 3°。</small>
             </div>
 
-          <div class="parameter">
-            <div><label for="support">线段证据</label><output id="support-value">58%</output></div>
-            <input id="support" name="output_support" type="range" min="0.35" max="0.85" step="0.01" value="0.58">
-            <small>提高可减少误线，降低可找回较短或较淡的线。</small>
-          </div>
+            <div class="parameter">
+              <div><label for="support">线段识别强度</label><output id="support-value">58%</output></div>
+              <input id="support" name="output_support" type="range" min="0.35" max="0.85" step="0.01" value="0.58">
+              <small>调高可减少误线；调低更容易保留短线和淡线。</small>
+            </div>
 
-          <div class="parameter">
-            <div><label for="algebraic">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div>
-            <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
-          </div>
+            <div class="parameter">
+              <div><label for="algebraic">√2 核心点吸附</label><output id="algebraic-value">3.0px</output></div>
+              <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
+            </div>
 
-          <div class="parameter">
-            <div><label for="construction-offset">构造与观测偏移上限</label><output id="construction-offset-value">4.8px</output></div>
-            <input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8">
-            <small>只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。</small>
-          </div>
+            <div class="parameter">
+              <div><label for="construction-offset">构造线匹配偏移</label><output id="construction-offset-value">4.8px</output></div>
+              <input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8">
+              <small>允许像素线和精确构造线有少量位置偏差。漏线可略调高，误连则调低。</small>
+            </div>
           </details>
 
           <label class="variant-option">
             <input id="construction-variants" type="checkbox" checked>
-            <span><strong>生成精确备选构造版本</strong><small>仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
+            <span><strong>生成备选构造</strong><small>严格 22.5° 版本解释不完时，再尝试角平分、局部可平折和精确等分构造。</small></span>
           </label>
 
           <button class="primary" id="submit-button" type="submit" disabled>
@@ -93,15 +93,15 @@
 
         <section class="paper-tool" id="paper-tool" aria-labelledby="rectify-title">
           <div class="paper-tool-head">
-            <div><strong id="rectify-title">独立透视校正工具</strong><small id="paper-mode-label">只负责四角还原，不会开始 CP 识别</small></div>
+            <div><strong id="rectify-title">透视校正</strong><small id="paper-mode-label">只把纸张拉正成正方形，不进行识别</small></div>
           </div>
           <label class="rectify-picker">
             <input id="rectify-input" type="file" accept="image/png,image/jpeg">
-            <span>选择或粘贴需要拉正的变形图</span>
+            <span>选择或粘贴需要拉正的图片</span>
           </label>
-          <button type="button" id="corner-toggle" disabled>调整四角锚点</button>
+          <button type="button" id="corner-toggle" disabled>调整四角</button>
           <div class="rectified-result hidden" id="rectified-result">
-            <img id="rectified-preview" alt="四角透视还原后的正方形图片">
+            <img id="rectified-preview" alt="透视校正后的正方形图片">
             <div><small id="rectified-meta"></small><button type="button" id="rectified-download">下载正方形 PNG</button></div>
           </div>
           <div class="corner-editor hidden" id="corner-editor" role="dialog" aria-modal="true" aria-labelledby="corner-title">
@@ -109,7 +109,7 @@
               <div class="corner-editor-head">
                 <div>
                   <strong id="corner-title">校准图片四角</strong>
-                  <small id="corner-instruction">先在原图粗调四角，再裁剪放大继续精调</small>
+                  <small id="corner-instruction">先大致对准四角，再裁剪放大精调</small>
                 </div>
                 <button type="button" id="corner-done" class="corner-done">完成并生成正方形</button>
               </div>
@@ -123,10 +123,10 @@
               <div class="corner-editor-foot">
                 <div>
                   <div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div>
-                  <small>依次对准左上、右上、右下、左下；输出保持原图可用分辨率。</small>
+                  <small>依次对准四个角，输出分辨率会尽量保留。</small>
                 </div>
                 <div class="corner-actions">
-                  <button type="button" id="corner-crop" class="corner-crop">按四角裁剪并放大</button>
+                  <button type="button" id="corner-crop" class="corner-crop">裁剪并放大</button>
                   <button type="button" id="corner-full">查看原图</button>
                   <button type="button" id="corner-reset">重置四角</button>
                   <button type="button" id="corner-disable">取消</button>
@@ -137,8 +137,8 @@
         </section>
 
         <div class="rule-card">
-          <span>硬性规则</span>
-          <p>默认版本仍只用 22.5° 系。备选版本也不能拖动终点或输入长度；每条非 22.5° 线必须由已有线、可平折条件或精确等分点推导。</p>
+          <span>构造限制</span>
+          <p>默认只使用 22.5° 系。备选线也必须由已有线、可平折条件或精确等分点构造，不能直接拟合任意角度和长度。</p>
         </div>
       </aside>
 
@@ -146,11 +146,11 @@
         <div class="empty-state" id="empty-state">
           <div class="ray-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
           <p>等待一张折痕图</p>
-          <small>重建结果会在这里与原图叠加显示</small>
+          <small>重建结果会和原图叠加显示在这里</small>
         </div>
 
         <div id="loading" class="loading hidden" aria-live="polite">
-          <span></span><p id="loading-stage">正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small>复杂图可能需要数分钟甚至更久，请保持页面开启</small>
+          <span></span><p id="loading-stage">正在重建折痕…</p><small>复杂图会慢一些，请保持页面开启</small>
           <div class="progress-block">
             <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重建进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
             <b id="loading-progress-value">0%</b>
@@ -179,7 +179,7 @@
               <canvas id="core-point-canvas" width="180" height="180" aria-label="核心点位置示意"></canvas>
               <strong id="core-point-title">未使用额外核心点</strong>
               <code id="core-point-coordinate">—</code>
-              <small>坐标采用纸张中心为原点的归一化 a+b√2 表示。</small>
+              <small>坐标以纸张中心为原点，用归一化 a+b√2 表示。</small>
             </aside>
           </div>
 
@@ -187,11 +187,11 @@
           <div id="stats" class="stats"></div>
 
           <details class="anchors">
-            <summary>查看种子与迭代构造来源 <span id="anchor-count"></span></summary>
+            <summary>查看构造来源 <span id="anchor-count"></span></summary>
             <div class="anchor-table" id="anchor-table"></div>
           </details>
           <details class="constructions hidden" id="construction-details">
-            <summary>查看本版本新增的精确构造 <span id="construction-count"></span></summary>
+            <summary>查看本版本新增构造 <span id="construction-count"></span></summary>
             <div class="construction-list" id="construction-list"></div>
           </details>
         </div>
