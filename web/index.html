@@ -26,8 +26,8 @@
           <label class="drop-zone" id="drop-zone">
             <input id="image-input" type="file" name="image" accept="image/png,image/jpeg" required>
             <span class="drop-index">01</span>
-            <strong>选择、拖入或粘贴 CP 图片</strong>
-            <small>点击选择 · 拖到这里 · Ctrl+V 粘贴 · PNG / JPG · 12 MB</small>
+            <strong>选择、拖入或粘贴白底 CP 线稿</strong>
+            <small>仅支持白底红蓝线或白底黑线 · PNG / JPG · 12 MB</small>
             <span class="file-name" id="file-name">尚未选择文件</span>
           </label>
 
@@ -35,41 +35,9 @@
             <span></span><p>正在准备浏览器识别引擎…</p>
           </div>
 
-          <div class="paper-tool hidden" id="paper-tool">
-            <div class="paper-tool-head">
-              <div><strong>纸张范围</strong><small id="paper-mode-label">自动寻找并裁切</small></div>
-              <button type="button" id="corner-toggle">拍照图：调整四角</button>
-            </div>
-            <div class="corner-editor hidden" id="corner-editor" role="dialog" aria-modal="true" aria-labelledby="corner-title">
-              <div class="corner-dialog">
-                <div class="corner-editor-head">
-                  <div>
-                    <strong id="corner-title">校准纸张四角</strong>
-                    <small id="corner-instruction">先在原图粗调四角，再裁剪放大继续精调</small>
-                  </div>
-                  <button type="button" id="corner-done" class="corner-done">完成校准</button>
-                </div>
-                <div class="corner-stage">
-                  <canvas class="corner-main-canvas" id="corner-canvas" aria-label="拖动四个十字准星到纸张四角"></canvas>
-                  <div class="corner-loupe" id="corner-loupe" aria-live="polite">
-                    <span id="corner-loupe-label">1 左上 · 局部放大</span>
-                    <canvas id="corner-loupe-canvas" width="200" height="200" aria-label="当前准星局部放大视图"></canvas>
-                  </div>
-                </div>
-                <div class="corner-editor-foot">
-                  <div>
-                    <div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div>
-                    <small>十字中心留空，不会盖住角点。四角必须属于同一张平整纸。</small>
-                  </div>
-                  <div class="corner-actions">
-                    <button type="button" id="corner-crop" class="corner-crop">按四角裁剪并放大</button>
-                    <button type="button" id="corner-full">查看原图</button>
-                    <button type="button" id="corner-reset">重置四角</button>
-                    <button type="button" id="corner-disable">改用自动裁纸</button>
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div class="input-notice">
+            <strong>不接受照片、灰底或黑底图</strong>
+            <p>请先交给豆包等 AI 图片工具处理成白底红蓝线或白底黑线，再上传识别。</p>
           </div>
 
           <div class="parameter mode-parameter">
@@ -117,6 +85,51 @@
           </button>
         </form>
 
+        <section class="paper-tool" id="paper-tool" aria-labelledby="rectify-title">
+          <div class="paper-tool-head">
+            <div><strong id="rectify-title">独立透视校正工具</strong><small id="paper-mode-label">只负责四角还原，不会开始 CP 识别</small></div>
+          </div>
+          <label class="rectify-picker">
+            <input id="rectify-input" type="file" accept="image/png,image/jpeg">
+            <span>选择或粘贴需要拉正的变形图</span>
+          </label>
+          <button type="button" id="corner-toggle" disabled>调整四角锚点</button>
+          <div class="rectified-result hidden" id="rectified-result">
+            <img id="rectified-preview" alt="四角透视还原后的正方形图片">
+            <div><small id="rectified-meta"></small><button type="button" id="rectified-download">下载正方形 PNG</button></div>
+          </div>
+          <div class="corner-editor hidden" id="corner-editor" role="dialog" aria-modal="true" aria-labelledby="corner-title">
+            <div class="corner-dialog">
+              <div class="corner-editor-head">
+                <div>
+                  <strong id="corner-title">校准图片四角</strong>
+                  <small id="corner-instruction">先在原图粗调四角，再裁剪放大继续精调</small>
+                </div>
+                <button type="button" id="corner-done" class="corner-done">完成并生成正方形</button>
+              </div>
+              <div class="corner-stage">
+                <canvas class="corner-main-canvas" id="corner-canvas" aria-label="拖动四个十字准星到目标四角"></canvas>
+                <div class="corner-loupe" id="corner-loupe" aria-live="polite">
+                  <span id="corner-loupe-label">1 左上 · 局部放大</span>
+                  <canvas id="corner-loupe-canvas" width="200" height="200" aria-label="当前准星局部放大视图"></canvas>
+                </div>
+              </div>
+              <div class="corner-editor-foot">
+                <div>
+                  <div class="corner-help"><span>1 左上</span><span>2 右上</span><span>3 右下</span><span>4 左下</span></div>
+                  <small>依次对准左上、右上、右下、左下；输出保持原图可用分辨率。</small>
+                </div>
+                <div class="corner-actions">
+                  <button type="button" id="corner-crop" class="corner-crop">按四角裁剪并放大</button>
+                  <button type="button" id="corner-full">查看原图</button>
+                  <button type="button" id="corner-reset">重置四角</button>
+                  <button type="button" id="corner-disable">取消</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <div class="rule-card">
           <span>硬性规则</span>
           <p>默认版本仍只用 22.5° 系。备选版本也不能拖动终点或输入长度；每条非 22.5° 线必须由已有线、可平折条件或精确等分点推导。</p>
@@ -131,7 +144,11 @@
         </div>
 
         <div id="loading" class="loading hidden" aria-live="polite">
-          <span></span><p>正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small>复杂图可能需要数分钟甚至更久，请保持页面开启</small>
+          <span></span><p id="loading-stage">正在寻找合法射线、交点并反复执行 cAMV 复核…</p><small>复杂图可能需要数分钟甚至更久，请保持页面开启</small>
+          <div class="progress-block">
+            <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重建进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+            <b id="loading-progress-value">0%</b>
+          </div>
         </div>
 
         <div id="result-content" class="hidden">
@@ -149,7 +166,16 @@
             <button class="active" data-view="overlay" role="tab" aria-selected="true">叠加检查</button>
             <button data-view="clean" role="tab" aria-selected="false">纯重建</button>
           </div>
-          <figure class="preview"><img id="preview-image" alt="折痕重建预览"></figure>
+          <div class="result-visuals">
+            <figure class="preview"><img id="preview-image" alt="折痕重建预览"></figure>
+            <aside class="core-point-card" id="core-point-card">
+              <span>CORE POINT</span>
+              <canvas id="core-point-canvas" width="180" height="180" aria-label="核心点位置示意"></canvas>
+              <strong id="core-point-title">未使用额外核心点</strong>
+              <code id="core-point-coordinate">—</code>
+              <small>坐标采用纸张中心为原点的归一化 a+b√2 表示。</small>
+            </aside>
+          </div>
 
           <div id="warnings" class="warnings"></div>
           <div id="stats" class="stats"></div>

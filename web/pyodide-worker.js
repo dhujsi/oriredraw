@@ -1,12 +1,12 @@
 const PYODIDE_BASE = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/';
 const SOURCE_FILES = ['foldability.py', 'reconstructor.py', 'web_bridge.py'];
-const WEB_ENGINE_VERSION = '20260818-small-corner-selection-v2';
+const WEB_ENGINE_VERSION = '20260818-white-lineart-progress-v1';
 
 let pyodide;
 let readyPromise;
 
-function announce(stage, message) {
-  self.postMessage({ type: 'status', stage, message });
+function announce(stage, message, percent = null, id = null) {
+  self.postMessage({ type: 'status', stage, message, percent, id });
 }
 
 async function initialize() {
@@ -25,7 +25,7 @@ async function initialize() {
     }
     pyodide.FS.writeFile(fileName, await response.text(), { encoding: 'utf8' });
   }
-  pyodide.runPython('from web_bridge import reconstruct_for_web_json');
+  pyodide.runPython('from web_bridge import reconstruct_for_web_json, rectify_for_web_json');
   announce('ready', '浏览器识别引擎已就绪');
 }
 
@@ -34,18 +34,38 @@ async function ensureReady() {
   return readyPromise;
 }
 
-async function reconstructInBrowser(buffer, settings) {
+async function reconstructInBrowser(buffer, settings, id) {
   await ensureReady();
   const inputPath = '/tmp/oriedraw-input';
   pyodide.FS.writeFile(inputPath, new Uint8Array(buffer));
   pyodide.globals.set('_oriedraw_settings_json', JSON.stringify(settings));
+  pyodide.globals.set('_oriedraw_progress', (percent, message) => {
+    announce('reconstruct', String(message), Number(percent), id);
+  });
   try {
     return pyodide.runPython(`
 from pathlib import Path
-reconstruct_for_web_json(Path("${inputPath}").read_bytes(), _oriedraw_settings_json)
+reconstruct_for_web_json(Path("${inputPath}").read_bytes(), _oriedraw_settings_json, _oriedraw_progress)
     `);
   } finally {
     pyodide.globals.delete('_oriedraw_settings_json');
+    pyodide.globals.delete('_oriedraw_progress');
+    try { pyodide.FS.unlink(inputPath); } catch (_) { /* best-effort cleanup */ }
+  }
+}
+
+async function rectifyInBrowser(buffer, corners) {
+  await ensureReady();
+  const inputPath = '/tmp/oriedraw-rectify-input';
+  pyodide.FS.writeFile(inputPath, new Uint8Array(buffer));
+  pyodide.globals.set('_oriedraw_corners_json', JSON.stringify(corners));
+  try {
+    return pyodide.runPython(`
+from pathlib import Path
+rectify_for_web_json(Path("${inputPath}").read_bytes(), _oriedraw_corners_json)
+    `);
+  } finally {
+    pyodide.globals.delete('_oriedraw_corners_json');
     try { pyodide.FS.unlink(inputPath); } catch (_) { /* best-effort cleanup */ }
   }
 }
@@ -59,7 +79,12 @@ self.onmessage = async event => {
       return;
     }
     if (type === 'reconstruct') {
-      const json = await reconstructInBrowser(event.data.buffer, event.data.settings);
+      const json = await reconstructInBrowser(event.data.buffer, event.data.settings, id);
+      self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
+      return;
+    }
+    if (type === 'rectify') {
+      const json = await rectifyInBrowser(event.data.buffer, event.data.corners);
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
     }
   } catch (error) {

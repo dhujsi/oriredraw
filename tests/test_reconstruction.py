@@ -12,10 +12,26 @@ from reconstructor import (
     edges_to_cp,
     prepare_paper_square,
     reconstruct,
+    validate_white_line_art,
 )
 
 
 class ReconstructionSmokeTest(unittest.TestCase):
+    def test_white_line_art_gate_accepts_supported_cp_colors(self):
+        image = np.full((180, 180, 3), 255, np.uint8)
+        cv2.line(image, (10, 20), (170, 160), (0, 0, 0), 2)
+        cv2.line(image, (10, 160), (170, 20), (0, 0, 255), 2)
+        cv2.line(image, (90, 10), (90, 170), (255, 0, 0), 2)
+        stats = validate_white_line_art(image)
+        self.assertGreater(stats["white_background_fraction"], 0.9)
+
+    def test_white_line_art_gate_rejects_gray_or_black_backgrounds(self):
+        for background in (205, 0):
+            image = np.full((180, 180, 3), background, np.uint8)
+            cv2.line(image, (10, 20), (170, 160), (0, 0, 255), 2)
+            with self.assertRaisesRegex(ValueError, "仅支持白底"):
+                validate_white_line_art(image)
+
     def test_paper_preparation_upscales_small_screenshot_for_analysis(self):
         image = np.full((180, 190, 3), 255, np.uint8)
         cv2.rectangle(image, (20, 15), (169, 164), (0, 0, 0), 1)
@@ -132,7 +148,16 @@ class ReconstructionSmokeTest(unittest.TestCase):
                 )
         success, encoded = cv2.imencode(".png", image)
         self.assertTrue(success)
-        result = reconstruct(encoded.tobytes())
+        progress = []
+        result = reconstruct(
+            encoded.tobytes(),
+            progress_callback=lambda percent, message: progress.append(
+                (percent, message)
+            ),
+        )
+        self.assertEqual(progress[0][0], 2)
+        self.assertEqual(progress[-1][0], 100)
+        self.assertTrue(any("cAMV" in message for _, message in progress))
         self.assertTrue(result["stats"]["source_upscaled"])
         rows = [row.split() for row in result["cp"].splitlines()]
         self.assertGreater(len(rows), 4)

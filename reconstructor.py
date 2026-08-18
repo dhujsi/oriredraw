@@ -5,7 +5,7 @@ import itertools
 import math
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import cv2
 import numpy as np
@@ -236,6 +236,44 @@ def _decode_image(data: bytes) -> np.ndarray:
     if image.shape[0] < 80 or image.shape[1] < 80:
         raise ReconstructionError("图片尺寸过小，最短边至少需要 80 像素。")
     return image
+
+
+def validate_white_line_art(image: np.ndarray) -> dict:
+    """Validate the supported white-background CP input without rewriting it."""
+    values = image.astype(np.float32)
+    darkest = np.min(values, axis=2)
+    brightest = np.max(values, axis=2)
+    chroma = brightest - darkest
+    luma = np.mean(values, axis=2)
+    neutral = chroma <= 24.0
+    white = neutral & (darkest >= 235.0)
+    red = (
+        (values[:, :, 2] - np.maximum(values[:, :, 1], values[:, :, 0]) >= 24.0)
+        & (values[:, :, 2] >= 96.0)
+    )
+    blue = (
+        (values[:, :, 0] - np.maximum(values[:, :, 1], values[:, :, 2]) >= 24.0)
+        & (values[:, :, 0] >= 96.0)
+    )
+    unsupported_color = ~(neutral | red | blue)
+    neutral_midtone = neutral & (luma >= 42.0) & (luma <= 224.0)
+    white_fraction = float(np.mean(white))
+    unsupported_fraction = float(np.mean(unsupported_color))
+    midtone_fraction = float(np.mean(neutral_midtone))
+    stats = {
+        "white_background_fraction": round(white_fraction, 6),
+        "unsupported_color_fraction": round(unsupported_fraction, 6),
+        "neutral_midtone_fraction": round(midtone_fraction, 6),
+    }
+    if (
+        white_fraction < 0.55
+        or unsupported_fraction > 0.08
+        or midtone_fraction > 0.22
+    ):
+        raise ReconstructionError(
+            "仅支持白底红蓝线或白底黑线 CP。照片、灰底、黑底及实物图请先交给豆包等 AI 图片工具处理成白底线稿后再上传。"
+        )
+    return stats
 
 
 def _adaptive_geometry_evidence(
@@ -8200,13 +8238,25 @@ def _png_data_uri(image: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
 
 
-def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
+def reconstruct(
+    data: bytes,
+    settings: Settings | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict:
+    def report(percent: int, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(percent, message)
+
     settings = settings or Settings()
+    report(2, "读取图片")
     image = _decode_image(data)
     square, (x0, y0, x1, y1), scale_stats = prepare_paper_square(
         image, settings.analysis_size, settings.paper_corners
     )
+    report(7, "检查白底线稿格式")
+    input_format_stats = validate_white_line_art(square)
     size = square.shape[0]
+    report(11, "提取黑线与红蓝线像素")
     ink, _, evidence_stats = _adaptive_geometry_evidence(square)
     diffuse_input = _has_diffuse_color_bleed(square)
     # All later distance tolerances are expressed relative to the estimated
@@ -8228,6 +8278,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         ),
     )
 
+    report(16, "寻找候选直线")
     clusters, hough_stats = _extract_hough_clusters(ink, effective_settings)
     lines, algebraic_rejected = _snap_lines_to_algebraic_anchors(
         clusters, size, effective_settings
@@ -8240,6 +8291,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     # recall graphs are deliberately disabled: colour bleed creates plausible
     # but false local vertices, while the exact-direction projection still has
     # enough global evidence to reconstruct the 22.5-degree ray system.
+    report(24, "激活角点、边中点与合法射线")
     ray_edges, lsd_lines, ray_stats = _reconstruct_lsd_rays(
         square, ink, effective_settings
     )
@@ -8248,6 +8300,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     vertex_stats: dict = {}
     hough_vertex_stats: dict = {}
     recall_policy_stats = {"diffuse_recall_graphs_skipped": int(diffuse_input)}
+    report(34, "建立候选交点图")
     if not diffuse_input:
         try:
             vertex_edges, _, vertex_stats = _reconstruct_lsd_vertex_graph(
@@ -8261,6 +8314,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             )
         except ReconstructionError:
             pass
+    report(43, "融合射线与交点证据")
     internal_edges, fusion_stats = _fuse_edge_sets(
         ray_edges, vertex_edges, hough_vertex_edges, lsd_lines, size
     )
@@ -8297,6 +8351,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         parallel_identity_stats[
             "overlapping_parallel_ray_identities_bound"
         ] = bound_parallel_identities
+    report(52, "推导精确交点并清理线头")
     internal_edges, construction_stats = _snap_and_prune_dangling_edges(
         internal_edges, size, construction_lines=lsd_lines
     )
@@ -8304,6 +8359,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     # otherwise a long segment hides its interior contacts and node-to-node
     # recovery can repeatedly nominate geometry that is already present.
     internal_edges = _planarize_edges(internal_edges)
+    report(61, "闭合有证据支持的折痕路径")
     internal_edges, closure_stats = _close_internal_lineheads(
         internal_edges,
         lsd_lines,
@@ -8410,6 +8466,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             fallback_stats["supported_runs"] = len(fallback_runs)
             pipeline = "sparse_ray_fallback"
 
+    report(76, "执行 cAMV 几何复核")
     internal_edges, camv_repair_stats = _repair_near_focus_camv_violations(
         internal_edges,
         lsd_lines,
@@ -8417,6 +8474,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         effective_settings,
     )
     internal_edges = _planarize_edges(internal_edges)
+    report(84, "根据 cAMV 反复复核缺失路径")
     internal_edges, camv_path_stats = _recover_camv_supported_paths(
         square,
         ink,
@@ -8424,6 +8482,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         effective_settings,
     )
     internal_edges = _planarize_edges(internal_edges)
+    report(90, "判断红蓝峰谷并完成 cAMV 检验")
     internal_edges, mv_stats, camv_full = _assign_and_optimize_mv(
         square,
         internal_edges,
@@ -8458,6 +8517,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             for edge in all_edges
         ]
     )
+    report(94, "生成 CP 与结果预览")
     cp_text = edges_to_cp(all_edges, size)
     overlay, reconstruction = _render_images(square, all_edges)
 
@@ -8516,6 +8576,14 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
                     if line.anchor_coordinates is not None
                     else None
                 ),
+                "coordinate_expression": (
+                    [
+                        line.anchor_coordinates[0].expression,
+                        line.anchor_coordinates[1].expression,
+                    ]
+                    if line.anchor_coordinates is not None
+                    else None
+                ),
                 "angle": line.angle_deg,
                 "line_offset_px": round(float(line.offset), 6),
                 "anchor_point_px": [
@@ -8536,6 +8604,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "source_height": int(image.shape[0]),
         "paper_bbox": [x0, y0, x1, y1],
         **scale_stats,
+        **input_format_stats,
         **evidence_stats,
         "diffuse_input_mode": diffuse_input,
         "algebraic_rejected_rays": algebraic_rejected,
@@ -8607,6 +8676,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "construction_versions_emitted": 0,
     }
     if settings.construction_variants:
+        report(97, "生成精确备选构造版本")
         variants, construction_variant_stats = _build_exact_construction_variants(
             square,
             ink,
@@ -8615,6 +8685,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             stats,
         )
     stats.update(construction_variant_stats)
+    report(100, "重建完成")
     return {
         "id": "strict",
         "label": "严格 22.5°",

@@ -15,6 +15,11 @@ const submitButton = document.querySelector('#submit-button');
 const engineStatus = document.querySelector('#engine-status');
 const paperTool = document.querySelector('#paper-tool');
 const paperModeLabel = document.querySelector('#paper-mode-label');
+const rectifyInput = document.querySelector('#rectify-input');
+const rectifiedResult = document.querySelector('#rectified-result');
+const rectifiedPreview = document.querySelector('#rectified-preview');
+const rectifiedMeta = document.querySelector('#rectified-meta');
+const rectifiedDownload = document.querySelector('#rectified-download');
 const cornerToggle = document.querySelector('#corner-toggle');
 const cornerEditor = document.querySelector('#corner-editor');
 const cornerCanvas = document.querySelector('#corner-canvas');
@@ -33,15 +38,22 @@ const versionTabs = document.querySelector('#version-tabs');
 const constructionDetails = document.querySelector('#construction-details');
 const constructionCount = document.querySelector('#construction-count');
 const constructionList = document.querySelector('#construction-list');
+const loadingStage = document.querySelector('#loading-stage');
+const loadingProgress = document.querySelector('#loading-progress');
+const loadingProgressValue = document.querySelector('#loading-progress-value');
+const corePointCanvas = document.querySelector('#core-point-canvas');
+const corePointTitle = document.querySelector('#core-point-title');
+const corePointCoordinate = document.querySelector('#core-point-coordinate');
 
-const WEB_ENGINE_VERSION = '20260818-small-corner-selection-v2';
+const WEB_ENGINE_VERSION = '20260818-white-lineart-progress-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
 let currentResult = null;
 let engineReady = false;
-let perspectiveEnabled = false;
 let sourceBitmap = null;
+let rectifyFile = null;
+let rectifiedDataUri = '';
 let cornerPoints = [];
 let draggedCorner = -1;
 let activeCorner = 0;
@@ -59,6 +71,10 @@ function callWorker(type, payload = {}, transfer = []) {
 worker.addEventListener('message', event => {
   const data = event.data;
   if (data.type === 'status') {
+    if (data.stage === 'reconstruct') {
+      updateProgress(Number(data.percent ?? 0), data.message);
+      return;
+    }
     setEngineStatus(data.stage === 'ready' ? 'ready' : 'loading', data.message);
     return;
   }
@@ -82,10 +98,18 @@ function setEngineStatus(state, message) {
   submitButton.disabled = !engineReady;
 }
 
+function updateProgress(percent, message) {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  loadingProgress.setAttribute('aria-valuenow', String(value));
+  loadingProgress.querySelector('i').style.width = `${value}%`;
+  loadingProgressValue.textContent = `${value}%`;
+  loadingStage.textContent = message || '正在重建…';
+}
+
 function cleanWorkerError(message) {
   const lines = String(message || '').split('\n').filter(Boolean);
   const last = lines.at(-1) || '识别失败';
-  return last.replace(/^\w+(Error|Exception):\s*/, '');
+  return last.replace(/^[^:]+:\s*/, '');
 }
 
 callWorker('init').catch(error => setEngineStatus('error', error.message));
@@ -321,32 +345,79 @@ function closeCornerEditor() {
 }
 
 cornerToggle.addEventListener('click', () => {
-  perspectiveEnabled = true;
+  if (!rectifyFile || !sourceBitmap) return;
   cornerEditor.classList.remove('hidden');
   document.body.classList.add('corner-editor-open');
-  cornerToggle.classList.toggle('active', perspectiveEnabled);
+  cornerToggle.classList.add('active');
   cornerToggle.textContent = '重新调整四角';
-  paperModeLabel.textContent = '按四个准星做透视还原';
+  paperModeLabel.textContent = '按四个锚点做透视还原';
   drawCornerEditor();
 });
 cornerReset.addEventListener('click', resetCornerPoints);
 cornerCrop.addEventListener('click', cropAndEnlargeCornerView);
 cornerFull.addEventListener('click', showFullCornerView);
-cornerDone.addEventListener('click', () => {
+cornerDone.addEventListener('click', async () => {
+  if (!rectifyFile) return;
   closeCornerEditor();
-  cornerToggle.focus();
+  cornerDone.disabled = true;
+  cornerToggle.disabled = true;
+  paperModeLabel.textContent = '正在生成正方形 PNG…';
+  try {
+    const buffer = await rectifyFile.arrayBuffer();
+    const data = await callWorker('rectify', { buffer, corners: cornerPoints }, [buffer]);
+    rectifiedDataUri = data.image_data_uri;
+    rectifiedPreview.src = rectifiedDataUri;
+    rectifiedMeta.textContent = `${data.width} × ${data.height}px · PNG`;
+    rectifiedResult.classList.remove('hidden');
+    paperModeLabel.textContent = '正方形图片已生成，可继续调整或下载';
+  } catch (error) {
+    paperModeLabel.textContent = error.message || '透视校正失败';
+  } finally {
+    cornerDone.disabled = false;
+    cornerToggle.disabled = false;
+    cornerToggle.focus();
+  }
 });
 cornerDisable.addEventListener('click', () => {
-  perspectiveEnabled = false;
   closeCornerEditor();
-  cornerToggle.classList.remove('active');
-  cornerToggle.textContent = '拍照图：调整四角';
-  paperModeLabel.textContent = '自动寻找并裁切';
   cornerToggle.focus();
 });
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || cornerEditor.classList.contains('hidden')) return;
-  cornerDone.click();
+  closeCornerEditor();
+});
+
+async function selectRectifyFile(file) {
+  if (!file) return;
+  if (!['image/png', 'image/jpeg'].includes(file.type)) {
+    paperModeLabel.textContent = '请选择 PNG 或 JPG 图片';
+    return;
+  }
+  rectifyFile = file;
+  rectifiedDataUri = '';
+  rectifiedResult.classList.add('hidden');
+  cornerToggle.disabled = true;
+  paperModeLabel.textContent = '正在读取图片…';
+  try {
+    await prepareCornerEditor(file);
+    cornerToggle.disabled = false;
+    cornerToggle.textContent = '调整四角锚点';
+    paperModeLabel.textContent = `${file.name} · 等待调整四角`;
+    cornerToggle.click();
+  } catch (_) {
+    paperModeLabel.textContent = '无法读取图片';
+  }
+}
+
+rectifyInput.addEventListener('change', () => selectRectifyFile(rectifyInput.files[0]));
+
+rectifiedDownload.addEventListener('click', () => {
+  if (!rectifiedDataUri) return;
+  const link = document.createElement('a');
+  const sourceName = rectifyFile?.name?.replace(/\.[^.]+$/, '') || 'rectified';
+  link.href = rectifiedDataUri;
+  link.download = `${sourceName}-square.png`;
+  link.click();
 });
 
 function selectFile(file) {
@@ -363,24 +434,12 @@ function selectFile(file) {
   transfer.items.add(file);
   input.files = transfer.files;
   fileName.textContent = file.name;
-  prepareSelectedImage(file);
 }
 
 input.addEventListener('change', () => {
   const file = input.files[0];
   fileName.textContent = file?.name || '尚未选择文件';
-  if (file) prepareSelectedImage(file);
 });
-
-function prepareSelectedImage(file) {
-  perspectiveEnabled = false;
-  cornerEditor.classList.add('hidden');
-  document.body.classList.remove('corner-editor-open');
-  cornerToggle.classList.remove('active');
-  cornerToggle.textContent = '拍照图：调整四角';
-  paperModeLabel.textContent = '自动寻找并裁切';
-  prepareCornerEditor(file).catch(() => showError('无法读取图片预览。'));
-}
 
 for (const eventName of ['dragenter', 'dragover']) {
   dropZone.addEventListener(eventName, event => {
@@ -410,6 +469,10 @@ window.addEventListener('paste', event => {
     `clipboard-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`,
     { type: clipboardFile.type, lastModified: Date.now() },
   );
+  if (document.activeElement === rectifyInput) {
+    selectRectifyFile(pastedFile);
+    return;
+  }
   selectFile(pastedFile);
 });
 
@@ -420,6 +483,7 @@ uploadForm.addEventListener('submit', async event => {
   emptyState.classList.add('hidden');
   resultContent.classList.add('hidden');
   loading.classList.remove('hidden');
+  updateProgress(0, '正在准备白底 CP 线稿…');
   warnings.innerHTML = '';
   submitButton.disabled = true;
 
@@ -433,7 +497,7 @@ uploadForm.addEventListener('submit', async event => {
       algebraic_snap_px: Number(document.querySelector('#algebraic').value),
       mv_mode: document.querySelector('#mv-mode').value,
       construction_variants: document.querySelector('#construction-variants').checked,
-      paper_corners: perspectiveEnabled ? cornerPoints : null,
+      paper_corners: null,
     };
     const data = await callWorker('reconstruct', { buffer, settings }, [buffer]);
     currentResult = data;
@@ -506,6 +570,7 @@ function renderVersion(version, root) {
   ).join('');
 
   const anchors = root.anchors || [];
+  renderCorePoint(anchors);
   anchorCount.textContent = `${anchors.length} 条`;
   anchorTable.innerHTML = anchors.slice(0, 120).map(anchor => `
     <div>
@@ -521,6 +586,51 @@ function renderVersion(version, root) {
   constructionList.innerHTML = constructions.map(item => `
     <div><strong>${escapeHtml(item.label)}</strong><code>${escapeHtml(item.expression)}</code><small>证据 ${Math.round(Number(item.support) * 100)}%</small></div>
   `).join('');
+}
+
+function renderCorePoint(anchors) {
+  const core = anchors.find(anchor =>
+    String(anchor.source || '').includes('a+b√2')
+    && Array.isArray(anchor.coordinate_decimal)
+    && Array.isArray(anchor.coordinate_expression)
+  );
+  const context = corePointCanvas.getContext('2d');
+  const width = corePointCanvas.width;
+  const height = corePointCanvas.height;
+  const margin = 15;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = '#171714';
+  context.lineWidth = 1;
+  context.strokeRect(margin + .5, margin + .5, width - margin * 2 - 1, height - margin * 2 - 1);
+  context.strokeStyle = '#d7d5cc';
+  context.beginPath();
+  context.moveTo(width / 2, margin); context.lineTo(width / 2, height - margin);
+  context.moveTo(margin, height / 2); context.lineTo(width - margin, height / 2);
+  context.stroke();
+  if (!core) {
+    corePointTitle.textContent = '未使用额外核心点';
+    corePointCoordinate.textContent = '—';
+    return;
+  }
+  const [normalizedX, normalizedY] = core.coordinate_decimal.map(Number);
+  const x = margin + (normalizedX + 1) * .5 * (width - margin * 2);
+  const y = margin + (normalizedY + 1) * .5 * (height - margin * 2);
+  context.fillStyle = '#c7ff2f';
+  context.strokeStyle = '#171714';
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(x, y, 6, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  context.beginPath();
+  context.moveTo(x - 11, y); context.lineTo(x + 11, y);
+  context.moveTo(x, y - 11); context.lineTo(x, y + 11);
+  context.stroke();
+  const [expressionX, expressionY] = core.coordinate_expression;
+  corePointTitle.textContent = core.source;
+  corePointCoordinate.textContent = `x = ${expressionX} · y = ${expressionY}`;
 }
 
 document.querySelectorAll('.view-tabs button').forEach(button => {
