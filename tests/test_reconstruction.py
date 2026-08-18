@@ -51,6 +51,21 @@ class ReconstructionSmokeTest(unittest.TestCase):
         self.assertEqual(stats["paper_transform"], "four_corner_perspective")
         self.assertTrue(stats["source_upscaled"])
 
+    def test_four_corner_selection_may_be_small_relative_to_full_screenshot(self):
+        image = np.full((2000, 2000, 3), 255, np.uint8)
+        corners = np.array(
+            [[901.0, 947.0], [996.0, 945.0], [998.0, 1042.0], [899.0, 1044.0]],
+            dtype=np.float32,
+        )
+        cv2.polylines(image, [corners.astype(np.int32)], True, (0, 0, 0), 1)
+        normalized = (corners / np.array([1999.0, 1999.0])).tolist()
+        square, _, stats = prepare_paper_square(
+            image, 512, paper_corners=normalized
+        )
+        self.assertEqual(square.shape[:2], (512, 512))
+        self.assertEqual(stats["paper_transform"], "four_corner_perspective")
+        self.assertTrue(stats["source_upscaled"])
+
     def test_small_automatic_crop_is_detected_before_upscaled_analysis(self):
         image = np.full((72, 76, 3), 255, np.uint8)
         cv2.rectangle(image, (8, 6), (67, 65), (0, 0, 0), 1)

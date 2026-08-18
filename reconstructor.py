@@ -448,12 +448,12 @@ def prepare_paper_square(
         if not cv2.isContourConvex(contour):
             raise ReconstructionError("四个准星必须按左上、右上、右下、左下围成凸四边形。")
         area = abs(float(cv2.contourArea(contour)))
-        if area < float(image.shape[0] * image.shape[1]) * 0.015:
-            raise ReconstructionError("四角圈出的纸张区域太小，请把准星放到纸张四角。")
         side_lengths = [
             float(np.linalg.norm(points[(index + 1) % 4] - points[index]))
             for index in range(4)
         ]
+        if area < 16.0:
+            raise ReconstructionError("四个准星几乎在同一直线上，请重新对准纸张四角。")
         native_paper_size = int(
             round(
                 max(

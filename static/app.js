@@ -34,7 +34,7 @@ const constructionDetails = document.querySelector('#construction-details');
 const constructionCount = document.querySelector('#construction-count');
 const constructionList = document.querySelector('#construction-list');
 
-const WEB_ENGINE_VERSION = '20260818-small-image-upscale';
+const WEB_ENGINE_VERSION = '20260818-small-corner-selection-v2';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
