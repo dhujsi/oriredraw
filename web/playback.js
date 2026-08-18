@@ -39,19 +39,19 @@
   const style = document.createElement('style');
   style.textContent = `
     .preview.playback-active #preview-image { display: none; }
-    .oriedraw-playback { display: none; width: 100%; }
-    .preview.playback-active .oriedraw-playback { display: block; }
-    .oriedraw-playback-stage { position: relative; width: 100%; aspect-ratio: 1; background: #fff; border: 1px solid var(--line, #d7d5cc); overflow: hidden; }
-    .oriedraw-playback canvas { display: block; width: 100%; height: 100%; }
-    .oriedraw-playback-controls { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 10px; }
-    .oriedraw-playback-toggle { width: 34px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--ink, #171714); background: var(--acid, #c7ff2f); color: var(--ink, #171714); font: 700 13px/1 ui-monospace, Consolas, monospace; cursor: pointer; }
-    .oriedraw-playback-toggle:disabled { cursor: default; opacity: .45; }
-    .oriedraw-playback-range { width: 100%; min-width: 0; accent-color: var(--ink, #171714); }
-    .oriedraw-playback-step { color: var(--muted, #6f706a); font: 700 10px/1 ui-monospace, Consolas, monospace; white-space: nowrap; }
-    .oriedraw-playback-caption { min-height: 18px; margin-top: 7px; color: var(--muted, #6f706a); font-size: 10px; line-height: 1.5; }
+    .oriredraw-playback { display: none; width: 100%; }
+    .preview.playback-active .oriredraw-playback { display: block; }
+    .oriredraw-playback-stage { position: relative; width: 100%; aspect-ratio: 1; background: #fff; border: 1px solid var(--line, #d7d5cc); overflow: hidden; }
+    .oriredraw-playback canvas { display: block; width: 100%; height: 100%; }
+    .oriredraw-playback-controls { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin-top: 10px; }
+    .oriredraw-playback-toggle { width: 34px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--ink, #171714); background: var(--acid, #c7ff2f); color: var(--ink, #171714); font: 700 13px/1 ui-monospace, Consolas, monospace; cursor: pointer; }
+    .oriredraw-playback-toggle:disabled { cursor: default; opacity: .45; }
+    .oriredraw-playback-range { width: 100%; min-width: 0; accent-color: var(--ink, #171714); }
+    .oriredraw-playback-step { color: var(--muted, #6f706a); font: 700 10px/1 ui-monospace, Consolas, monospace; white-space: nowrap; }
+    .oriredraw-playback-caption { min-height: 18px; margin-top: 7px; color: var(--muted, #6f706a); font-size: 10px; line-height: 1.5; }
     @media (max-width: 520px) {
-      .oriedraw-playback-controls { grid-template-columns: 32px minmax(0, 1fr); }
-      .oriedraw-playback-step { grid-column: 1 / -1; justify-self: end; }
+      .oriredraw-playback-controls { grid-template-columns: 32px minmax(0, 1fr); }
+      .oriredraw-playback-step { grid-column: 1 / -1; justify-self: end; }
     }
   `;
   document.head.append(style);
@@ -69,25 +69,25 @@
   viewTabs.append(playbackTab);
 
   const panel = document.createElement('div');
-  panel.className = 'oriedraw-playback';
+  panel.className = 'oriredraw-playback';
   panel.innerHTML = `
-    <div class="oriedraw-playback-stage">
+    <div class="oriredraw-playback-stage">
       <canvas aria-label="最终重绘结果的构造推演"></canvas>
     </div>
-    <div class="oriedraw-playback-controls">
-      <button class="oriedraw-playback-toggle" type="button" aria-label="播放推演">▶</button>
-      <input class="oriedraw-playback-range" type="range" min="0" max="0" step="1" value="0" aria-label="推演步骤">
-      <span class="oriedraw-playback-step">0 / 0</span>
+    <div class="oriredraw-playback-controls">
+      <button class="oriredraw-playback-toggle" type="button" aria-label="播放推演">▶</button>
+      <input class="oriredraw-playback-range" type="range" min="0" max="0" step="1" value="0" aria-label="推演步骤">
+      <span class="oriredraw-playback-step">0 / 0</span>
     </div>
-    <div class="oriedraw-playback-caption" aria-live="polite"></div>
+    <div class="oriredraw-playback-caption" aria-live="polite"></div>
   `;
   previewFigure.append(panel);
 
   const canvas = panel.querySelector('canvas');
-  const toggle = panel.querySelector('.oriedraw-playback-toggle');
-  const range = panel.querySelector('.oriedraw-playback-range');
-  const stepLabel = panel.querySelector('.oriedraw-playback-step');
-  const caption = panel.querySelector('.oriedraw-playback-caption');
+  const toggle = panel.querySelector('.oriredraw-playback-toggle');
+  const range = panel.querySelector('.oriredraw-playback-range');
+  const stepLabel = panel.querySelector('.oriredraw-playback-step');
+  const caption = panel.querySelector('.oriredraw-playback-caption');
   const context = canvas.getContext('2d');
 
   function isEnglish() {
@@ -276,7 +276,7 @@
   }
 
   function resizeCanvas() {
-    const stage = panel.querySelector('.oriedraw-playback-stage');
+    const stage = panel.querySelector('.oriredraw-playback-stage');
     const cssSize = Math.max(240, Math.round(stage.clientWidth || 640));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const pixelSize = Math.round(cssSize * dpr);
@@ -292,7 +292,7 @@
     if (!state.active) return;
     resizeCanvas();
     renderStep(false);
-  }).observe(panel.querySelector('.oriedraw-playback-stage'));
+  }).observe(panel.querySelector('.oriredraw-playback-stage'));
 
   function analysisSize() {
     const value = Number(state.root?.stats?.analysis_size_used);
