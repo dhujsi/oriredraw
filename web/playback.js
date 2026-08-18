@@ -13,6 +13,7 @@
     finalImage: null,
     finalImageUri: '',
     active: false,
+    showUnderlay: true,
   };
 
   class ObservedWorker extends NativeWorker {
@@ -48,7 +49,10 @@
     .oriredraw-playback-toggle:disabled { cursor: default; opacity: .45; }
     .oriredraw-playback-range { width: 100%; min-width: 0; accent-color: var(--ink, #171714); }
     .oriredraw-playback-step { color: var(--muted, #6f706a); font: 700 10px/1 ui-monospace, Consolas, monospace; white-space: nowrap; }
-    .oriredraw-playback-caption { min-height: 18px; margin-top: 7px; color: var(--muted, #6f706a); font-size: 10px; line-height: 1.5; }
+    .oriredraw-playback-options { display: flex; justify-content: flex-end; margin-top: 7px; }
+    .oriredraw-playback-underlay { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #6f706a); font: 700 10px/1.3 ui-monospace, Consolas, monospace; cursor: pointer; user-select: none; }
+    .oriredraw-playback-underlay input { margin: 0; accent-color: var(--green, #1f8d55); }
+    .oriredraw-playback-caption { min-height: 18px; margin-top: 6px; color: var(--muted, #6f706a); font-size: 10px; line-height: 1.5; }
     @media (max-width: 520px) {
       .oriredraw-playback-controls { grid-template-columns: 32px minmax(0, 1fr); }
       .oriredraw-playback-step { grid-column: 1 / -1; justify-self: end; }
@@ -79,6 +83,12 @@
       <input class="oriredraw-playback-range" type="range" min="0" max="0" step="1" value="0" aria-label="推演步骤">
       <span class="oriredraw-playback-step">0 / 0</span>
     </div>
+    <div class="oriredraw-playback-options">
+      <label class="oriredraw-playback-underlay">
+        <input type="checkbox" checked>
+        <span></span>
+      </label>
+    </div>
     <div class="oriredraw-playback-caption" aria-live="polite"></div>
   `;
   previewFigure.append(panel);
@@ -87,6 +97,8 @@
   const toggle = panel.querySelector('.oriredraw-playback-toggle');
   const range = panel.querySelector('.oriredraw-playback-range');
   const stepLabel = panel.querySelector('.oriredraw-playback-step');
+  const underlayToggle = panel.querySelector('.oriredraw-playback-underlay input');
+  const underlayLabel = panel.querySelector('.oriredraw-playback-underlay span');
   const caption = panel.querySelector('.oriredraw-playback-caption');
   const context = canvas.getContext('2d');
 
@@ -100,6 +112,7 @@
           tab: 'Derivation',
           play: 'Play derivation',
           pause: 'Pause derivation',
+          underlay: 'CP reference',
           noTrace: 'No derivation trace is available for this result.',
           seeds: 'Initial construction seeds',
           generation: generation => `Construction generation ${generation}`,
@@ -111,6 +124,7 @@
           tab: '推演播放',
           play: '播放推演',
           pause: '暂停推演',
+          underlay: '重构 CP 底图',
           noTrace: '这个结果没有可播放的构造轨迹。',
           seeds: '初始构造种子',
           generation: generation => `第 ${generation} 代构造`,
@@ -124,6 +138,7 @@
     const text = copy();
     playbackTab.textContent = text.tab;
     toggle.setAttribute('aria-label', state.timer ? text.pause : text.play);
+    underlayLabel.textContent = text.underlay;
     renderStep(false);
   }
 
@@ -133,17 +148,38 @@
   });
   updateLanguage();
 
-  function finalOnlyAnchors() {
-    return (state.root?.anchors || []).filter(anchor =>
-      Number.isFinite(Number(anchor.angle))
-      && Number.isFinite(Number(anchor.line_offset_px))
-      && Array.isArray(anchor.anchor_point_px)
+  function isValidAnchor(anchor) {
+    return Number.isFinite(Number(anchor?.angle))
+      && Number.isFinite(Number(anchor?.line_offset_px))
+      && Array.isArray(anchor?.anchor_point_px)
       && anchor.anchor_point_px.length >= 2
       && Number.isFinite(Number(anchor.anchor_point_px[0]))
       && Number.isFinite(Number(anchor.anchor_point_px[1]))
-      && Number.isFinite(Number(anchor.generation))
-      && Number(anchor.generation) >= 0
-    );
+      && Number.isFinite(Number(anchor?.generation))
+      && Number(anchor.generation) >= 0;
+  }
+
+  function traceAnchors() {
+    const trace = Array.isArray(state.root?.playback_trace)
+      ? state.root.playback_trace
+      : (state.root?.anchors || []);
+    return trace.filter(isValidAnchor);
+  }
+
+  function formedSegments(anchor) {
+    const values = Array.isArray(anchor?.formed_segments_px)
+      ? anchor.formed_segments_px
+      : [];
+    return values
+      .map(segment => ({
+        start: Array.isArray(segment?.start) ? segment.start.slice(0, 2).map(Number) : [],
+        end: Array.isArray(segment?.end) ? segment.end.slice(0, 2).map(Number) : [],
+      }))
+      .filter(segment =>
+        segment.start.length === 2
+        && segment.end.length === 2
+        && [...segment.start, ...segment.end].every(Number.isFinite)
+      );
   }
 
   function variantSegments() {
@@ -168,7 +204,7 @@
 
   function rebuildTrace() {
     stopPlayback();
-    const anchors = finalOnlyAnchors();
+    const anchors = traceAnchors();
     const byGeneration = new Map();
     for (const anchor of anchors) {
       const generation = Number(anchor.generation);
@@ -199,7 +235,7 @@
     image.onload = () => {
       if (uri !== state.finalImageUri) return;
       state.finalImage = image;
-      if (state.active && state.step === state.groups.length) renderStep(false);
+      if (state.active) renderStep(false);
     };
     image.src = uri;
   }
@@ -236,6 +272,11 @@
   range.addEventListener('input', () => {
     stopPlayback();
     state.step = Number(range.value);
+    renderStep(false);
+  });
+
+  underlayToggle.addEventListener('change', () => {
+    state.showUnderlay = underlayToggle.checked;
     renderStep(false);
   });
 
@@ -297,7 +338,7 @@
   function analysisSize() {
     const value = Number(state.root?.stats?.analysis_size_used);
     if (Number.isFinite(value) && value > 1) return value - 1;
-    const anchors = finalOnlyAnchors();
+    const anchors = traceAnchors();
     const maximum = anchors.reduce((best, anchor) => Math.max(
       best,
       Number(anchor.anchor_point_px?.[0]) || 0,
@@ -376,7 +417,7 @@
     state.animationFrame = requestAnimationFrame(frame);
   }
 
-  function setupCanvas() {
+  function setupCanvas(withUnderlay = false) {
     const width = canvas.width;
     const height = canvas.height;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -385,9 +426,28 @@
     context.clearRect(0, 0, width, height);
     context.fillStyle = '#fff';
     context.fillRect(0, 0, width, height);
+
+    if (withUnderlay && state.showUnderlay && state.finalImage) {
+      context.save();
+      context.globalAlpha = 0.13;
+      context.drawImage(
+        state.finalImage,
+        margin,
+        margin,
+        Math.max(1, width - margin * 2),
+        Math.max(1, height - margin * 2),
+      );
+      context.restore();
+    }
+
     context.strokeStyle = '#171714';
     context.lineWidth = Math.max(1, dpr);
-    context.strokeRect(margin + .5, margin + .5, width - margin * 2 - 1, height - margin * 2 - 1);
+    context.strokeRect(
+      margin + .5,
+      margin + .5,
+      width - margin * 2 - 1,
+      height - margin * 2 - 1,
+    );
     return {
       width,
       height,
@@ -416,58 +476,114 @@
     context.stroke();
   }
 
-  function drawConstruction(step, progress) {
-    const geometry = setupCanvas();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const previousColor = '#666861';
-    const currentColor = '#171714';
-    const accent = '#8bb900';
+  function drawHistoricalAnchor(anchor, currentGeneration, geometry, dpr) {
+    const clipped = clippedEndpoints(anchor, geometry.size);
+    if (!clipped) return;
 
-    for (let index = 0; index <= step && index < state.groups.length; index += 1) {
+    const segments = formedSegments(anchor);
+    const generation = Number(anchor.generation);
+    const rawLastUse = Number(anchor.last_used_generation);
+    const lastUse = Number.isFinite(rawLastUse) ? rawLastUse : generation;
+    const stillNeeded = segments.length > 0 && currentGeneration <= lastUse;
+
+    if (!segments.length) {
+      strokeSegment(
+        clipped.start,
+        clipped.end,
+        geometry,
+        '#c5c6c1',
+        .9 * dpr,
+      );
+      return;
+    }
+
+    if (stillNeeded) {
+      strokeSegment(
+        clipped.start,
+        clipped.end,
+        geometry,
+        '#b7b8b2',
+        1.0 * dpr,
+      );
+      return;
+    }
+
+    for (const segment of segments) {
+      strokeSegment(
+        segment.start,
+        segment.end,
+        geometry,
+        '#aaaca6',
+        1.05 * dpr,
+      );
+    }
+  }
+
+  function drawCurrentRay(anchor, progress, geometry, dpr) {
+    const clipped = clippedEndpoints(anchor, geometry.size);
+    if (!clipped) return;
+    const left = [
+      clipped.anchor[0] + (clipped.start[0] - clipped.anchor[0]) * progress,
+      clipped.anchor[1] + (clipped.start[1] - clipped.anchor[1]) * progress,
+    ];
+    const right = [
+      clipped.anchor[0] + (clipped.end[0] - clipped.anchor[0]) * progress,
+      clipped.anchor[1] + (clipped.end[1] - clipped.anchor[1]) * progress,
+    ];
+    strokeSegment(left, right, geometry, '#171714', 1.9 * dpr);
+    const marker = pointToCanvas(clipped.anchor, geometry);
+    context.fillStyle = '#8bb900';
+    context.beginPath();
+    context.arc(marker[0], marker[1], 2.5 * dpr, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  function drawConstruction(step, progress) {
+    const geometry = setupCanvas(true);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const currentGroup = state.groups[step] || null;
+    const currentGeneration = currentGroup?.kind === 'rays'
+      ? Number(currentGroup.generation)
+      : Infinity;
+
+    for (let index = 0; index < step && index < state.groups.length; index += 1) {
       const group = state.groups[index];
-      const current = index === step;
       if (group.kind === 'segments') {
         for (const segment of group.segments) {
-          const start = segment.start;
-          const end = segment.end;
-          const target = current
-            ? [
-                start[0] + (end[0] - start[0]) * progress,
-                start[1] + (end[1] - start[1]) * progress,
-              ]
-            : end;
-          strokeSegment(start, target, geometry, current ? accent : previousColor, (current ? 2.2 : 1.2) * dpr);
+          strokeSegment(
+            segment.start,
+            segment.end,
+            geometry,
+            '#aaaca6',
+            1.05 * dpr,
+          );
         }
         continue;
       }
-
       for (const anchor of group.lines) {
-        const clipped = clippedEndpoints(anchor, geometry.size);
-        if (!clipped) continue;
-        if (!current) {
-          strokeSegment(clipped.start, clipped.end, geometry, previousColor, 1.15 * dpr);
-          continue;
-        }
-        const left = [
-          clipped.anchor[0] + (clipped.start[0] - clipped.anchor[0]) * progress,
-          clipped.anchor[1] + (clipped.start[1] - clipped.anchor[1]) * progress,
-        ];
-        const right = [
-          clipped.anchor[0] + (clipped.end[0] - clipped.anchor[0]) * progress,
-          clipped.anchor[1] + (clipped.end[1] - clipped.anchor[1]) * progress,
-        ];
-        strokeSegment(left, right, geometry, currentColor, 1.9 * dpr);
-        const marker = pointToCanvas(clipped.anchor, geometry);
-        context.fillStyle = accent;
-        context.beginPath();
-        context.arc(marker[0], marker[1], 2.5 * dpr, 0, Math.PI * 2);
-        context.fill();
+        drawHistoricalAnchor(anchor, currentGeneration, geometry, dpr);
       }
+    }
+
+    if (!currentGroup) return;
+    if (currentGroup.kind === 'segments') {
+      for (const segment of currentGroup.segments) {
+        const target = [
+          segment.start[0] + (segment.end[0] - segment.start[0]) * progress,
+          segment.start[1] + (segment.end[1] - segment.start[1]) * progress,
+        ];
+        strokeSegment(segment.start, target, geometry, '#8bb900', 2.2 * dpr);
+      }
+      return;
+    }
+
+    for (const anchor of currentGroup.lines) {
+      drawCurrentRay(anchor, progress, geometry, dpr);
     }
   }
 
   function drawFinal() {
-    setupCanvas();
+    setupCanvas(false);
     if (!state.finalImage) {
       loadFinalImage();
       return;
