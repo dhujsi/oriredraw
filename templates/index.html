@@ -112,18 +112,18 @@
             </div>
           </details>
 
-          <div class="parameter mode-parameter">
-            <div><label for="mv-mode">线条颜色</label></div>
-            <select id="mv-mode" name="mv_mode">
-              <option value="auto">自动判断红蓝 / 纯黑</option>
-              <option value="color">强制按红蓝图识别</option>
-              <option value="monochrome">纯黑线：统一按峰线导出</option>
-            </select>
-            <small>纯黑图没有峰谷信息；程序只重建几何，不用 cAMV 猜颜色。</small>
-          </div>
-
           <details class="advanced">
             <summary>高级设置</summary>
+            <div class="parameter mode-parameter">
+              <div><label for="mv-mode">线条颜色</label></div>
+              <select id="mv-mode" name="mv_mode">
+                <option value="auto">自动判断红蓝 / 纯黑</option>
+                <option value="color">强制按红蓝图识别</option>
+                <option value="monochrome">纯黑线：统一按峰线导出</option>
+              </select>
+              <small>纯黑图没有峰谷信息；程序只重建几何，不用 cAMV 猜颜色。</small>
+            </div>
+
             <div class="parameter">
               <div><label for="angle-mode">像素线方向误差</label><output id="angle-value">自动</output></div>
               <select id="angle-mode" name="angle_tolerance_mode">
@@ -150,12 +150,12 @@
               <input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8">
               <small>只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。</small>
             </div>
-          </details>
 
-          <label class="variant-option">
-            <input id="construction-variants" type="checkbox" checked>
-            <span><strong>生成精确备选构造版本</strong><small>仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
-          </label>
+            <label class="variant-option">
+              <input id="construction-variants" type="checkbox" checked>
+              <span><strong>生成精确备选构造版本</strong><small>仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
+            </label>
+          </details>
         </form>
       </aside>
 
