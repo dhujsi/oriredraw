@@ -1,4 +1,4 @@
-# Oriedraw
+# Oriredraw
 
 [中文](#中文) · [English](#english)
 
@@ -96,7 +96,7 @@ python audit.py reliability --prediction output.cp --image input.png --json reli
 
 ## English
 
-Oriedraw redraws white-background red/blue or black-line PNG/JPG crease-pattern images into `.cp` files readable by Oriedita. The recognizer does not accept photos, gray backgrounds, or black backgrounds directly. A separate four-corner perspective-correction tool is included for previewing and downloading a rectified square PNG. The full algorithm can run locally or offline in the browser without AI, cloud recognition, or image-upload APIs.
+Oriredraw redraws white-background red/blue or black-line PNG/JPG crease-pattern images into `.cp` files readable by Oriedita. The recognizer does not accept photos, gray backgrounds, or black backgrounds directly. A separate four-corner perspective-correction tool is included for previewing and downloading a rectified square PNG. The full algorithm can run locally or offline in the browser without AI, cloud recognition, or image-upload APIs.
 
 The web app has a 中文 / English switch and a direct GitHub repository link in the upper-right corner. A short welcome notice is shown once on first visit; recognition problems, unexpected output, and improvement suggestions are welcome in GitHub Issues.
 
@@ -116,7 +116,7 @@ The default settings are appropriate for most images. After processing, check th
 4. Output segment endpoints must come from those derived nodes; segment lengths cannot be specified freely.
 5. Paper boundaries are written as `.cp` type `1`, red mountain folds as type `2`, and blue valley folds as type `3`; auxiliary-line type `4` is not used.
 
-If strong stroke pixels remain unexplained by the strict result, Oriedraw may additionally generate three low-frequency exact-construction variants: angle bisectors of existing angles, local flat-fold completion using the same odd-ray formulation as Oriedita, and exact `1/2` through `1/8` division points on a target segment connected from existing nodes. These are not free-angle fits. Every added line records its construction rule, endpoints, and pixel evidence, and the default strict result is never overwritten.
+If strong stroke pixels remain unexplained by the strict result, Oriredraw may additionally generate three low-frequency exact-construction variants: angle bisectors of existing angles, local flat-fold completion using the same odd-ray formulation as Oriedita, and exact `1/2` through `1/8` division points on a target segment connected from existing nodes. These are not free-angle fits. Every added line records its construction rule, endpoints, and pixel evidence, and the default strict result is never overwritten.
 
 **Pixel-line direction tolerance** is used only to decide whether a short blurry or jagged pixel segment can be admitted as a candidate. Auto mode tightens the tolerance according to segment length and line width and is capped at `3°` after corner correction. Once admitted, the strict version still replaces it with an exact `22.5° × k` direction; alternative versions use the exact direction produced by their respective construction formulas.
 
@@ -132,7 +132,7 @@ In **Advanced settings**, **Construction / observation offset limit** controls t
 
 Small screenshots are automatically upscaled at high quality to the analysis size while `.cp` coordinates remain normalized to the paper. Upscaling keeps pixel thresholds usable but cannot restore line detail already lost in the source image.
 
-Black-line CPs contain no mountain/valley evidence. Geometry is still redrawn normally and internal lines are exported as mountain folds. Maekawa and big-little-big color checks are explicitly skipped; Oriedraw does not use cAMV to invent a color assignment and present it as image recognition.
+Black-line CPs contain no mountain/valley evidence. Geometry is still redrawn normally and internal lines are exported as mountain folds. Maekawa and big-little-big color checks are explicitly skipped; Oriredraw does not use cAMV to invent a color assignment and present it as image recognition.
 
 Local Pages preview:
 
