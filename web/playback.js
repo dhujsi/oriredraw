@@ -14,11 +14,15 @@
     finalImageUri: '',
     active: false,
     showUnderlay: true,
+    worker: null,
+    projectRestorePayload: null,
+    restoring: false,
   };
 
   class ObservedWorker extends NativeWorker {
     constructor(...args) {
       super(...args);
+      state.worker = this;
       this.addEventListener('message', event => {
         const payload = event.data?.payload;
         if (
@@ -31,11 +35,51 @@
           state.versionIndex = 0;
           state.version = payload;
           rebuildTrace();
+          state.restoring = false;
         }
       });
     }
+
+    postMessage(message, transfer) {
+      if (message?.type === 'reconstruct' && state.projectRestorePayload) {
+        const payload = state.projectRestorePayload;
+        state.projectRestorePayload = null;
+        queueMicrotask(() => {
+          this.dispatchEvent(new MessageEvent('message', {
+            data: { type: 'result', id: message.id, payload },
+          }));
+        });
+        return;
+      }
+      super.postMessage(message, transfer);
+    }
   }
   window.Worker = ObservedWorker;
+
+  window.oriredrawProjectBridge = {
+    get result() {
+      return state.root;
+    },
+    get restoring() {
+      return state.restoring;
+    },
+    prepareRestore(payload) {
+      state.projectRestorePayload = payload;
+      state.restoring = true;
+      if (state.worker) {
+        state.worker.dispatchEvent(new MessageEvent('message', {
+          data: {
+            type: 'status',
+            stage: 'ready',
+            message: '浏览器识别引擎已就绪',
+          },
+        }));
+      }
+    },
+  };
+  void import('./project.js').catch(error => {
+    console.warn('Project module failed to load', error);
+  });
 
   const style = document.createElement('style');
   style.textContent = `
