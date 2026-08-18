@@ -7,9 +7,9 @@
   <title>Oriedraw · 22.5° 折痕重建</title>
   <link rel="stylesheet" href="./style.css">
   <style>
-    .input-notice { padding: 13px 14px; border-left-width: 4px; }
-    .input-notice strong { font-size: 14px; }
-    .input-notice p { margin-top: 6px; font-size: 11px; line-height: 1.65; }
+    .input-notice { padding: 15px 16px; border-left-width: 4px; }
+    .input-notice strong { font-size: 17px; }
+    .input-notice p { margin-top: 7px; font-size: 13px; line-height: 1.7; }
     .paper-tool { padding: 0; }
     .paper-tool > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px; cursor: pointer; list-style: none; }
     .paper-tool > summary::-webkit-details-marker { display: none; }
@@ -21,6 +21,12 @@
     .paper-tool-body { padding: 0 11px 11px; border-top: 1px solid var(--line); }
     .paper-mode-label { display: block; margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.45; }
     .paper-tool-body > #corner-toggle { width: 100%; margin-top: 9px; }
+    .empty-state .engine-status { width: min(380px, 90%); justify-content: center; margin-top: 22px; padding: 12px 14px; }
+    .empty-state .engine-status p { margin: 0; font-size: 12px; font-weight: 700; }
+    .empty-ready-title, .empty-ready-copy { display: none; }
+    .empty-state .engine-status[data-state="ready"] { display: none; }
+    .empty-state .engine-status[data-state="ready"] ~ .empty-ready-title { display: block; margin: 22px 0 4px; }
+    .empty-state .engine-status[data-state="ready"] ~ .empty-ready-copy { display: block; }
   </style>
 </head>
 <body>
@@ -28,7 +34,7 @@
     <header class="hero">
       <div>
         <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
-        <h1>从图片重新搭建<br><span>22.5° 折痕射线</span></h1>
+        <h1>将图片cp重绘为<br><span>.cp文件</span></h1>
       </div>
       <div class="intro-block">
         <p class="intro">先从四角和四边中点取线，再选择至多一个 <em>a+b√2</em> 核心点；此后只允许由已有射线交点或纸边交点继续推导。</p>
@@ -47,15 +53,16 @@
             <span class="file-name" id="file-name">尚未选择文件</span>
           </label>
 
-          <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
-            <span></span><p>正在准备浏览器识别引擎…</p>
-          </div>
-
           <div class="input-notice">
             <strong>上传要求</strong>
             <p>仅支持白底红蓝线或白底黑线。CP 本体尽量无遮挡并保持正方形，程序会自动裁剪周围其他区域。暂时仅支持 22.5° 系设计。</p>
             <p>如果是拍照产生透视变形的 CP，可先用下方“透视校正”拉成正方形，再交给豆包等 AI 处理成白底线稿。</p>
           </div>
+
+          <button class="primary" id="submit-button" type="submit" disabled>
+            <span>开始重建</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
 
           <details class="paper-tool" id="paper-tool">
             <summary>
@@ -116,7 +123,7 @@
           </div>
 
           <details class="advanced">
-            <summary>高级图像参数</summary>
+            <summary>高级设置</summary>
             <div class="parameter">
               <div><label for="angle-mode">像素线方向误差</label><output id="angle-value">自动</output></div>
               <select id="angle-mode" name="angle_tolerance_mode">
@@ -149,19 +156,17 @@
             <input id="construction-variants" type="checkbox" checked>
             <span><strong>生成精确备选构造版本</strong><small>仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
           </label>
-
-          <button class="primary" id="submit-button" type="submit" disabled>
-            <span>开始重建</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          </button>
         </form>
       </aside>
 
       <section class="results panel">
         <div class="empty-state" id="empty-state">
           <div class="ray-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-          <p>等待一张折痕图</p>
-          <small>重建结果会在这里与原图叠加显示</small>
+          <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
+            <span></span><p>正在准备浏览器识别引擎…</p>
+          </div>
+          <p class="empty-ready-title">等待一张折痕图</p>
+          <small class="empty-ready-copy">重建结果会在这里与原图叠加显示</small>
         </div>
 
         <div id="loading" class="loading hidden" aria-live="polite">
