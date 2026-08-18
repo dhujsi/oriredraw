@@ -72,6 +72,12 @@
             <div><label for="algebraic">√2 吸附范围</label><output id="algebraic-value">3.0px</output></div>
             <input id="algebraic" name="algebraic_snap_px" type="range" min="0.5" max="6" step="0.5" value="3">
           </div>
+
+          <div class="parameter">
+            <div><label for="construction-offset">构造与观测偏移上限</label><output id="construction-offset-value">4.8px</output></div>
+            <input id="construction-offset" name="construction_offset_tolerance_px" type="range" min="2" max="6" step="0.2" value="4.8">
+            <small>只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。</small>
+          </div>
           </details>
 
           <label class="variant-option">

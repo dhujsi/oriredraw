@@ -34,6 +34,10 @@ class Settings:
     rho_merge_px: float = 2.8
     algebraic_coefficient_limit: int = 40
     algebraic_snap_px: float = 3.0
+    # Maximum normal displacement between a detected raster ridge and the
+    # exact ray derived from legal seeds/intersections.  This is association
+    # evidence only and never changes exported CP coordinates.
+    construction_offset_tolerance_px: float = 4.8
     evidence_distance_px: float = 1.8
     atomic_support: float = 0.70
     run_support: float = 0.64
@@ -57,6 +61,7 @@ class Settings:
             "run_support": float,
             "output_support": float,
             "algebraic_snap_px": float,
+            "construction_offset_tolerance_px": float,
             "min_run_length_px": float,
         }
         for name, converter in converters.items():
@@ -87,6 +92,10 @@ class Settings:
         result.run_support = min(0.95, max(0.30, result.run_support))
         result.output_support = min(0.95, max(0.25, result.output_support))
         result.algebraic_snap_px = min(6.0, max(0.5, result.algebraic_snap_px))
+        result.construction_offset_tolerance_px = min(
+            6.0,
+            max(2.0, result.construction_offset_tolerance_px),
+        )
         result.min_run_length_px = min(30.0, max(3.0, result.min_run_length_px))
         return result
 
@@ -128,6 +137,10 @@ class CandidateLine:
     parent_lines: tuple[int, int] | None = None
     evidence_intervals: list[list[float]] | None = None
     anchor_coordinates: tuple[AlgebraicValue, AlgebraicValue] | None = None
+    # The raster detector's normal offset before construction snaps this ray
+    # to an exact seed/intersection.  It is evidence metadata only: exported
+    # CP geometry always continues to use ``offset``.
+    observed_offset: float | None = None
 
     @property
     def angle_deg(self) -> float:
@@ -781,6 +794,69 @@ def _sample_support(
     xs = np.clip(np.rint(points[:, 0]).astype(int), 0, distance.shape[1] - 1)
     ys = np.clip(np.rint(points[:, 1]).astype(int), 0, distance.shape[0] - 1)
     return float(np.mean(distance[ys, xs] <= threshold))
+
+
+def _observed_proxy_support(
+    line: CandidateLine,
+    start_t: float,
+    end_t: float,
+    distance: np.ndarray,
+    threshold: float,
+) -> tuple[float, float, float]:
+    """Measure source support on a ray's observed raster identity.
+
+    Exact construction may move a detected ridge several pixels in the normal
+    direction.  The observed identity is allowed to validate that exact ray,
+    but it never changes exported endpoints.  Requiring both interval overlap
+    and a long continuous run prevents a crossing or unrelated nearby stroke
+    from validating the whole edge.
+    """
+
+    if line.observed_offset is None or end_t <= start_t:
+        return 0.0, 0.0, 0.0
+    intervals = line.evidence_intervals or []
+    if not intervals:
+        return 0.0, 0.0, 0.0
+
+    length = end_t - start_t
+    count = max(5, int(length * 2.0) + 1)
+    sample_t = np.linspace(start_t + 0.2, end_t - 0.2, count)
+    interval_mask = np.zeros(count, dtype=bool)
+    # Raster endpoints are noisy; this margin is only longitudinal and cannot
+    # make a parallel neighbouring ray count as evidence.
+    interval_margin = min(2.5, max(1.0, threshold))
+    for first_t, second_t in intervals:
+        interval_mask |= (
+            (sample_t >= first_t - interval_margin)
+            & (sample_t <= second_t + interval_margin)
+        )
+    interval_coverage = float(np.mean(interval_mask))
+    if not np.any(interval_mask):
+        return 0.0, 0.0, interval_coverage
+
+    observed_points = (
+        line.n * float(line.observed_offset)
+        + sample_t[:, None] * line.u
+    )
+    xs = np.clip(
+        np.rint(observed_points[:, 0]).astype(int), 0, distance.shape[1] - 1
+    )
+    ys = np.clip(
+        np.rint(observed_points[:, 1]).astype(int), 0, distance.shape[0] - 1
+    )
+    supported = (distance[ys, xs] <= threshold) & interval_mask
+    support = float(np.mean(supported))
+
+    longest = 0
+    current = 0
+    for accepted in supported:
+        if accepted:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    continuous = float(longest / max(1, count))
+    return support, continuous, interval_coverage
 
 
 def _supported_runs(lines: list[CandidateLine], ink: np.ndarray, settings: Settings) -> tuple[list[Run], np.ndarray]:
@@ -2379,9 +2455,13 @@ def _propagate_constructible_rays(
     # raster tolerance; once the measured stroke is diffuse, displacement is
     # capped to roughly one stroke radius instead of scaling with the blur.
     derivation_tolerance = (
-        4.8
+        settings.construction_offset_tolerance_px
         if settings.evidence_distance_px <= 2.0
-        else min(3.6, settings.evidence_distance_px + 0.75)
+        else min(
+            settings.construction_offset_tolerance_px,
+            3.6,
+            settings.evidence_distance_px + 0.75,
+        )
     )
 
     def has_evidence_with_margin(line_index: int, value: float, margin: float) -> bool:
@@ -4104,6 +4184,7 @@ def _recover_fragmented_rays_from_primary(
             AlgebraicValue(0, 0, 0.0, 0.0),
             host.copy(),
         )
+        exact_line.observed_offset = float(item["measured_offset"])
         for interval_index, (first, second) in enumerate(
             zip(ordered, ordered[1:])
         ):
@@ -4405,6 +4486,7 @@ def _reconstruct_lsd_rays(
         # already enforced.  The nearest algebraic boundary value remains as
         # metadata and is used later when construction seeds are selected.
         line.offset = float(cluster[1])
+        line.observed_offset = float(cluster[1])
         evidence_intervals: list[list[float]] = []
         for index in group:
             first_t = _point_t(line, raw[index]["start"])
@@ -5599,6 +5681,8 @@ def _close_internal_lineheads(
     # short arms that this exposes. This is vector-to-source validation, not
     # an attempt to measure missing lines.
     unsupported_edges_rejected = 0
+    observed_proxy_edges_preserved = 0
+    observed_proxy_max_shift_px = 0.0
     supported_result: list[Edge] = []
     for edge in result:
         length = float(np.linalg.norm(edge.end - edge.start))
@@ -5646,6 +5730,59 @@ def _close_internal_lineheads(
             3.0 <= length < 8.0 and image_support < 0.72
         )
         if low_support_long_edge or low_support_short_edge:
+            compatible = [
+                candidate
+                for candidate in construction_lines
+                if candidate.orientation == orientation
+                and abs(candidate.offset - offset) <= 0.2
+                and candidate.observed_offset is not None
+            ]
+            proxy_line = (
+                min(
+                    compatible,
+                    key=lambda candidate: abs(candidate.offset - offset),
+                )
+                if compatible
+                else None
+            )
+            if proxy_line is not None:
+                normal_shift = abs(
+                    float(proxy_line.observed_offset) - proxy_line.offset
+                )
+                # This cap follows the clean-image construction displacement
+                # gate.  The observed ridge must belong to this exact ray; we
+                # never scan an arbitrary wide band for a convenient stroke.
+                if (
+                    normal_shift
+                    <= settings.construction_offset_tolerance_px + 1e-6
+                ):
+                    (
+                        proxy_support,
+                        proxy_continuous,
+                        proxy_interval_coverage,
+                    ) = _observed_proxy_support(
+                        proxy_line,
+                        start_t,
+                        end_t,
+                        distance,
+                        settings.evidence_distance_px + 0.4,
+                    )
+                    required_proxy_support = 0.72 if length >= 8.0 else 0.82
+                    required_continuous = 0.52 if length >= 8.0 else 0.68
+                    proxy_valid = (
+                        proxy_support >= required_proxy_support
+                        and proxy_continuous >= required_continuous
+                        and proxy_interval_coverage >= required_proxy_support
+                    )
+                    if proxy_valid:
+                        low_support_long_edge = False
+                        low_support_short_edge = False
+                        observed_proxy_edges_preserved += 1
+                        observed_proxy_max_shift_px = max(
+                            observed_proxy_max_shift_px,
+                            normal_shift,
+                        )
+        if low_support_long_edge or low_support_short_edge:
             unsupported_edges_rejected += 1
             continue
         supported_result.append(edge)
@@ -5674,6 +5811,8 @@ def _close_internal_lineheads(
         "boundary_arms_recovered": boundary_arms_recovered,
         "redundant_short_edges_rejected": redundant_short_edges,
         "unsupported_edges_rejected": unsupported_edges_rejected,
+        "observed_proxy_edges_preserved": observed_proxy_edges_preserved,
+        "observed_proxy_max_shift_px": round(observed_proxy_max_shift_px, 4),
         "unclosed_edges_pruned": pruned,
     }
 

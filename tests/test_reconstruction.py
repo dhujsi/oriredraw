@@ -6,9 +6,13 @@ import cv2
 import numpy as np
 
 from reconstructor import (
+    AlgebraicValue,
+    CandidateLine,
     Edge,
     Settings,
     _color_geometry_masks,
+    _close_internal_lineheads,
+    _observed_proxy_support,
     _reconstruct_lsd_rays,
     edges_to_cp,
     prepare_paper_square,
@@ -18,6 +22,131 @@ from reconstructor import (
 
 
 class ReconstructionSmokeTest(unittest.TestCase):
+    def test_observed_proxy_support_recovers_only_the_recorded_raster_ray(self):
+        ink = np.zeros((100, 100), np.uint8)
+        cv2.line(ink, (10, 55), (90, 55), 255, 1)
+        distance = cv2.distanceTransform(
+            np.where(ink > 0, 0, 255).astype(np.uint8),
+            cv2.DIST_L2,
+            3,
+        )
+        line = CandidateLine(
+            0,
+            50.0,
+            80.0,
+            0.0,
+            "",
+            AlgebraicValue(0, 0, 0.0, 0.0),
+            np.array([10.0, 50.0]),
+            evidence_intervals=[[10.0, 90.0]],
+            observed_offset=55.0,
+        )
+
+        support, continuous, coverage = _observed_proxy_support(
+            line, 10.0, 90.0, distance, 1.2
+        )
+
+        self.assertGreater(support, 0.95)
+        self.assertGreater(continuous, 0.95)
+        self.assertGreater(coverage, 0.95)
+
+    def test_observed_proxy_support_rejects_a_single_crossing(self):
+        ink = np.zeros((100, 100), np.uint8)
+        cv2.line(ink, (50, 10), (50, 90), 255, 1)
+        distance = cv2.distanceTransform(
+            np.where(ink > 0, 0, 255).astype(np.uint8),
+            cv2.DIST_L2,
+            3,
+        )
+        line = CandidateLine(
+            0,
+            50.0,
+            80.0,
+            0.0,
+            "",
+            AlgebraicValue(0, 0, 0.0, 0.0),
+            np.array([10.0, 50.0]),
+            evidence_intervals=[[10.0, 90.0]],
+            observed_offset=55.0,
+        )
+
+        support, continuous, _ = _observed_proxy_support(
+            line, 10.0, 90.0, distance, 1.2
+        )
+
+        self.assertLess(support, 0.10)
+        self.assertLess(continuous, 0.10)
+
+    def test_closure_preserves_a_closed_exact_cycle_using_observed_ray_proxies(self):
+        ink = np.zeros((100, 100), np.uint8)
+        cv2.rectangle(ink, (24, 24), (76, 76), 255, 1)
+        algebraic = AlgebraicValue(0, 0, 0.0, 0.0)
+        lines = [
+            CandidateLine(
+                0,
+                20.0,
+                50.0,
+                0.0,
+                "",
+                algebraic,
+                np.array([20.0, 20.0]),
+                evidence_intervals=[[20.0, 80.0]],
+                observed_offset=24.0,
+            ),
+            CandidateLine(
+                0,
+                80.0,
+                50.0,
+                0.0,
+                "",
+                algebraic,
+                np.array([20.0, 80.0]),
+                evidence_intervals=[[20.0, 80.0]],
+                observed_offset=76.0,
+            ),
+            CandidateLine(
+                4,
+                -20.0,
+                50.0,
+                0.0,
+                "",
+                algebraic,
+                np.array([20.0, 20.0]),
+                evidence_intervals=[[20.0, 80.0]],
+                observed_offset=-24.0,
+            ),
+            CandidateLine(
+                4,
+                -80.0,
+                50.0,
+                0.0,
+                "",
+                algebraic,
+                np.array([80.0, 20.0]),
+                evidence_intervals=[[20.0, 80.0]],
+                observed_offset=-76.0,
+            ),
+        ]
+        edges = [
+            Edge(np.array([20.0, 20.0]), np.array([80.0, 20.0]), 4),
+            Edge(np.array([80.0, 20.0]), np.array([80.0, 80.0]), 4),
+            Edge(np.array([80.0, 80.0]), np.array([20.0, 80.0]), 4),
+            Edge(np.array([20.0, 80.0]), np.array([20.0, 20.0]), 4),
+        ]
+
+        result, stats = _close_internal_lineheads(
+            edges,
+            lines,
+            ink,
+            Settings(evidence_distance_px=1.75),
+            conservative_evidence=True,
+        )
+
+        self.assertEqual(len(result), 4)
+        self.assertEqual(stats["unsupported_edges_rejected"], 0)
+        self.assertEqual(stats["unclosed_edges_pruned"], 0)
+        self.assertEqual(stats["observed_proxy_edges_preserved"], 4)
+
     def test_white_line_art_gate_accepts_supported_cp_colors(self):
         image = np.full((180, 180, 3), 255, np.uint8)
         cv2.line(image, (10, 20), (170, 160), (0, 0, 0), 2)

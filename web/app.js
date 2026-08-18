@@ -124,6 +124,7 @@ function bindRange(selector, outputSelector, format) {
 
 bindRange('#support', '#support-value', value => `${Math.round(value * 100)}%`);
 bindRange('#algebraic', '#algebraic-value', value => `${value.toFixed(1)}px`);
+bindRange('#construction-offset', '#construction-offset-value', value => `${value.toFixed(1)}px`);
 
 function updateAngleControl() {
   const automatic = angleMode.value === 'auto';
@@ -495,6 +496,7 @@ uploadForm.addEventListener('submit', async event => {
       angle_tolerance_deg: Number(angleInput.value),
       output_support: Number(document.querySelector('#support').value),
       algebraic_snap_px: Number(document.querySelector('#algebraic').value),
+      construction_offset_tolerance_px: Number(document.querySelector('#construction-offset').value),
       mv_mode: document.querySelector('#mv-mode').value,
       construction_variants: document.querySelector('#construction-variants').checked,
       paper_corners: null,
@@ -566,6 +568,8 @@ function renderVersion(version, root) {
     ['红蓝模糊线', data.stats.mv_ambiguous_segments ?? 0],
     ['cAMV 改色线', data.stats.mv_camv_changed_segments ?? 0],
     ['完整 cAMV 异常', data.stats.camv_full?.violation_vertex_count ?? 0],
+    ['局部偏移保留线', data.stats.observed_proxy_edges_preserved ?? 0],
+    ['最大验证偏移 px', data.stats.observed_proxy_max_shift_px ?? 0],
     ['忽略自由角度证据', data.stats.angle_rejected_segments],
   ];
   stats.innerHTML = values.map(([label, value]) =>

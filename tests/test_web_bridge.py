@@ -23,7 +23,8 @@ class WebBridgeTest(unittest.TestCase):
         with patch("web_bridge.reconstruct", return_value=fake_result) as mocked:
             payload = json.loads(
                 reconstruct_for_web_json(
-                    b"image", '{"angle_tolerance_deg": 4.5}'
+                    b"image",
+                    '{"angle_tolerance_deg": 4.5, "construction_offset_tolerance_px": 5.4}',
                 )
             )
 
@@ -31,6 +32,7 @@ class WebBridgeTest(unittest.TestCase):
         self.assertNotIn("overlay_image", payload)
         settings = mocked.call_args.kwargs["settings"]
         self.assertEqual(settings.angle_tolerance_deg, 4.5)
+        self.assertEqual(settings.construction_offset_tolerance_px, 5.4)
 
     def test_rectify_bridge_returns_downloadable_square_png(self):
         image = np.full((160, 220, 3), 255, np.uint8)
