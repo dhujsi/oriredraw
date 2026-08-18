@@ -8,12 +8,18 @@
   <link rel="stylesheet" href="./style.css">
   <style>
     .shell { padding-bottom: 18px; }
-    .hero { position: relative; }
     .workspace { min-height: 0; }
     .empty-state, .loading { min-height: 0; height: 100%; }
-    .page-tools { position: absolute; top: 15px; right: 0; display: flex; align-items: center; gap: 7px; z-index: 2; }
-    .page-tools a, .page-tools button { min-height: 32px; border: 1px solid var(--line); background: rgba(251, 250, 246, .94); color: var(--ink); padding: 6px 9px; font: 700 10px/1.2 ui-monospace, Consolas, monospace; text-decoration: none; cursor: pointer; }
-    .page-tools a:hover, .page-tools button:hover { border-color: var(--ink); background: #fff; }
+    .page-tools { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 14px; padding: 10px 2px 0; border-top: 1px solid var(--line); }
+    .page-tools a, .page-tools button { display: inline-flex; align-items: center; gap: 6px; min-height: 0; border: 0; background: none; color: var(--muted); padding: 3px 1px; font: 700 10px/1.2 ui-monospace, Consolas, monospace; text-decoration: none; cursor: pointer; opacity: .78; }
+    .page-tools a:hover, .page-tools button:hover { color: var(--ink); opacity: 1; }
+    .page-tools .github-mark { width: 15px; height: 15px; fill: currentColor; flex: 0 0 auto; }
+    #language-toggle { width: 24px; justify-content: center; font-size: 0; }
+    #language-toggle::after { content: '🇨🇳'; font: 16px/1 sans-serif; }
+    html[lang="en"] #language-toggle::after { content: '🇬🇧'; }
+    .lang-en { display: none; }
+    html[lang="en"] .lang-zh { display: none; }
+    html[lang="en"] .lang-en { display: inline; }
     .input-notice { padding: 15px 16px; border-left-width: 4px; }
     .input-notice strong { font-size: 17px; }
     .input-notice p { margin-top: 7px; font-size: 13px; line-height: 1.7; }
@@ -54,12 +60,8 @@
       .input-notice strong { font-size: 16px; }
       .input-notice p { font-size: 12px; line-height: 1.6; }
     }
-    @media (max-width: 900px) {
-      .page-tools { position: static; grid-column: 1 / -1; justify-self: end; order: -1; }
-    }
     @media (max-width: 520px) {
-      .page-tools { justify-self: stretch; }
-      .page-tools a { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .page-tools { justify-content: center; }
       .welcome-actions { flex-direction: column; }
       .welcome-actions a, .welcome-actions button { text-align: center; }
     }
@@ -68,10 +70,6 @@
 <body>
   <main class="shell">
     <header class="hero">
-      <nav class="page-tools" aria-label="Project links">
-        <a id="repository-link" href="https://github.com/dhujsi/oriredraw" target="_blank" rel="noopener noreferrer">GitHub · dhujsi/oriredraw</a>
-        <button id="language-toggle" type="button">EN</button>
-      </nav>
       <div>
         <p class="eyebrow">ORIEDRAW / BROWSER EDITION</p>
         <h1 data-i18n-html="heroTitle">将图片 CP 重绘为<br><span>.cp 文件</span></h1>
@@ -99,7 +97,7 @@
 
           <div class="input-notice">
             <strong data-i18n="requirementsTitle">上传要求</strong>
-            <p data-i18n="requirements1">仅支持白底红蓝线或白底黑线。CP 本体尽量无遮挡并保持正方形，程序会自动裁剪周围其他区域。暂时仅支持 22.5° 系设计。</p>
+            <p><span class="lang-zh">仅支持白底红蓝线或白底黑线。CP 务必完整、不缺角，尽量无遮挡并保持接近正方形；程序会自动裁剪外围无关区域。暂时仅支持 22.5° 系设计。</span><span class="lang-en">White-background red/blue lines or white-background black lines only. The CP must be complete with all four corners visible, as unobstructed as possible, and approximately square; irrelevant surrounding areas are cropped automatically. Currently only 22.5°-system designs are supported.</span></p>
             <p data-i18n="requirements2">如果是拍照产生透视变形的 CP，可先用下方“透视校正”拉成正方形，再交给豆包等 AI 处理成白底线稿。</p>
           </div>
 
@@ -255,6 +253,14 @@
         </div>
       </section>
     </section>
+
+    <nav class="page-tools" aria-label="Project links">
+      <a id="repository-link" href="https://github.com/dhujsi/oriredraw" target="_blank" rel="noopener noreferrer">
+        <svg class="github-mark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.81c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <button id="language-toggle" type="button" aria-label="Switch to English">🇨🇳</button>
+    </nav>
   </main>
 
   <dialog class="welcome-dialog" id="welcome-dialog">
