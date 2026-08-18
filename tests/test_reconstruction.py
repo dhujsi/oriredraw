@@ -8,7 +8,6 @@ import numpy as np
 from reconstructor import (
     Edge,
     Settings,
-    _adaptive_geometry_evidence,
     _reconstruct_lsd_rays,
     edges_to_cp,
     prepare_paper_square,
@@ -17,42 +16,6 @@ from reconstructor import (
 
 
 class ReconstructionSmokeTest(unittest.TestCase):
-    def test_adaptive_evidence_supports_colored_lines_on_dark_background(self):
-        image = np.zeros((256, 256, 3), dtype=np.uint8)
-        cv2.line(image, (18, 28), (236, 246), (0, 0, 210), 2, cv2.LINE_AA)
-        cv2.line(image, (18, 246), (236, 28), (210, 0, 0), 2, cv2.LINE_AA)
-        ink, _, stats = _adaptive_geometry_evidence(image)
-        self.assertEqual(stats["background_polarity"], "dark")
-        self.assertGreater(np.count_nonzero(ink), 500)
-        self.assertGreater(float(np.mean(ink[30:226, 30:226] > 0)), 0.01)
-
-    def test_blurred_monochrome_uses_directional_evidence_aggregation(self):
-        image = np.full((256, 256, 3), 205, dtype=np.uint8)
-        center = np.array([127.0, 127.0])
-        for index in range(4):
-            theta = index * math.pi / 8.0
-            direction = np.array([math.cos(theta), math.sin(theta)])
-            start = np.rint(center - 300.0 * direction).astype(int)
-            endpoint = np.rint(center + 300.0 * direction).astype(int)
-            cv2.line(
-                image,
-                tuple(start),
-                tuple(endpoint),
-                (92, 92, 92),
-                2,
-                cv2.LINE_AA,
-            )
-        image = cv2.GaussianBlur(image, (5, 5), 1.1)
-        ink, _, evidence = _adaptive_geometry_evidence(image)
-        settings = Settings(
-            analysis_size=256,
-            evidence_distance_px=evidence["adaptive_evidence_distance_px"],
-        )
-        edges, lines, stats = _reconstruct_lsd_rays(image, ink, settings)
-        self.assertEqual(stats["lsd_projection_geometry"], 1)
-        self.assertGreaterEqual(len(lines), 2)
-        self.assertGreater(stats["lsd_segments"], 0)
-
     def test_paper_preparation_upscales_small_screenshot_for_analysis(self):
         image = np.full((180, 190, 3), 255, np.uint8)
         cv2.rectangle(image, (20, 15), (169, 164), (0, 0, 0), 1)

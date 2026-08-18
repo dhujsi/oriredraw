@@ -34,7 +34,7 @@ const constructionDetails = document.querySelector('#construction-details');
 const constructionCount = document.querySelector('#construction-count');
 const constructionList = document.querySelector('#construction-list');
 
-const WEB_ENGINE_VERSION = '20260818-line-evidence-v3';
+const WEB_ENGINE_VERSION = '20260818-small-corner-selection-v2';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -478,16 +478,12 @@ function renderVersion(version, root) {
   preview.src = version.overlay_data_uri;
   preview.dataset.overlay = version.overlay_data_uri;
   preview.dataset.clean = version.reconstruction_data_uri;
-  preview.dataset.evidence = version.evidence_data_uri || root.evidence_data_uri;
 
   warnings.innerHTML = (version.warnings || root.warnings || []).map(message => `<p>${escapeHtml(message)}</p>`).join('');
   const data = version.stats ? version : root;
   const values = [
     ['分析图尺寸', `${data.stats.analysis_size_used ?? 0}px`],
     ['小图自动放大', data.stats.source_upscaled ? `${Number(data.stats.analysis_scale ?? 1).toFixed(2)}×` : '未放大'],
-    ['背景判断', ({ light: '亮底', dark: '暗底', mixed: '混合/不均匀' })[data.stats.background_polarity] || '未知'],
-    ['线条证据覆盖', `${(Number(data.stats.geometry_evidence_coverage ?? 0) * 100).toFixed(1)}%`],
-    ['方向聚合复核', data.stats.lsd_projection_geometry ? '已启用' : '标准'],
     ['可构造射线', data.stats.constructible_rays ?? data.stats.exact_rays],
     ['初始种子射线', data.stats.construction_seed_rays ?? 0],
     ['唯一代数核心点', data.stats.algebraic_seed_points ?? 0],
@@ -503,7 +499,7 @@ function renderVersion(version, root) {
     ['红蓝模糊线', data.stats.mv_ambiguous_segments ?? 0],
     ['cAMV 改色线', data.stats.mv_camv_changed_segments ?? 0],
     ['完整 cAMV 异常', data.stats.camv_full?.violation_vertex_count ?? 0],
-    ['方向不稳短碎片', data.stats.angle_rejected_segments],
+    ['忽略自由角度证据', data.stats.angle_rejected_segments],
   ];
   stats.innerHTML = values.map(([label, value]) =>
     `<div><strong>${escapeHtml(value ?? 0)}</strong><span>${label}</span></div>`
@@ -534,7 +530,7 @@ document.querySelectorAll('.view-tabs button').forEach(button => {
       item.classList.toggle('active', active);
       item.setAttribute('aria-selected', String(active));
     });
-    preview.src = preview.dataset[button.dataset.view];
+    preview.src = button.dataset.view === 'overlay' ? preview.dataset.overlay : preview.dataset.clean;
   });
 });
 

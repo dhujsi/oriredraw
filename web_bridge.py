@@ -21,7 +21,6 @@ _PUBLIC_RESULT_KEYS = (
     "variants",
     "overlay_data_uri",
     "reconstruction_data_uri",
-    "evidence_data_uri",
 )
 
 

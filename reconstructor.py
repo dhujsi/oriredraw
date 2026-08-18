@@ -251,43 +251,21 @@ def _adaptive_geometry_evidence(
     minimum = max(1, min(height, width))
     values = image.astype(np.float32)
     darkest_channel = np.min(values, axis=2)
-    brightest_channel = np.max(values, axis=2)
 
     kernel_size = max(5, int(round(minimum / 28.0)))
     if kernel_size % 2 == 0:
         kernel_size += 1
     kernel_size = min(kernel_size, 31)
-    structure = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
-    )
-    dark_background = cv2.morphologyEx(
+    background = cv2.morphologyEx(
         darkest_channel,
         cv2.MORPH_CLOSE,
-        structure,
+        cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
+        ),
     )
-    bright_background = cv2.morphologyEx(
-        brightest_channel,
-        cv2.MORPH_OPEN,
-        structure,
-    )
-    local_darkness = np.maximum(dark_background - darkest_channel, 0.0)
-    local_brightness = np.maximum(brightest_channel - bright_background, 0.0)
+    local_darkness = np.maximum(background - darkest_channel, 0.0)
     chroma = np.max(values, axis=2) - np.min(values, axis=2)
-    # Detect both polarities before deciding what the background looks like.
-    # Dark creases on pale paper, bright/red/blue creases on a black canvas,
-    # and locally uneven photographed paper therefore share one geometry map.
-    strength = np.maximum.reduce(
-        (local_darkness, local_brightness, chroma * 0.82)
-    )
-
-    dark_contrast = float(np.percentile(local_darkness, 99.5))
-    bright_contrast = float(np.percentile(local_brightness, 99.5))
-    if dark_contrast > bright_contrast * 1.35:
-        background_polarity = "light"
-    elif bright_contrast > dark_contrast * 1.35:
-        background_polarity = "dark"
-    else:
-        background_polarity = "mixed"
+    strength = np.maximum(local_darkness, chroma * 0.82)
 
     robust_high = float(np.percentile(strength, 99.5))
     if robust_high <= 1e-6:
@@ -297,11 +275,6 @@ def _adaptive_geometry_evidence(
             {
                 "evidence_threshold": 0.0,
                 "evidence_contrast": 0.0,
-                "dark_line_contrast": round(dark_contrast, 4),
-                "bright_line_contrast": round(bright_contrast, 4),
-                "background_luma": round(float(np.median(values)), 4),
-                "background_polarity": background_polarity,
-                "geometry_evidence_coverage": 0.0,
                 "estimated_stroke_radius_px": 1.0,
                 "adaptive_evidence_distance_px": 1.75,
             },
@@ -353,13 +326,6 @@ def _adaptive_geometry_evidence(
     return ink, confidence, {
         "evidence_threshold": round(threshold, 4),
         "evidence_contrast": round(robust_high, 4),
-        "dark_line_contrast": round(dark_contrast, 4),
-        "bright_line_contrast": round(bright_contrast, 4),
-        "background_luma": round(float(np.median(values)), 4),
-        "background_polarity": background_polarity,
-        "geometry_evidence_coverage": round(
-            float(np.count_nonzero(ink)) / float(ink.size), 6
-        ),
         "estimated_stroke_radius_px": round(stroke_radius, 4),
         "adaptive_evidence_distance_px": round(evidence_distance, 4),
     }
@@ -2024,7 +1990,7 @@ def _color_geometry_masks(
     blue_dominance = blue - np.maximum(red, green)
 
     def adaptive_dominance_mask(dominance: np.ndarray) -> np.ndarray:
-        robust_high = float(np.percentile(dominance, 99.99))
+        robust_high = float(np.percentile(dominance, 99.9))
         if robust_high <= 1e-6:
             return np.zeros(dominance.shape, dtype=np.uint8)
         # The 90th percentile limits diffuse JPEG color bleed without assuming
@@ -2086,34 +2052,6 @@ def _color_geometry_masks(
     if not masks:
         masks = [ink.copy()]
     return masks
-
-
-def _render_evidence_preview(square: np.ndarray, ink: np.ndarray) -> np.ndarray:
-    """Render the normalized white-background line evidence shown in the UI."""
-    preview = np.full_like(square, 255)
-    centerline = _thin_binary_mask(ink)
-    preview[centerline > 0] = (28, 28, 28)
-
-    values = square.astype(np.float32)
-    blue, green, red = cv2.split(values)
-    dominances = (
-        np.maximum(red - np.maximum(blue, green), 0.0),
-        np.maximum(blue - np.maximum(red, green), 0.0),
-    )
-    colors = ((20, 20, 235), (235, 45, 35))
-    for dominance, color in zip(dominances, colors):
-        robust_high = float(np.percentile(dominance, 99.99))
-        if robust_high < 8.0:
-            continue
-        threshold = max(
-            float(np.percentile(dominance, 90.0)),
-            robust_high * 0.035,
-        )
-        color_centerline = _thin_binary_mask(
-            (dominance >= threshold).astype(np.uint8) * 255
-        )
-        preview[color_centerline > 0] = color
-    return preview
 
 
 def _refine_centerline_offset(
@@ -2183,7 +2121,6 @@ def _refine_centerline_offset(
 def _directional_projection_segments(
     square: np.ndarray,
     settings: Settings,
-    geometry_signal: np.ndarray | None = None,
 ) -> list[dict]:
     """Find center rays directly in the eight legal directions.
 
@@ -2197,13 +2134,10 @@ def _directional_projection_segments(
     maximum = float(size - 1)
     values = square.astype(np.float32)
     blue, green, red = cv2.split(values)
-    if geometry_signal is None:
-        signals = (
-            np.maximum(red - np.maximum(blue, green), 0.0),
-            np.maximum(blue - np.maximum(red, green), 0.0),
-        )
-    else:
-        signals = (np.clip(geometry_signal, 0.0, 1.0),)
+    signals = (
+        np.maximum(red - np.maximum(blue, green), 0.0),
+        np.maximum(blue - np.maximum(red, green), 0.0),
+    )
     y_grid, x_grid = np.mgrid[0:size, 0:size]
     maximum_rho = math.sqrt(2.0) * maximum
     bin_width = 0.5
@@ -4209,16 +4143,6 @@ def _reconstruct_lsd_rays(
     # rays and needlessly expands construction propagation.
     masks = _color_geometry_masks(square, ink)
     diffuse_input = _has_diffuse_color_bleed(square)
-    values = square.astype(np.float32)
-    blue, green, red = cv2.split(values)
-    red_dominance = np.maximum(red - np.maximum(blue, green), 0.0)
-    blue_dominance = np.maximum(blue - np.maximum(red, green), 0.0)
-    color_signal_peak = max(
-        float(np.percentile(red_dominance, 99.99)),
-        float(np.percentile(blue_dominance, 99.99)),
-    )
-    has_color_geometry = color_signal_peak >= 8.0
-    projection_input = diffuse_input or not has_color_geometry
     detector = cv2.createLineSegmentDetector(
         cv2.LSD_REFINE_NONE if diffuse_input else cv2.LSD_REFINE_ADV
     )
@@ -4227,16 +4151,11 @@ def _reconstruct_lsd_rays(
     centered_segment_count = 0
     center_shift_sum = 0.0
     center_shift_max = 0.0
-    if projection_input:
-        geometry_signal = None
-        if not has_color_geometry:
-            _, geometry_signal, _ = _adaptive_geometry_evidence(square)
-        raw = _directional_projection_segments(
-            square,
-            settings,
-            geometry_signal=geometry_signal,
-        )
+    if diffuse_input:
+        raw = _directional_projection_segments(square, settings)
     else:
+        values = square.astype(np.float32)
+        blue, green, red = cv2.split(values)
         continuous_signals = (
             np.maximum(red - np.maximum(blue, green), 0.0) / 255.0,
             np.maximum(blue - np.maximum(red, green), 0.0) / 255.0,
@@ -4334,7 +4253,7 @@ def _reconstruct_lsd_rays(
             groups.extend(orientation_groups)
 
     weak_groups: list[list[int]] = []
-    if projection_input:
+    if diffuse_input:
         minimum_continuous_length = size * 0.06
         minimum_continuous_share = 0.34
         strong_groups: list[list[int]] = []
@@ -4605,7 +4524,7 @@ def _reconstruct_lsd_rays(
                 active_vertices[second_index].append((second_t, point))
 
     output: list[Edge] = []
-    minimum_interval_coverage = 0.68 if projection_input else 0.28
+    minimum_interval_coverage = 0.68 if diffuse_input else 0.28
     for line_index, line in enumerate(lines):
         ordered = sorted(active_vertices[line_index], key=lambda item: item[0])
         clustered: list[tuple[float, np.ndarray]] = []
@@ -4624,12 +4543,12 @@ def _reconstruct_lsd_rays(
             ]
             overlap = (
                 max(interval_overlaps)
-                if projection_input
+                if diffuse_input
                 else sum(interval_overlaps)
             )
             if overlap / (end_t - start_t) < minimum_interval_coverage:
                 continue
-            if projection_input:
+            if diffuse_input:
                 interior_t = np.linspace(
                     start_t + min(1.5, segment_length * 0.12),
                     end_t - min(1.5, segment_length * 0.12),
@@ -4667,7 +4586,7 @@ def _reconstruct_lsd_rays(
         "fragmented_rays_recovered": 0,
         "fragmented_edges_recovered": 0,
     }
-    if projection_input and weak_groups:
+    if diffuse_input and weak_groups:
         recovered_edges, recovered_lines, fragment_stats = (
             _recover_fragmented_rays_from_primary(
                 output,
@@ -4692,11 +4611,6 @@ def _reconstruct_lsd_rays(
     return list(unique.values()), lines, {
         "lsd_segments": len(raw),
         "lsd_angle_rejected": rejected_angle,
-        "lsd_projection_evidence": int(projection_input),
-        "lsd_projection_geometry": int(
-            projection_input and not has_color_geometry
-        ),
-        "lsd_color_signal_peak": round(color_signal_peak, 4),
         "lsd_line_groups": len(lines),
         "lsd_parallel_groups_split": split_line_groups,
         "lsd_anchor_rejected": rejected_anchor,
@@ -8329,18 +8243,12 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     ray_edges, lsd_lines, ray_stats = _reconstruct_lsd_rays(
         square, ink, effective_settings
     )
-    conservative_projection = bool(
-        diffuse_input or ray_stats.get("lsd_projection_geometry", 0)
-    )
     vertex_edges: list[Edge] = []
     hough_vertex_edges: list[Edge] = []
     vertex_stats: dict = {}
     hough_vertex_stats: dict = {}
-    recall_policy_stats = {
-        "diffuse_recall_graphs_skipped": int(diffuse_input),
-        "projection_recall_graphs_skipped": int(conservative_projection),
-    }
-    if not conservative_projection:
+    recall_policy_stats = {"diffuse_recall_graphs_skipped": int(diffuse_input)}
+    if not diffuse_input:
         try:
             vertex_edges, _, vertex_stats = _reconstruct_lsd_vertex_graph(
                 square, ink, effective_settings
@@ -8363,7 +8271,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "skeleton_exact_rays_recovered": 0,
         "skeleton_recovery_rounds": [],
     }
-    if not conservative_projection:
+    if not diffuse_input:
         internal_edges, skeleton_recovery_stats = (
             _recover_exact_skeleton_node_edges(
                 square,
@@ -8377,7 +8285,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "overlapping_parallel_ray_identities_bound": 0
     }
     if (
-        not conservative_projection
+        not diffuse_input
         and ray_stats.get("lsd_stroke_edges_centered", 0) > 0
     ):
         internal_edges, bound_parallel_identities = (
@@ -8395,29 +8303,16 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     # Closure decisions must see every crossing as an explicit existing node;
     # otherwise a long segment hides its interior contacts and node-to-node
     # recovery can repeatedly nominate geometry that is already present.
-    if conservative_projection:
-        closure_stats = {
-            "linehead_bridges_added": 0,
-            "visible_collinear_gaps_filled": 0,
-            "visible_intervals_recovered": 0,
-            "exact_node_links_recovered": 0,
-            "boundary_arms_recovered": 0,
-            "redundant_short_edges_rejected": 0,
-            "unsupported_edges_rejected": 0,
-            "unclosed_edges_pruned": 0,
-            "projection_closure_skipped": 1,
-        }
-    else:
-        internal_edges = _planarize_edges(internal_edges)
-        internal_edges, closure_stats = _close_internal_lineheads(
-            internal_edges,
-            lsd_lines,
-            ink,
-            effective_settings,
-            conservative_evidence=False,
-        )
+    internal_edges = _planarize_edges(internal_edges)
+    internal_edges, closure_stats = _close_internal_lineheads(
+        internal_edges,
+        lsd_lines,
+        ink,
+        effective_settings,
+        conservative_evidence=diffuse_input,
+    )
     if (
-        not conservative_projection
+        not diffuse_input
         and ray_stats.get("lsd_stroke_edges_centered", 0) > 0
     ):
         internal_edges, post_closure_bound = (
@@ -8447,23 +8342,19 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             ]
     # Closure can add a bridge ending in the middle of an exported segment.
     # Split again so every geometric connection is also an explicit CP node.
-    if not conservative_projection:
-        internal_edges = _planarize_edges(internal_edges)
+    internal_edges = _planarize_edges(internal_edges)
     # Planarization can expose a tiny degree-one arm that was hidden inside an
     # unsplit segment during closure. Audit the actual final graph, not its
     # pre-split representation.
-    if conservative_projection:
-        post_planar_pruned = 0
-    else:
-        internal_edges, post_planar_pruned = _prune_post_planar_lineheads(
-            internal_edges, size
-        )
+    internal_edges, post_planar_pruned = _prune_post_planar_lineheads(
+        internal_edges, size
+    )
     closure_stats["post_planar_lineheads_pruned"] = post_planar_pruned
     graph_chord_stats = {
         "supported_graph_chords_recovered": 0,
         "supported_boundary_chords_recovered": 0,
     }
-    if not conservative_projection:
+    if not diffuse_input:
         internal_edges, graph_chord_stats = _recover_supported_graph_chords(
             square,
             ink,
@@ -8472,7 +8363,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         )
         internal_edges = _planarize_edges(internal_edges)
     one_ended_stats = {"one_ended_exact_rays_recovered": 0}
-    if not conservative_projection:
+    if not diffuse_input:
         internal_edges, one_ended_stats = _recover_one_ended_exact_rays(
             square,
             ink,
@@ -8484,12 +8375,9 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         ink,
         internal_edges,
     )
-    if conservative_projection:
-        local_cycle_lineheads = 0
-    else:
-        internal_edges, local_cycle_lineheads = _prune_post_planar_lineheads(
-            internal_edges, size
-        )
+    internal_edges, local_cycle_lineheads = _prune_post_planar_lineheads(
+        internal_edges, size
+    )
     local_cycle_stats["local_cycle_lineheads_pruned"] = local_cycle_lineheads
     pipeline = "fused_22_5_graph"
     if lsd_lines:
@@ -8503,10 +8391,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "sparse_ray_fallback_used": 0,
         "sparse_ray_fallback_segments": 0,
     }
-    if (
-        not conservative_projection
-        and len(internal_edges) < max(4, len(lines) // 2)
-    ):
+    if len(internal_edges) < max(4, len(lines) // 2):
         fallback_runs, fallback_distance = _supported_runs(
             lines, ink, effective_settings
         )
@@ -8575,7 +8460,6 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
     )
     cp_text = edges_to_cp(all_edges, size)
     overlay, reconstruction = _render_images(square, all_edges)
-    evidence_preview = _render_evidence_preview(square, ink)
 
     anchors = []
     for line in sorted(lines, key=lambda item: (item.orientation, item.offset)):
@@ -8654,11 +8538,6 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         **scale_stats,
         **evidence_stats,
         "diffuse_input_mode": diffuse_input,
-        "angle_fragments_reconsidered": (
-            hough_stats["angle_rejected_segments"]
-            if graph_stats.get("lsd_projection_geometry")
-            else 0
-        ),
         "algebraic_rejected_rays": algebraic_rejected,
         "exact_rays": len(lines),
         **graph_stats,
@@ -8715,16 +8594,9 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             "也不会把 cAMV 推测颜色冒充识别结果。"
         )
     if hough_stats["angle_rejected_segments"]:
-        if graph_stats.get("lsd_projection_geometry"):
-            warnings.append(
-                f"有 {hough_stats['angle_rejected_segments']} 个短碎片方向不稳定；"
-                "已改由白底线条证据按8个合法方向聚合复核，"
-                "不会再按单个短碎片的角度直接删线。"
-            )
-        else:
-            warnings.append(
-                f"有 {hough_stats['angle_rejected_segments']} 个图像线段偏离 22.5° 系，已忽略。"
-            )
+        warnings.append(
+            f"有 {hough_stats['angle_rejected_segments']} 个图像线段偏离 22.5° 系，已忽略。"
+        )
     if len(internal_edges) > 700:
         warnings.append("当前结果切分较细；这是原型阶段的已知问题，可继续合并同射线上的冗余小段。")
     variants: list[dict] = []
@@ -8734,7 +8606,7 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "construction_candidates": 0,
         "construction_versions_emitted": 0,
     }
-    if settings.construction_variants and len(internal_edges) <= 320:
+    if settings.construction_variants:
         variants, construction_variant_stats = _build_exact_construction_variants(
             square,
             ink,
@@ -8742,12 +8614,6 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
             effective_settings,
             stats,
         )
-    elif settings.construction_variants:
-        warnings.append(
-            "标准化线稿的交点切分超过 320 段；为避免浏览器在备选构造的组合搜索中失去响应，"
-            "本轮只输出严格 22.5° 版本。请先在线条证据视图中排除噪声或错误边界后再生成备选版本。"
-        )
-        construction_variant_stats["construction_variants_skipped_dense_graph"] = 1
     stats.update(construction_variant_stats)
     return {
         "id": "strict",
@@ -8760,10 +8626,8 @@ def reconstruct(data: bytes, settings: Settings | None = None) -> dict:
         "variants": variants,
         "overlay_data_uri": _png_data_uri(overlay),
         "reconstruction_data_uri": _png_data_uri(reconstruction),
-        "evidence_data_uri": _png_data_uri(evidence_preview),
         "overlay_image": overlay,
         "reconstruction_image": reconstruction,
-        "evidence_image": evidence_preview,
     }
 
 
