@@ -24,9 +24,9 @@
     .empty-state .engine-status { width: min(380px, 90%); justify-content: center; margin-top: 0; padding: 12px 14px; }
     .empty-state .engine-status p { margin: 0; font-size: 12px; font-weight: 700; }
     .empty-ready-title, .empty-ready-copy { display: none; }
-    .empty-state .engine-status[data-state="ready"] { display: none; }
-    .empty-state .engine-status[data-state="ready"] ~ .empty-ready-title { display: block; margin: 0 0 4px; }
-    .empty-state .engine-status[data-state="ready"] ~ .empty-ready-copy { display: block; }
+    .empty-state:has(.engine-status[data-state="ready"]) .engine-status { display: none; }
+    .empty-state:has(.engine-status[data-state="ready"]) .empty-ready-title { display: block; margin: 0 0 4px; }
+    .empty-state:has(.engine-status[data-state="ready"]) .empty-ready-copy { display: block; }
     .upload-action { margin-top: 0; margin-bottom: 14px; }
   </style>
 </head>
@@ -161,10 +161,10 @@
 
       <section class="results panel">
         <div class="empty-state" id="empty-state">
+          <p class="empty-ready-title">等待一张折痕图</p>
           <div class="engine-status" id="engine-status" data-state="loading" aria-live="polite">
             <span></span><p>正在准备浏览器识别引擎…</p>
           </div>
-          <p class="empty-ready-title">等待一张折痕图</p>
           <small class="empty-ready-copy">重建结果会在这里与原图叠加显示</small>
         </div>
 
