@@ -17,7 +17,7 @@ async function initialize() {
   announce('packages', '正在加载 NumPy 与 OpenCV…');
   await pyodide.loadPackage(['numpy', 'opencv-python']);
 
-  announce('sources', '正在装入 Oriedraw 重建算法…');
+  announce('sources', '正在装入 Oriredraw 重建算法…');
   for (const fileName of SOURCE_FILES) {
     const response = await fetch(`./python/${fileName}?v=${WEB_ENGINE_VERSION}`, { cache: 'no-store' });
     if (!response.ok) {
@@ -36,36 +36,36 @@ async function ensureReady() {
 
 async function reconstructInBrowser(buffer, settings, id) {
   await ensureReady();
-  const inputPath = '/tmp/oriedraw-input';
+  const inputPath = '/tmp/oriredraw-input';
   pyodide.FS.writeFile(inputPath, new Uint8Array(buffer));
-  pyodide.globals.set('_oriedraw_settings_json', JSON.stringify(settings));
-  pyodide.globals.set('_oriedraw_progress', (percent, message) => {
+  pyodide.globals.set('_oriredraw_settings_json', JSON.stringify(settings));
+  pyodide.globals.set('_oriredraw_progress', (percent, message) => {
     announce('reconstruct', String(message), Number(percent), id);
   });
   try {
     return pyodide.runPython(`
 from pathlib import Path
-reconstruct_for_web_json(Path("${inputPath}").read_bytes(), _oriedraw_settings_json, _oriedraw_progress)
+reconstruct_for_web_json(Path("${inputPath}").read_bytes(), _oriredraw_settings_json, _oriredraw_progress)
     `);
   } finally {
-    pyodide.globals.delete('_oriedraw_settings_json');
-    pyodide.globals.delete('_oriedraw_progress');
+    pyodide.globals.delete('_oriredraw_settings_json');
+    pyodide.globals.delete('_oriredraw_progress');
     try { pyodide.FS.unlink(inputPath); } catch (_) { /* best-effort cleanup */ }
   }
 }
 
 async function rectifyInBrowser(buffer, corners) {
   await ensureReady();
-  const inputPath = '/tmp/oriedraw-rectify-input';
+  const inputPath = '/tmp/oriredraw-rectify-input';
   pyodide.FS.writeFile(inputPath, new Uint8Array(buffer));
-  pyodide.globals.set('_oriedraw_corners_json', JSON.stringify(corners));
+  pyodide.globals.set('_oriredraw_corners_json', JSON.stringify(corners));
   try {
     return pyodide.runPython(`
 from pathlib import Path
-rectify_for_web_json(Path("${inputPath}").read_bytes(), _oriedraw_corners_json)
+rectify_for_web_json(Path("${inputPath}").read_bytes(), _oriredraw_corners_json)
     `);
   } finally {
-    pyodide.globals.delete('_oriedraw_corners_json');
+    pyodide.globals.delete('_oriredraw_corners_json');
     try { pyodide.FS.unlink(inputPath); } catch (_) { /* best-effort cleanup */ }
   }
 }
