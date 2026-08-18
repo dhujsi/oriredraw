@@ -1,12 +1,12 @@
-const STORAGE_LANGUAGE = 'oriedraw-language';
-const STORAGE_WELCOME = 'oriedraw-welcome-v1';
+const STORAGE_LANGUAGE = 'oriredraw-language';
+const STORAGE_WELCOME = 'oriredraw-welcome-v1';
 
 const preferredLanguage = localStorage.getItem(STORAGE_LANGUAGE);
 const language = preferredLanguage || (navigator.language?.toLowerCase().startsWith('zh') ? 'zh' : 'en');
 
 const messages = {
   zh: {
-    pageTitle: 'Oriedraw · CP 重绘',
+    pageTitle: 'Oriredraw · CP 重绘',
     pageDescription: '在浏览器中把 22.5° 系 CP 图片重绘为 Oriedita .cp 文件。',
     heroTitle: '将图片 CP 重绘为<br><span>.cp 文件</span>',
     heroIntro: '选择至多一个 <em>a+b√2</em> 核心点，从核心点、四角顶点和四边中点射线，仅由射线交点或纸边交点继续推导直至完成。',
@@ -63,15 +63,15 @@ const messages = {
     constructions: '查看本版本新增的精确构造',
     expand: '展开',
     collapse: '收起',
-    welcomeTitle: '欢迎使用 Oriedraw',
+    welcomeTitle: '欢迎使用 Oriredraw',
     welcomeBody: '项目仍在持续迭代。遇到识别问题、异常结果，或者有改进建议，欢迎在 GitHub Issues 提交反馈。图片只在当前浏览器中处理。',
     welcomeIssues: '前往 GitHub Issues',
     welcomeClose: '知道了',
-    githubAria: '打开 Oriedraw GitHub 项目',
+    githubAria: '打开 Oriredraw GitHub 项目',
     languageAria: 'Switch to English',
   },
   en: {
-    pageTitle: 'Oriedraw · CP Redraw',
+    pageTitle: 'Oriredraw · CP Redraw',
     pageDescription: 'Redraw 22.5°-system CP images as Oriedita .cp files directly in your browser.',
     heroTitle: 'Redraw CP images as<br><span>.cp files</span>',
     heroIntro: 'Choose at most one <em>a+b√2</em> core point; emit rays from the core point, the four corners, and the four edge midpoints, then continue only from ray intersections or ray–paper-edge intersections until complete.',
@@ -128,11 +128,11 @@ const messages = {
     constructions: 'View exact constructions added in this version',
     expand: 'Open',
     collapse: 'Close',
-    welcomeTitle: 'Welcome to Oriedraw',
-    welcomeBody: 'Oriedraw is still evolving. If you run into recognition issues, unexpected output, or have suggestions, please open an issue on GitHub. Images are processed only in your browser.',
+    welcomeTitle: 'Welcome to Oriredraw',
+    welcomeBody: 'Oriredraw is still evolving. If you run into recognition issues, unexpected output, or have suggestions, please open an issue on GitHub. Images are processed only in your browser.',
     welcomeIssues: 'Open GitHub Issues',
     welcomeClose: 'Got it',
-    githubAria: 'Open the Oriedraw GitHub repository',
+    githubAria: 'Open the Oriredraw GitHub repository',
     languageAria: '切换到中文',
   },
 };
@@ -172,7 +172,7 @@ const exactEnglish = new Map(Object.entries({
   '正在准备浏览器识别引擎…': 'Preparing the browser recognition engine…',
   '正在加载 Python 运行环境…': 'Loading the Python runtime…',
   '正在加载 NumPy 与 OpenCV…': 'Loading NumPy and OpenCV…',
-  '正在装入 Oriedraw 重建算法…': 'Loading the Oriedraw redraw engine…',
+  '正在装入 Oriredraw 重建算法…': 'Loading the Oriredraw redraw engine…',
   '浏览器识别引擎已就绪': 'Browser recognition engine ready',
   '正在重建…': 'Redrawing…',
   '读取图片': 'Reading image',
