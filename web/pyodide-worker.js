@@ -1,6 +1,6 @@
 const PYODIDE_BASE = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/';
 const SOURCE_FILES = ['foldability.py', 'reconstructor.py', 'web_bridge.py'];
-const WEB_ENGINE_VERSION = '20260818-white-lineart-progress-v1';
+const WEB_ENGINE_VERSION = '20260818-monochrome-geometry-v3';
 
 let pyodide;
 let readyPromise;

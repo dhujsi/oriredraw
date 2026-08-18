@@ -547,6 +547,9 @@ function renderVersion(version, root) {
   const data = version.stats ? version : root;
   const values = [
     ['分析图尺寸', `${data.stats.analysis_size_used ?? 0}px`],
+    ['纸框比例校正', data.stats.aspect_ratio_corrected
+      ? `${Number(data.stats.source_paper_aspect_ratio ?? 1).toFixed(3)}× → 1:1`
+      : '无需校正'],
     ['小图自动放大', data.stats.source_upscaled ? `${Number(data.stats.analysis_scale ?? 1).toFixed(2)}×` : '未放大'],
     ['可构造射线', data.stats.constructible_rays ?? data.stats.exact_rays],
     ['初始种子射线', data.stats.construction_seed_rays ?? 0],

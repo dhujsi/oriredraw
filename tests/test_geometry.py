@@ -698,6 +698,47 @@ class RootTwoGeometryTest(unittest.TestCase):
         self.assertEqual(stats["midpoint_seed_rays"], 2)
         self.assertEqual(stats["derived_rays"], 1)
 
+    def test_one_midpoint_direction_cannot_reanchor_parallel_observations(self):
+        size = 401
+        reference = AlgebraicValue(0, 0, 0.0, 0.0)
+
+        def ray(orientation, point):
+            theta = ALLOWED_ANGLES[orientation]
+            normal = np.array([-math.sin(theta), math.cos(theta)])
+            return CandidateLine(
+                orientation,
+                float(normal @ point),
+                10.0,
+                0.0,
+                "",
+                reference,
+                point.copy(),
+            )
+
+        corner_vertical = ray(4, np.array([0.0, 0.0]))
+        upper = ray(0, np.array([0.0, 196.2]))
+        lower = ray(0, np.array([0.0, 203.8]))
+
+        lines, _, stats = _propagate_constructible_rays(
+            [corner_vertical, upper, lower],
+            [
+                [[0.0, 400.0]],
+                [[0.0, 120.0]],
+                [[0.0, 120.0]],
+            ],
+            size,
+            Settings(),
+        )
+
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(stats["midpoint_seed_rays"], 1)
+        self.assertEqual(stats["unresolved_rays"], 1)
+        midpoint_lines = [
+            line for line in lines if line.origin_kind == "midpoint"
+        ]
+        self.assertEqual(len(midpoint_lines), 1)
+        self.assertTrue(np.allclose(midpoint_lines[0].anchor_point, [0.0, 200.0]))
+
     def test_existing_intersection_is_preferred_over_fallback_seed(self):
         size = 401
         reference = AlgebraicValue(0, 0, 0.0, 0.0)

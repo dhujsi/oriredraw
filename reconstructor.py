@@ -450,13 +450,14 @@ def _paper_bbox(image: np.ndarray) -> tuple[int, int, int, int]:
     horizontal_span = right - left
     vertical_span = bottom - top
     if min(horizontal_span, vertical_span) >= 60.0:
-        common_span = (horizontal_span + vertical_span) / 2.0
-        center_x = (left + right) / 2.0
-        center_y = (top + bottom) / 2.0
-        x0 = int(round(center_x - common_span / 2.0))
-        x1 = int(round(center_x + common_span / 2.0))
-        y0 = int(round(center_y - common_span / 2.0))
-        y1 = int(round(center_y + common_span / 2.0))
+        # Preserve every side of a slightly stretched source rectangle.  The
+        # following resize is the operation that restores the paper to a
+        # square.  Making the *crop* square first used to shorten the longer
+        # axis, cutting genuine corner rays off before reconstruction.
+        x0 = int(round(left))
+        x1 = int(round(right))
+        y0 = int(round(top))
+        y1 = int(round(bottom))
         x0, x1 = max(0, x0), min(image.shape[1] - 1, x1)
         y0, y1 = max(0, y0), min(image.shape[0] - 1, y1)
     width, height = x1 - x0, y1 - y0
@@ -570,6 +571,7 @@ def prepare_paper_square(
         x0, y0, x1, y1 = _paper_bbox(image)
     crop = image[y0 : y1 + 1, x0 : x1 + 1]
     native_paper_size = max(crop.shape[:2])
+    source_paper_aspect_ratio = crop.shape[1] / max(1.0, float(crop.shape[0]))
     analysis_size = maximum_analysis_size
     square = cv2.resize(
         crop,
@@ -587,6 +589,8 @@ def prepare_paper_square(
         "analysis_scale": round(analysis_size / native_paper_size, 6),
         "paper_detection_scale": round(detection_scale, 6),
         "paper_transform": "automatic_axis_aligned_crop",
+        "source_paper_aspect_ratio": round(source_paper_aspect_ratio, 6),
+        "aspect_ratio_corrected": abs(source_paper_aspect_ratio - 1.0) > 0.005,
     }
 
 
@@ -2029,7 +2033,12 @@ def _color_geometry_masks(
 
     def adaptive_dominance_mask(dominance: np.ndarray) -> np.ndarray:
         robust_high = float(np.percentile(dominance, 99.9))
-        if robust_high <= 1e-6:
+        # Resampled/JPEG monochrome art often has 1--8 channel levels of
+        # harmless warm/cool fringe.  Treating that fringe as red/blue split
+        # the black drawing into two incomplete masks and could discard most
+        # ray directions.  Real red/blue crease pixels have materially larger
+        # channel dominance, even after ordinary antialiasing.
+        if robust_high < 12.0:
             return np.zeros(dominance.shape, dtype=np.uint8)
         # The 90th percentile limits diffuse JPEG color bleed without assuming
         # how bright or saturated a true crease is. Sparse diagrams naturally
@@ -2466,7 +2475,7 @@ def _propagate_constructible_rays(
                 error = abs(
                     float(line.n @ seed_point) - observed_offsets[line_index]
                 )
-                if error > min(3.0, settings.algebraic_snap_px + 0.5):
+                if error > derivation_tolerance:
                     continue
                 if not has_evidence(line_index, float(line.u @ seed_point)):
                     continue
@@ -2491,10 +2500,11 @@ def _propagate_constructible_rays(
                     midpoint_seed_points += 1
 
     def construction_points() -> list[dict]:
-        raw: list[dict] = [
-            {"point": point.copy(), "parents": None, "generation": 0}
-            for point in corners + midpoints
-        ]
+        # Corners and edge midpoints are consumed exactly once by the seed
+        # pass above.  Reintroducing them in every propagation round allowed a
+        # second nearby parallel observation to claim the same free
+        # point/direction after the first ray had already been activated.
+        raw: list[dict] = []
         ordered = sorted(active)
 
         # Once an active ray reaches the paper, that exact ray-boundary hit is
@@ -2699,6 +2709,16 @@ def _propagate_constructible_rays(
                     continue
                 for point_index, item in enumerate(points):
                     point = item["point"]
+                    if any(
+                        lines[active_index].orientation == line.orientation
+                        and abs(
+                            float(lines[active_index].n @ point)
+                            - lines[active_index].offset
+                        )
+                        <= 1e-5
+                        for active_index in active
+                    ):
+                        continue
                     error = abs(float(line.n @ point) - observed_offsets[line_index])
                     if error > derivation_tolerance:
                         continue

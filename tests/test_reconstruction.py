@@ -8,6 +8,7 @@ import numpy as np
 from reconstructor import (
     Edge,
     Settings,
+    _color_geometry_masks,
     _reconstruct_lsd_rays,
     edges_to_cp,
     prepare_paper_square,
@@ -31,6 +32,28 @@ class ReconstructionSmokeTest(unittest.TestCase):
             cv2.line(image, (10, 20), (170, 160), (0, 0, 255), 2)
             with self.assertRaisesRegex(ValueError, "仅支持白底"):
                 validate_white_line_art(image)
+
+    def test_near_gray_black_lines_are_not_split_as_red_blue_geometry(self):
+        image = np.full((256, 256, 3), 255, np.uint8)
+        cv2.line(image, (10, 10), (245, 245), (30, 31, 34), 2)
+        cv2.line(image, (10, 245), (245, 10), (34, 31, 30), 2)
+        ink = (np.min(image, axis=2) < 245).astype(np.uint8) * 255
+
+        masks = _color_geometry_masks(image, ink)
+
+        self.assertEqual(len(masks), 1)
+        np.testing.assert_array_equal(masks[0], ink)
+
+    def test_real_red_blue_lines_keep_separate_geometry_masks(self):
+        image = np.full((256, 256, 3), 255, np.uint8)
+        cv2.line(image, (10, 10), (245, 245), (0, 0, 255), 2)
+        cv2.line(image, (10, 245), (245, 10), (255, 0, 0), 2)
+        ink = (np.min(image, axis=2) < 245).astype(np.uint8) * 255
+
+        masks = _color_geometry_masks(image, ink)
+
+        self.assertEqual(len(masks), 2)
+        self.assertTrue(all(np.count_nonzero(mask) > 300 for mask in masks))
 
     def test_paper_preparation_upscales_small_screenshot_for_analysis(self):
         image = np.full((180, 190, 3), 255, np.uint8)
@@ -90,6 +113,34 @@ class ReconstructionSmokeTest(unittest.TestCase):
         self.assertTrue(stats["source_upscaled"])
         self.assertGreater(stats["paper_detection_scale"], 1.0)
         self.assertLessEqual(abs((bounds[2] - bounds[0]) - 59), 2)
+
+    def test_stretched_source_is_squared_without_clipping_paper_corners(self):
+        image = np.full((660, 720, 3), 255, np.uint8)
+        expected = (70, 80, 650, 620)
+        cv2.rectangle(
+            image,
+            expected[:2],
+            expected[2:],
+            (0, 0, 0),
+            3,
+        )
+        cv2.line(image, expected[:2], (250, 260), (0, 0, 0), 2)
+        cv2.line(image, (expected[2], expected[1]), (470, 260), (0, 0, 0), 2)
+
+        square, bounds, stats = prepare_paper_square(image, 512)
+
+        self.assertEqual(square.shape[:2], (512, 512))
+        for actual, target in zip(bounds, expected):
+            self.assertLessEqual(abs(actual - target), 2)
+        self.assertTrue(stats["aspect_ratio_corrected"])
+        self.assertAlmostEqual(
+            stats["source_paper_aspect_ratio"],
+            (expected[2] - expected[0] + 1) / (expected[3] - expected[1] + 1),
+            places=2,
+        )
+        gray = cv2.cvtColor(square, cv2.COLOR_BGR2GRAY)
+        for y, x in ((0, 0), (0, 511), (511, 0), (511, 511)):
+            self.assertLess(int(gray[y, x]), 200)
 
     def test_cp_export_uses_oriedita_downward_y_coordinates(self):
         rows = edges_to_cp(
