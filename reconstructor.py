@@ -435,7 +435,7 @@ def prepare_paper_square(
     maximum_analysis_size: int = 512,
     paper_corners: list[list[float]] | None = None,
 ) -> tuple[np.ndarray, tuple[int, int, int, int], dict]:
-    """Crop and square the paper without inventing higher raster resolution."""
+    """Crop and square the paper, upscaling small screenshots for analysis."""
     if paper_corners is not None:
         points = np.asarray(paper_corners, dtype=np.float32)
         if points.shape != (4, 2) or not np.all(np.isfinite(points)):
@@ -446,10 +446,10 @@ def prepare_paper_square(
             )
         contour = points.reshape((-1, 1, 2))
         if not cv2.isContourConvex(contour):
-            raise ReconstructionError("四个铆钉必须按左上、右上、右下、左下围成凸四边形。")
+            raise ReconstructionError("四个准星必须按左上、右上、右下、左下围成凸四边形。")
         area = abs(float(cv2.contourArea(contour)))
         if area < float(image.shape[0] * image.shape[1]) * 0.015:
-            raise ReconstructionError("四角圈出的纸张区域太小，请把铆钉放到纸张四角。")
+            raise ReconstructionError("四角圈出的纸张区域太小，请把准星放到纸张四角。")
         side_lengths = [
             float(np.linalg.norm(points[(index + 1) % 4] - points[index]))
             for index in range(4)
@@ -462,9 +462,9 @@ def prepare_paper_square(
                 )
             )
         )
-        if native_paper_size < 60 or min(side_lengths) < 30.0:
+        if native_paper_size < 24 or min(side_lengths) < 12.0:
             raise ReconstructionError("四角圈出的纸张分辨率不足。")
-        analysis_size = min(maximum_analysis_size, native_paper_size)
+        analysis_size = maximum_analysis_size
         maximum = float(analysis_size - 1)
         destination = np.array(
             [[0.0, 0.0], [maximum, 0.0], [maximum, maximum], [0.0, maximum]],
@@ -478,7 +478,7 @@ def prepare_paper_square(
             flags=(
                 cv2.INTER_AREA
                 if native_paper_size > analysis_size
-                else cv2.INTER_LINEAR
+                else cv2.INTER_CUBIC
             ),
             borderMode=cv2.BORDER_REPLICATE,
         )
@@ -495,30 +495,59 @@ def prepare_paper_square(
         return square, (x0, y0, x1, y1), {
             "native_paper_size": native_paper_size,
             "analysis_size_used": analysis_size,
-            "source_upscaled": False,
+            "source_upscaled": native_paper_size < analysis_size,
+            "analysis_scale": round(analysis_size / native_paper_size, 6),
             "paper_transform": "four_corner_perspective",
             "paper_corners_source_px": [
                 [round(float(value), 4) for value in point] for point in points
             ],
         }
 
-    x0, y0, x1, y1 = _paper_bbox(image)
+    detection_scale = min(
+        8.0,
+        max(1.0, 256.0 / max(1.0, float(min(image.shape[:2])))),
+    )
+    if detection_scale > 1.000001:
+        detection_image = cv2.resize(
+            image,
+            None,
+            fx=detection_scale,
+            fy=detection_scale,
+            interpolation=cv2.INTER_CUBIC,
+        )
+        detected_x0, detected_y0, detected_x1, detected_y1 = _paper_bbox(
+            detection_image
+        )
+        x0 = max(0, int(round(detected_x0 / detection_scale)))
+        y0 = max(0, int(round(detected_y0 / detection_scale)))
+        x1 = min(
+            image.shape[1] - 1,
+            int(round(detected_x1 / detection_scale)),
+        )
+        y1 = min(
+            image.shape[0] - 1,
+            int(round(detected_y1 / detection_scale)),
+        )
+    else:
+        x0, y0, x1, y1 = _paper_bbox(image)
     crop = image[y0 : y1 + 1, x0 : x1 + 1]
     native_paper_size = max(crop.shape[:2])
-    analysis_size = min(maximum_analysis_size, native_paper_size)
+    analysis_size = maximum_analysis_size
     square = cv2.resize(
         crop,
         (analysis_size, analysis_size),
         interpolation=(
             cv2.INTER_AREA
             if native_paper_size > analysis_size
-            else cv2.INTER_NEAREST
+            else cv2.INTER_CUBIC
         ),
     )
     return square, (x0, y0, x1, y1), {
         "native_paper_size": native_paper_size,
         "analysis_size_used": analysis_size,
-        "source_upscaled": False,
+        "source_upscaled": native_paper_size < analysis_size,
+        "analysis_scale": round(analysis_size / native_paper_size, 6),
+        "paper_detection_scale": round(detection_scale, 6),
         "paper_transform": "automatic_axis_aligned_crop",
     }
 

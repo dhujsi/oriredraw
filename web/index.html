@@ -45,12 +45,16 @@
                 <div class="corner-editor-head">
                   <div>
                     <strong id="corner-title">校准纸张四角</strong>
-                    <small>拖动十字准星，使中心空隙精确对准纸张外框角</small>
+                    <small id="corner-instruction">先在原图粗调四角，再裁剪放大继续精调</small>
                   </div>
                   <button type="button" id="corner-done" class="corner-done">完成校准</button>
                 </div>
                 <div class="corner-stage">
-                  <canvas id="corner-canvas" aria-label="拖动四个十字准星到纸张四角"></canvas>
+                  <canvas class="corner-main-canvas" id="corner-canvas" aria-label="拖动四个十字准星到纸张四角"></canvas>
+                  <div class="corner-loupe" id="corner-loupe" aria-live="polite">
+                    <span id="corner-loupe-label">1 左上 · 局部放大</span>
+                    <canvas id="corner-loupe-canvas" width="200" height="200" aria-label="当前准星局部放大视图"></canvas>
+                  </div>
                 </div>
                 <div class="corner-editor-foot">
                   <div>
@@ -58,6 +62,8 @@
                     <small>十字中心留空，不会盖住角点。四角必须属于同一张平整纸。</small>
                   </div>
                   <div class="corner-actions">
+                    <button type="button" id="corner-crop" class="corner-crop">按四角裁剪并放大</button>
+                    <button type="button" id="corner-full">查看原图</button>
                     <button type="button" id="corner-reset">重置四角</button>
                     <button type="button" id="corner-disable">改用自动裁纸</button>
                   </div>

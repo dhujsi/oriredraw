@@ -18,9 +18,15 @@ const paperModeLabel = document.querySelector('#paper-mode-label');
 const cornerToggle = document.querySelector('#corner-toggle');
 const cornerEditor = document.querySelector('#corner-editor');
 const cornerCanvas = document.querySelector('#corner-canvas');
+const cornerLoupe = document.querySelector('#corner-loupe');
+const cornerLoupeCanvas = document.querySelector('#corner-loupe-canvas');
+const cornerLoupeLabel = document.querySelector('#corner-loupe-label');
+const cornerInstruction = document.querySelector('#corner-instruction');
 const cornerReset = document.querySelector('#corner-reset');
 const cornerDone = document.querySelector('#corner-done');
 const cornerDisable = document.querySelector('#corner-disable');
+const cornerCrop = document.querySelector('#corner-crop');
+const cornerFull = document.querySelector('#corner-full');
 const angleMode = document.querySelector('#angle-mode');
 const angleInput = document.querySelector('#angle');
 const versionTabs = document.querySelector('#version-tabs');
@@ -28,7 +34,8 @@ const constructionDetails = document.querySelector('#construction-details');
 const constructionCount = document.querySelector('#construction-count');
 const constructionList = document.querySelector('#construction-list');
 
-const worker = new Worker('./pyodide-worker.js', { type: 'module' });
+const WEB_ENGINE_VERSION = '20260818-small-image-upscale';
+const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
 let currentResult = null;
@@ -37,6 +44,8 @@ let perspectiveEnabled = false;
 let sourceBitmap = null;
 let cornerPoints = [];
 let draggedCorner = -1;
+let activeCorner = 0;
+let cornerView = { x0: 0, y0: 0, x1: 1, y1: 1 };
 let currentVariant = null;
 
 function callWorker(type, payload = {}, transfer = []) {
@@ -105,15 +114,124 @@ updateAngleControl();
 
 function resetCornerPoints() {
   cornerPoints = [[0.03, 0.03], [0.97, 0.03], [0.97, 0.97], [0.03, 0.97]];
+  activeCorner = 0;
+  showFullCornerView();
+}
+
+function sourceToView([x, y]) {
+  return [
+    (x - cornerView.x0) / Math.max(1e-9, cornerView.x1 - cornerView.x0),
+    (y - cornerView.y0) / Math.max(1e-9, cornerView.y1 - cornerView.y0),
+  ];
+}
+
+function viewToSource([x, y]) {
+  return [
+    cornerView.x0 + x * (cornerView.x1 - cornerView.x0),
+    cornerView.y0 + y * (cornerView.y1 - cornerView.y0),
+  ];
+}
+
+function configureCornerCanvas() {
+  if (!sourceBitmap) return;
+  const sourceWidth = Math.max(1, (cornerView.x1 - cornerView.x0) * sourceBitmap.width);
+  const sourceHeight = Math.max(1, (cornerView.y1 - cornerView.y0) * sourceBitmap.height);
+  const scale = Math.min(8, 1600 / Math.max(sourceWidth, sourceHeight));
+  cornerCanvas.width = Math.max(1, Math.round(sourceWidth * scale));
+  cornerCanvas.height = Math.max(1, Math.round(sourceHeight * scale));
   drawCornerEditor();
+}
+
+function showFullCornerView() {
+  cornerView = { x0: 0, y0: 0, x1: 1, y1: 1 };
+  cornerInstruction.textContent = '先在原图粗调四角，再裁剪放大继续精调';
+  configureCornerCanvas();
+}
+
+function cropAndEnlargeCornerView() {
+  if (!sourceBitmap || cornerPoints.length !== 4) return;
+  const xs = cornerPoints.map(point => point[0]);
+  const ys = cornerPoints.map(point => point[1]);
+  const width = Math.max(0.01, Math.max(...xs) - Math.min(...xs));
+  const height = Math.max(0.01, Math.max(...ys) - Math.min(...ys));
+  const padX = Math.max(8 / sourceBitmap.width, width * 0.055);
+  const padY = Math.max(8 / sourceBitmap.height, height * 0.055);
+  cornerView = {
+    x0: Math.max(0, Math.min(...xs) - padX),
+    y0: Math.max(0, Math.min(...ys) - padY),
+    x1: Math.min(1, Math.max(...xs) + padX),
+    y1: Math.min(1, Math.max(...ys) + padY),
+  };
+  cornerInstruction.textContent = '已按当前四角裁剪放大；可继续拖动准星精调';
+  configureCornerCanvas();
+}
+
+function drawCornerLoupe() {
+  if (!sourceBitmap || !cornerPoints[activeCorner]) return;
+  const point = cornerPoints[activeCorner];
+  const context = cornerLoupeCanvas.getContext('2d');
+  const width = cornerLoupeCanvas.width;
+  const height = cornerLoupeCanvas.height;
+  const sourceX = point[0] * sourceBitmap.width;
+  const sourceY = point[1] * sourceBitmap.height;
+  const radius = Math.max(6, Math.min(30, Math.min(sourceBitmap.width, sourceBitmap.height) * 0.025));
+  const sampleSize = radius * 2;
+  const scale = width / sampleSize;
+  const sampleX = Math.max(0, sourceX - radius);
+  const sampleY = Math.max(0, sourceY - radius);
+  const sampleRight = Math.min(sourceBitmap.width, sourceX + radius);
+  const sampleBottom = Math.min(sourceBitmap.height, sourceY + radius);
+  context.save();
+  context.fillStyle = '#d6d6d1';
+  context.fillRect(0, 0, width, height);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(
+    sourceBitmap,
+    sampleX,
+    sampleY,
+    sampleRight - sampleX,
+    sampleBottom - sampleY,
+    (sampleX - (sourceX - radius)) * scale,
+    (sampleY - (sourceY - radius)) * scale,
+    (sampleRight - sampleX) * scale,
+    (sampleBottom - sampleY) * scale,
+  );
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const arm = 28;
+  const gap = 4;
+  context.strokeStyle = draggedCorner === activeCorner ? '#ff4b3e' : '#c7ff2f';
+  context.lineWidth = 1;
+  context.shadowColor = '#171714';
+  context.shadowBlur = 1;
+  context.beginPath();
+  context.moveTo(centerX - arm, centerY); context.lineTo(centerX - gap, centerY);
+  context.moveTo(centerX + gap, centerY); context.lineTo(centerX + arm, centerY);
+  context.moveTo(centerX, centerY - arm); context.lineTo(centerX, centerY - gap);
+  context.moveTo(centerX, centerY + gap); context.lineTo(centerX, centerY + arm);
+  context.stroke();
+  context.restore();
+  const names = ['左上', '右上', '右下', '左下'];
+  cornerLoupeLabel.textContent = `${activeCorner + 1} ${names[activeCorner]} · 局部放大`;
+  const [viewX] = sourceToView(point);
+  cornerLoupe.classList.toggle('left', viewX > 0.58);
 }
 
 function drawCornerEditor() {
   if (!sourceBitmap) return;
   const context = cornerCanvas.getContext('2d');
   context.clearRect(0, 0, cornerCanvas.width, cornerCanvas.height);
-  context.drawImage(sourceBitmap, 0, 0, cornerCanvas.width, cornerCanvas.height);
-  const points = cornerPoints.map(([x, y]) => [x * cornerCanvas.width, y * cornerCanvas.height]);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  const sourceX = cornerView.x0 * sourceBitmap.width;
+  const sourceY = cornerView.y0 * sourceBitmap.height;
+  const sourceWidth = (cornerView.x1 - cornerView.x0) * sourceBitmap.width;
+  const sourceHeight = (cornerView.y1 - cornerView.y0) * sourceBitmap.height;
+  context.drawImage(sourceBitmap, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, cornerCanvas.width, cornerCanvas.height);
+  const points = cornerPoints.map(point => {
+    const [x, y] = sourceToView(point);
+    return [x * cornerCanvas.width, y * cornerCanvas.height];
+  });
   const markerScale = Math.max(1, Math.max(cornerCanvas.width, cornerCanvas.height) / 1200);
   const markerArm = 11 * markerScale;
   const markerGap = 2.5 * markerScale;
@@ -148,35 +266,36 @@ function drawCornerEditor() {
     context.fillText(String(index + 1), x + 7 * markerScale, y - 7 * markerScale);
   });
   context.restore();
+  drawCornerLoupe();
 }
 
 async function prepareCornerEditor(file) {
   sourceBitmap?.close?.();
   sourceBitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(sourceBitmap.width, sourceBitmap.height));
-  cornerCanvas.width = Math.max(1, Math.round(sourceBitmap.width * scale));
-  cornerCanvas.height = Math.max(1, Math.round(sourceBitmap.height * scale));
   resetCornerPoints();
   paperTool.classList.remove('hidden');
 }
 
 function pointerPosition(event) {
   const box = cornerCanvas.getBoundingClientRect();
-  return [
+  return viewToSource([
     (event.clientX - box.left) / box.width,
     (event.clientY - box.top) / box.height,
-  ];
+  ]);
 }
 
 cornerCanvas.addEventListener('pointerdown', event => {
   const [x, y] = pointerPosition(event);
   const box = cornerCanvas.getBoundingClientRect();
   const nearest = cornerPoints.reduce((best, point, index) => {
-    const distance = Math.hypot((point[0] - x) * box.width, (point[1] - y) * box.height);
+    const [viewPointX, viewPointY] = sourceToView(point);
+    const [viewX, viewY] = sourceToView([x, y]);
+    const distance = Math.hypot((viewPointX - viewX) * box.width, (viewPointY - viewY) * box.height);
     return distance < best.distance ? { index, distance } : best;
   }, { index: -1, distance: Infinity });
   if (nearest.distance > 30) return;
   draggedCorner = nearest.index;
+  activeCorner = nearest.index;
   cornerCanvas.setPointerCapture(event.pointerId);
   cornerPoints[draggedCorner] = [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
   drawCornerEditor();
@@ -211,6 +330,8 @@ cornerToggle.addEventListener('click', () => {
   drawCornerEditor();
 });
 cornerReset.addEventListener('click', resetCornerPoints);
+cornerCrop.addEventListener('click', cropAndEnlargeCornerView);
+cornerFull.addEventListener('click', showFullCornerView);
 cornerDone.addEventListener('click', () => {
   closeCornerEditor();
   cornerToggle.focus();
@@ -361,6 +482,8 @@ function renderVersion(version, root) {
   warnings.innerHTML = (version.warnings || root.warnings || []).map(message => `<p>${escapeHtml(message)}</p>`).join('');
   const data = version.stats ? version : root;
   const values = [
+    ['分析图尺寸', `${data.stats.analysis_size_used ?? 0}px`],
+    ['小图自动放大', data.stats.source_upscaled ? `${Number(data.stats.analysis_scale ?? 1).toFixed(2)}×` : '未放大'],
     ['可构造射线', data.stats.constructible_rays ?? data.stats.exact_rays],
     ['初始种子射线', data.stats.construction_seed_rays ?? 0],
     ['唯一代数核心点', data.stats.algebraic_seed_points ?? 0],

@@ -1,5 +1,6 @@
 const PYODIDE_BASE = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/';
 const SOURCE_FILES = ['foldability.py', 'reconstructor.py', 'web_bridge.py'];
+const WEB_ENGINE_VERSION = '20260818-small-image-upscale';
 
 let pyodide;
 let readyPromise;
@@ -18,7 +19,7 @@ async function initialize() {
 
   announce('sources', '正在装入 Oriedraw 重建算法…');
   for (const fileName of SOURCE_FILES) {
-    const response = await fetch(`./python/${fileName}`);
+    const response = await fetch(`./python/${fileName}?v=${WEB_ENGINE_VERSION}`, { cache: 'no-store' });
     if (!response.ok) {
       throw new Error(`无法加载 ${fileName}（HTTP ${response.status}）`);
     }

@@ -116,13 +116,18 @@ body.corner-editor-open { overflow: hidden; }
 .corner-editor-head { padding-bottom: 12px; }
 .corner-editor-head strong { display: block; font-size: 18px; }
 .corner-editor-head small, .corner-editor-foot small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
-.corner-stage { min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #d6d6d1; border: 1px solid var(--ink); }
-.corner-stage canvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; }
+.corner-stage { position: relative; min-height: 0; flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #d6d6d1; border: 1px solid var(--ink); }
+.corner-main-canvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; touch-action: none; cursor: crosshair; }
+.corner-loupe { position: absolute; top: 14px; right: 14px; width: 190px; padding: 6px; background: rgba(251, 250, 246, .96); border: 1px solid var(--ink); box-shadow: 4px 4px 0 rgba(0, 0, 0, .24); pointer-events: none; }
+.corner-loupe.left { left: 14px; right: auto; }
+.corner-loupe span { display: block; margin-bottom: 5px; font: 700 10px ui-monospace, monospace; }
+.corner-loupe canvas { display: block; width: 176px; height: 176px; background: #fff; image-rendering: pixelated; }
 .corner-editor-foot { padding-top: 12px; }
 .corner-help { display: flex; flex-wrap: wrap; gap: 5px; }
 .corner-help span { padding: 4px 7px; background: #e9e9e2; font: 700 10px ui-monospace, monospace; }
 .corner-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 .paper-tool .corner-done { background: var(--acid); padding-inline: 18px; }
+.paper-tool .corner-crop { background: var(--acid); }
 
 .parameter { margin-top: 21px; }
 .parameter > div { display: flex; justify-content: space-between; align-items: baseline; }
@@ -221,7 +226,11 @@ body.corner-editor-open { overflow: hidden; }
   .corner-editor-head small, .corner-editor-foot small { font-size: 10px; }
   .corner-editor-foot { flex-direction: column; }
   .corner-actions { width: 100%; }
-  .corner-actions button { flex: 1; }
+  .corner-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .corner-loupe { top: 7px; right: 7px; width: 132px; padding: 4px; }
+  .corner-loupe.left { left: 7px; }
+  .corner-loupe span { font-size: 8px; }
+  .corner-loupe canvas { width: 122px; height: 122px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

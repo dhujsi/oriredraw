@@ -16,14 +16,15 @@ from reconstructor import (
 
 
 class ReconstructionSmokeTest(unittest.TestCase):
-    def test_paper_preparation_never_upscales_source_geometry(self):
+    def test_paper_preparation_upscales_small_screenshot_for_analysis(self):
         image = np.full((180, 190, 3), 255, np.uint8)
         cv2.rectangle(image, (20, 15), (169, 164), (0, 0, 0), 1)
         square, _, stats = prepare_paper_square(image, 512)
-        self.assertEqual(square.shape[:2], (150, 150))
+        self.assertEqual(square.shape[:2], (512, 512))
         self.assertEqual(stats["native_paper_size"], 150)
-        self.assertEqual(stats["analysis_size_used"], 150)
-        self.assertFalse(stats["source_upscaled"])
+        self.assertEqual(stats["analysis_size_used"], 512)
+        self.assertTrue(stats["source_upscaled"])
+        self.assertGreater(stats["analysis_scale"], 3.0)
 
     def test_four_corner_photo_correction_rectifies_to_square(self):
         image = np.full((260, 340, 3), 255, np.uint8)
@@ -46,8 +47,18 @@ class ReconstructionSmokeTest(unittest.TestCase):
             image, 512, paper_corners=normalized
         )
         self.assertEqual(square.shape[0], square.shape[1])
+        self.assertEqual(square.shape[:2], (512, 512))
         self.assertEqual(stats["paper_transform"], "four_corner_perspective")
-        self.assertFalse(stats["source_upscaled"])
+        self.assertTrue(stats["source_upscaled"])
+
+    def test_small_automatic_crop_is_detected_before_upscaled_analysis(self):
+        image = np.full((72, 76, 3), 255, np.uint8)
+        cv2.rectangle(image, (8, 6), (67, 65), (0, 0, 0), 1)
+        square, bounds, stats = prepare_paper_square(image, 512)
+        self.assertEqual(square.shape[:2], (512, 512))
+        self.assertTrue(stats["source_upscaled"])
+        self.assertGreater(stats["paper_detection_scale"], 1.0)
+        self.assertLessEqual(abs((bounds[2] - bounds[0]) - 59), 2)
 
     def test_cp_export_uses_oriedita_downward_y_coordinates(self):
         rows = edges_to_cp(
@@ -81,10 +92,10 @@ class ReconstructionSmokeTest(unittest.TestCase):
         _, _, stats = _reconstruct_lsd_rays(square, ink, Settings())
         self.assertEqual(stats["lsd_parallel_groups_split"], 0)
 
-    def test_sparse_22_5_star_exports_only_legal_cp_lines(self):
-        image = np.full((420, 420, 3), 255, np.uint8)
-        low, high = 30, 389
-        center = np.array([209.0, 209.0])
+    def test_small_sparse_22_5_star_is_upscaled_and_exports_legal_cp_lines(self):
+        image = np.full((120, 120, 3), 255, np.uint8)
+        low, high = 10, 109
+        center = np.array([59.0, 59.0])
         cv2.rectangle(image, (low, low), (high, high), (0, 0, 0), 1)
         for index in range(8):
             theta = index * math.pi / 8
@@ -107,6 +118,7 @@ class ReconstructionSmokeTest(unittest.TestCase):
         success, encoded = cv2.imencode(".png", image)
         self.assertTrue(success)
         result = reconstruct(encoded.tobytes())
+        self.assertTrue(result["stats"]["source_upscaled"])
         rows = [row.split() for row in result["cp"].splitlines()]
         self.assertGreater(len(rows), 4)
         self.assertEqual({int(row[0]) for row in rows}, {1, 2})
