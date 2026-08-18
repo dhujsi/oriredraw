@@ -16,6 +16,7 @@ class WebBridgeTest(unittest.TestCase):
             "warnings": [],
             "overlay_data_uri": "data:image/png;base64,AA==",
             "reconstruction_data_uri": "data:image/png;base64,AA==",
+            "evidence_data_uri": "data:image/png;base64,AA==",
             "overlay_image": np.zeros((2, 2, 3), dtype=np.uint8),
             "reconstruction_image": np.zeros((2, 2, 3), dtype=np.uint8),
         }
