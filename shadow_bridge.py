@@ -36,21 +36,7 @@ def reconstruct_for_web_shadow_json(
         report["ridge_estimates"] = len(estimates)
         report["precision_rebound_output_rays"] = refined_offsets
         payload["shadow_search"] = report
-
-        if settings_mapping.get("construction_variants", True):
-            variant = build_shadow_candidate_variant(
-                image_bytes,
-                settings_mapping,
-                payload,
-                report,
-            )
-            if variant is not None:
-                payload.setdefault("variants", []).append(variant)
-                report["candidate_variant_emitted"] = True
-                report["candidate_variant_id"] = variant["id"]
-            else:
-                report["candidate_variant_emitted"] = False
-    except Exception as error:  # Shadow mode must never break the production result.
+    except Exception as error:  # Shadow diagnostics must never break production output.
         payload["shadow_search"] = {
             "enabled": False,
             "mode": "shadow_geometry_v2",
@@ -58,6 +44,25 @@ def reconstruct_for_web_shadow_json(
             "reason": "shadow_error",
             "error": str(error),
         }
+    else:
+        if settings_mapping.get("construction_variants", True):
+            try:
+                variant = build_shadow_candidate_variant(
+                    image_bytes,
+                    settings_mapping,
+                    payload,
+                    report,
+                )
+            except Exception as error:  # Candidate rendering is even more isolated.
+                report["candidate_variant_emitted"] = False
+                report["candidate_variant_error"] = str(error)
+            else:
+                if variant is not None:
+                    payload.setdefault("variants", []).append(variant)
+                    report["candidate_variant_emitted"] = True
+                    report["candidate_variant_id"] = variant["id"]
+                else:
+                    report["candidate_variant_emitted"] = False
     return json.dumps(
         payload,
         ensure_ascii=False,
