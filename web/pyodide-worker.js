@@ -1,6 +1,13 @@
 const PYODIDE_BASE = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/';
-const SOURCE_FILES = ['foldability.py', 'reconstructor.py', 'web_bridge.py'];
-const WEB_ENGINE_VERSION = '20260818-monochrome-geometry-v3';
+const SOURCE_FILES = [
+  'foldability.py',
+  'reconstructor.py',
+  'web_bridge.py',
+  'construction_search.py',
+  'shadow_search.py',
+  'shadow_bridge.py',
+];
+const WEB_ENGINE_VERSION = '20260819-shadow-search-dev2';
 
 let pyodide;
 let readyPromise;
@@ -25,7 +32,7 @@ async function initialize() {
     }
     pyodide.FS.writeFile(fileName, await response.text(), { encoding: 'utf8' });
   }
-  pyodide.runPython('from web_bridge import reconstruct_for_web_json, rectify_for_web_json');
+  pyodide.runPython('from shadow_bridge import reconstruct_for_web_shadow_json, rectify_for_web_json');
   announce('ready', '浏览器识别引擎已就绪');
 }
 
@@ -45,7 +52,7 @@ async function reconstructInBrowser(buffer, settings, id) {
   try {
     return pyodide.runPython(`
 from pathlib import Path
-reconstruct_for_web_json(Path("${inputPath}").read_bytes(), _oriredraw_settings_json, _oriredraw_progress)
+reconstruct_for_web_shadow_json(Path("${inputPath}").read_bytes(), _oriredraw_settings_json, _oriredraw_progress)
     `);
   } finally {
     pyodide.globals.delete('_oriredraw_settings_json');
