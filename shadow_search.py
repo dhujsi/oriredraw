@@ -14,7 +14,7 @@ from construction_search import (
 
 
 _HIGH_COEFFICIENT = 10
-_INTEGER_TOKEN = re.compile(r"(?<![\w.])[+-]?\d+(?![\w.])")
+_INTEGER_TOKEN = re.compile(r"[+-]?\d+")
 
 
 def _generation(anchor: Mapping[str, Any]) -> int:
@@ -65,7 +65,11 @@ def _algebraic_coefficients(anchor: Mapping[str, Any]) -> tuple[int, ...]:
         return ()
     coefficients: list[int] = []
     for value in values:
-        coefficients.extend(int(token) for token in _INTEGER_TOKEN.findall(value))
+        # Remove the literal radical token so its "2" is not mistaken for a
+        # construction coefficient. This remains a description-length proxy;
+        # exact Q(√2) arithmetic lives in exact_qsqrt2.py.
+        stripped = value.replace("√2", "R")
+        coefficients.extend(int(token) for token in _INTEGER_TOKEN.findall(stripped))
     return tuple(coefficients)
 
 
@@ -113,10 +117,11 @@ def build_candidate_graph(
 ) -> tuple[ConstructionGraph, frozenset[Hashable], dict[Hashable, Mapping[str, Any]]]:
     """Translate the legacy exact-ray trace into a candidate construction DAG.
 
-    This first shadow adapter intentionally consumes the already-serialized
-    legacy provenance. It does not invent symmetry or alternative parents yet.
-    That makes it safe to compare the new global scorer with the current route
-    before v2 starts proposing new geometry.
+    Every retained trace ray is an observation that needs an explanation,
+    including auxiliary parent rays. The trace has already been reduced to the
+    ancestry of exported geometry, so scoring these rays prevents the beam from
+    treating necessary parents as pure cost. Later passes can attach several
+    operations to the same ray observation (direct, symmetry, etc.).
     """
 
     graph = ConstructionGraph()
@@ -129,10 +134,8 @@ def build_candidate_graph(
         node = ("ray", trace_id)
         anchors_by_node[node] = anchor
         parents = tuple(("ray", value) for value in _parent_ids(anchor, valid_ids))
-        forms_output = bool(anchor.get("forms_output"))
-        explains = frozenset({("output_ray", trace_id)}) if forms_output else frozenset()
-        if forms_output:
-            observations.update(explains)
+        observation = ("required_ray", trace_id)
+        observations.add(observation)
         kind = _source_kind(anchor)
         coefficients = _algebraic_coefficients(anchor) if kind == "algebraic_seed" else ()
         graph.add_operation(
@@ -141,7 +144,7 @@ def build_candidate_graph(
                 kind=kind,
                 parents=parents,
                 outputs=(node,),
-                explains=explains,
+                explains=frozenset({observation}),
                 residual=_snap_residual(anchor),
                 generation=max(0, _generation(anchor)),
                 independent_parameters=1 if kind == "algebraic_seed" else 0,
@@ -160,14 +163,12 @@ def _legacy_state(
 
     state = SearchState(known_nodes=frozenset(), camv_violations=camv_violations)
     remaining = list(graph.operations.values())
-    applied: list[ConstructionOperation] = []
     while remaining:
         progressed = False
         next_remaining: list[ConstructionOperation] = []
         for operation in sorted(remaining, key=lambda item: (item.generation, str(item.id))):
             if set(operation.parents).issubset(state.known_nodes):
                 state = state.apply(operation)
-                applied.append(operation)
                 progressed = True
             else:
                 next_remaining.append(operation)
@@ -246,7 +247,8 @@ def build_shadow_report(
         "mode": "shadow",
         "output_unchanged": True,
         "candidate_rays": len(graph.operations),
-        "output_observations": len(observations),
+        "required_observations": len(observations),
+        "output_rays": sum(bool(item.get("forms_output")) for item in trace),
         "alternative_provenance_nodes": sum(count > 1 for count in provenance_counts),
         "camv_violation_count": camv_violations,
         "legacy": {
