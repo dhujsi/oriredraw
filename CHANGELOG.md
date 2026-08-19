@@ -17,16 +17,23 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - Precision rebound from exported `.cp` geometry before shadow search, so six-decimal diagnostic trace serialization cannot degrade a newly selected exact construction.
 - A first-use derivation hint pointing out the optional CP underlay without enabling it by default.
 - `scripts/preview.py`, a one-command local preview helper that assembles the branch exactly like Pages, patches the shared engine version, disables browser caching, and opens the preview in the default browser.
+- Segment-ratio construction provenance. Ratios are taken on already-constructed finite line segments; `1/6` is represented as midpoint plus trisection of the half-segment rather than a primitive sixth-division rule.
+- A post-DAG isolated-line pass for reconstructed squares. It tests trisection / half-trisection parallel lines against the original raster before admitting them into the shadow candidate.
+- Variant-specific playback traces, so the v2 derivation can show its own selected provenance instead of replaying the strict route.
 
 ### Changed
-- Algebraic construction complexity is modeled as a soft cost rather than a hard ban, so large-coefficient expressions can still win when the evidence genuinely supports them.
+- Large-coefficient algebraic construction is still available as a fallback, but coefficients above the guard threshold now incur an explicit magnitude-growing independent-parameter cost in addition to the algebraic complexity term.
 - Symmetry has no special preference or penalty; unnecessary symmetry loses naturally when it adds construction steps, while reusable symmetry can still win globally.
 - Required auxiliary construction rays are scored as part of the shadow DAG so beam search does not treat necessary parents as disposable overhead.
 - Alternative provenance is spatially gated near the legacy anchor and indexed by point buckets, limiting symmetry overuse and avoiding cubic target scans.
-- GitHub Pages now packages every Python module referenced by the Pyodide worker, including the shadow evidence, geometry, and candidate-variant modules.
+- GitHub Pages now packages every Python module referenced by the Pyodide worker, including provenance-v4 and isolated-ratio inference modules.
 - Candidate-variant failures are isolated from both the strict reconstruction and the shadow diagnostic report.
-- Derivation playback now uses semantic line states instead of the old thick highlight overlay: current crease segments are blue (mountain dash-dot, valley dashed), completed crease segments remain red dashed, still-needed construction helpers remain grey dashed, and dead helpers disappear.
+- Derivation playback now uses semantic line states instead of the old thick highlight overlay: current crease segments are blue (mountain dash-dot, valley dashed), completed crease segments remain red dashed, and all historical construction helpers remain grey dashed even after their last dependency has been built.
 - The CP underlay is now off by default and remains an explicit viewing aid rather than part of the derivation drawing.
+
+## [0.2.0-dev.8] - 2026-08-19
+
+- Corrected the ratio-construction model from paper-boundary division to finite constructed-segment division, added midpoint→half-trisection provenance for `1/6`, strengthened the large-`Q(√2)` fallback cost, added raster-validated isolated square parallel lines, kept expired helper lines visible, and gave variants their own playback trace.
 
 ## [0.2.0-dev.7] - 2026-08-19
 
