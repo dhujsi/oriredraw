@@ -25,6 +25,8 @@ from shadow_variant import _affected_descendants
 _MAX_REFERENCE_POINTS = 720
 _MAX_REFERENCES_PER_TARGET = 12
 _RELIABLE_TRACE_PENALTY_MAX = 3.0
+_CORELESS_UNRESOLVED_FRACTION = 0.12
+_CORELESS_UNRESOLVED_EXTRA = 6
 
 
 def _target_id(metadata: Mapping[str, Any]) -> int | None:
@@ -228,7 +230,7 @@ def _stable_reference_points(
                 source_trace_ids=(first_id, second_id),
             )
 
-    # Explicitly include paper-corner symmetry as a point source.  This is
+    # Explicitly include paper-corner symmetry as a point source. This is
     # generic for all corners; a top-left route wins only when its geometry fits.
     for axis_id in stable_ids:
         axis = _line_geometry(anchors[axis_id])
@@ -250,8 +252,7 @@ def _stable_reference_points(
             )
 
     # Midpoints between simple reliable points are allowed without assuming a
-    # named region or a central hub.  This also covers the common case where a
-    # line is naturally taken from a midpoint elsewhere in the CP.
+    # named region or a central hub.
     corner_items = [
         {
             "point": corner,
@@ -285,7 +286,7 @@ def _stable_reference_points(
             )
 
     # 1/3 and 2/3 points are generated only on finite intervals whose endpoints
-    # already lie on the same reliable ray.  This is line-segment division, not
+    # already lie on the same reliable ray. This is line-segment division, not
     # paper-edge division and not a square-specific rule.
     for ray_id in stable_ids:
         line = _line_geometry(anchors[ray_id])
@@ -356,9 +357,9 @@ def _add_coreless_reference_candidates(
             residual = abs(candidate_offset - _observed_offset(target))
             if residual > tolerance:
                 continue
-            # Point complexity is primary, then raster residual.  We do not
-            # require a line-position shift: abandoning the old *point method*
-            # can legitimately recover the same crease from a simpler point.
+            # Point complexity is primary, then raster residual. We do not
+            # require a line-position shift: abandoning the old point method can
+            # legitimately recover the same physical crease from a simpler point.
             score = item["cost"] + residual * 3.5
             options.append((score, int(item["cost"]), str(item["kind"]), item, candidate_offset))
         options.sort(key=lambda value: (value[0], value[1], value[2]))
@@ -448,14 +449,10 @@ def _coreless_graph(
 ) -> tuple[ConstructionGraph, int]:
     """Remove the core-point method, not merely one coordinate value.
 
-    - The large-coefficient root legacy operation is unavailable.
-    - `geometry_reroot` is unavailable: shifting the same core point is exactly
-      the behaviour this branch is meant to stop testing.
-    - Alternatives whose reference point is itself inside the old core
-      dependency region are suppressed because their serialized point may carry
-      the same bad geometry forward.
-    - Legacy *downstream relations* may remain. Once an upstream ray has been
-      independently re-anchored, their intersections are recomputed later.
+    The large-coefficient root legacy operation and geometry-reroot operations
+    are unavailable. Alternatives whose references come from inside the old
+    core dependency region are also suppressed. Legacy downstream relations may
+    remain once an upstream ray has been independently re-anchored.
     """
 
     output = ConstructionGraph()
@@ -563,9 +560,9 @@ def build_provenance_report_v6(
     weights: SearchWeights = SearchWeights(camv_violation=4.5, unexplained=9.5),
     beam_width: int = 72,
 ) -> dict[str, Any]:
-    # Keep the ordinary quality-aware search as one branch.  The coreless route
-    # is intentionally a separate alternative; it must not disappear merely
-    # because a core-point route has a slightly better raster score.
+    # Keep the ordinary quality-aware search as one branch. The coreless route
+    # is intentionally separate; it must not disappear merely because the
+    # core-point route has a slightly better raster score.
     normal = build_provenance_report_v5(
         result,
         quality_report=quality_report,
@@ -587,13 +584,17 @@ def build_provenance_report_v6(
     graph = _guard_large_coefficients(graph, details)
     _add_corner_candidates(graph, anchors, details, maximum)
     _add_segment_ratio_candidates(graph, anchors, details)
-    # Deliberately DO NOT add `_add_geometry_reroot_candidates` here. A reroot
-    # is still the core-point method with a different coordinate.
+    # Deliberately do not add geometry-reroot candidates here. A reroot is still
+    # the same core-point method with a different coordinate.
     _add_corner_symmetry_candidates(graph, anchors, details, maximum, quality_report)
     graph = _apply_quality_quarantine(graph, anchors, details, quality_report)
 
     core_targets = _large_core_targets(details)
     baseline_unexplained = int(normal.get("unexplained_observations", len(observations)))
+    unresolved_budget = max(
+        baseline_unexplained + _CORELESS_UNRESOLVED_EXTRA,
+        int(math.ceil(len(observations) * _CORELESS_UNRESOLVED_FRACTION)),
+    )
     attempts: list[dict[str, Any]] = []
     viable: list[tuple[tuple[int, int, float], dict[str, Any]]] = []
 
@@ -641,6 +642,7 @@ def build_provenance_report_v6(
             "coreless_candidate_operations_added": added,
             "suppressed_core_method_operations": removed,
             "unexplained_observations": summary["unexplained_observations"],
+            "unresolved_budget": unresolved_budget,
             "root_abandons_core_seed": summary["root_abandons_core_seed"],
             "coreless_reference_ray_count": summary["coreless_reference_ray_count"],
             "selected_score": summary["selected_score"],
@@ -650,10 +652,10 @@ def build_provenance_report_v6(
 
         if not summary["root_abandons_core_seed"]:
             continue
-        # A deliberate alternative may be slightly less complete than the
-        # normal branch, but it should remain close enough to be diagnostically
-        # useful rather than becoming a random sparse reconstruction.
-        if summary["unexplained_observations"] > baseline_unexplained + 1:
+        # This is an alternative construction hypothesis, not the production
+        # strict answer. A few still-unresolved observations are useful evidence
+        # about where the grammar is incomplete and must not hide the whole A/B.
+        if summary["unexplained_observations"] > unresolved_budget:
             continue
         viable.append(
             (
@@ -670,13 +672,15 @@ def build_provenance_report_v6(
     output["mode"] = "provenance_v6"
     output["core_point_free_attempted"] = bool(core_targets)
     output["core_point_targets"] = core_targets
+    output["core_point_free_unresolved_budget"] = unresolved_budget
     output["core_point_free_attempts"] = attempts
     output["core_point_free_selected"] = False
     output["coreless_selected_report"] = None
 
     if viable:
         viable.sort(key=lambda item: item[0])
-        coreless = viable[0][1]
+        coreless = dict(viable[0][1])
+        coreless["unresolved_budget"] = unresolved_budget
         output["core_point_free_selected"] = True
         output["core_point_free_selected_target"] = coreless["coreless_root_trace_id"]
         output["coreless_selected_report"] = coreless
@@ -685,8 +689,13 @@ def build_provenance_report_v6(
         "The coreless branch does not move a large-coefficient core point; it suppresses that construction method and independently re-anchors affected observed creases from references outside the old dependency region.",
         "Paper corners, reliable external anchor/intersection points, paper-corner symmetry, midpoints and finite-segment thirds are generic reference sources; no top-left, square or named-region special case is hard-coded.",
         "The ordinary quality-aware route and the coreless route are retained as separate alternatives so the latter cannot be hidden merely by a slightly better core-point raster fit.",
+        "A coreless alternative may remain visible with a bounded number of unresolved observations; unresolved evidence is reported instead of silently suppressing the whole variant.",
     ]
     return output
 
 
-__all__ = ["build_provenance_report_v6"]
+__all__ = [
+    "build_provenance_report_v6",
+    "_coreless_graph",
+    "_stable_reference_points",
+]
