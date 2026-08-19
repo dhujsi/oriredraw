@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from shadow_variant import build_candidate_cp, refine_trace_offsets_from_cp
 
 
