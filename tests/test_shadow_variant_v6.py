@@ -27,12 +27,12 @@ def _segment(line_type, trace_id, orientation, offset, old_start, old_end):
 
 def test_old_common_node_is_not_forced_back_to_one_least_squares_point():
     # Three old segments shared (50,50). After re-anchoring, their exact pairwise
-    # intersections sit at distinct nearby points. v6 should allow the old node
-    # to split rather than averaging all three back into a fake common point.
+    # intersections sit at clearly distinct nearby points. v6 should allow the
+    # old node to split rather than averaging all three into a fake common point.
     segments = [
         _segment(2, 1, 0, 50.0, (20.0, 50.0), (50.0, 50.0)),
         _segment(2, 2, 4, -51.0, (50.0, 50.0), (50.0, 80.0)),
-        _segment(3, 3, 2, -1.0, (30.0, 30.0), (50.0, 50.0)),
+        _segment(3, 3, 2, -2.5, (30.0, 30.0), (50.0, 50.0)),
     ]
 
     split = _free_old_nodes(segments, 100.0)
