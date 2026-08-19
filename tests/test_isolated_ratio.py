@@ -1,6 +1,6 @@
 import numpy as np
 
-from isolated_ratio import _square_candidates
+from isolated_ratio import _candidate_span
 
 
 def _row(start, end, line_type=2):
@@ -11,32 +11,24 @@ def _row(start, end, line_type=2):
     }
 
 
-def test_rotated_square_is_detected_from_internal_segments_not_paper_edges():
-    # A=(50,0) and B=(50,100) are opposite corners (a vertical diagonal).
-    # The four actual square edges run at +/-45 degrees.
-    a = (50.0, 0.0)
-    b = (50.0, 100.0)
-    c = (100.0, 50.0)
-    d = (0.0, 50.0)
+def test_candidate_span_uses_nearest_constructed_intersections_not_square_shape():
     rows = [
-        _row(a, c),
-        _row(c, b),
-        _row(b, d),
-        _row(d, a),
+        _row((20, 0), (20, 100)),
+        _row((80, 0), (80, 100)),
+        _row((5, 15), (30, 40)),
     ]
-    squares = _square_candidates(rows)
-    assert squares
-    square = squares[0]
-    assert {square["u_orientation"], square["v_orientation"]} == {2, 6}
-    np.testing.assert_allclose(square["a"], a, atol=1e-6)
-    np.testing.assert_allclose(square["b"], b, atol=1e-6)
+    point = np.asarray((50.0, 50.0), dtype=float)
+    span = _candidate_span(point, 0, rows, 100.0)
+    assert span is not None
+    start, end = span
+    np.testing.assert_allclose(start, (20.0, 50.0), atol=1e-6)
+    np.testing.assert_allclose(end, (80.0, 50.0), atol=1e-6)
 
 
-def test_paper_boundary_rows_are_not_used_as_square_construction_edges():
-    rows = [
-        _row((0, 0), (100, 0), line_type=1),
-        _row((100, 0), (100, 100), line_type=1),
-        _row((100, 100), (0, 100), line_type=1),
-        _row((0, 100), (0, 0), line_type=1),
-    ]
-    assert _square_candidates(rows) == []
+def test_ratio_recovery_source_contains_no_square_detector():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "isolated_ratio.py").read_text(encoding="utf-8")
+    assert "_square_candidates" not in source
+    assert "infer_isolated_segment_ratio_segments" in source
+    assert "No square, paper-edge division, or named region is assumed" in source
