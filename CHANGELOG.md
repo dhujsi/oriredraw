@@ -25,6 +25,8 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - A deliberate coreless search branch for large-coefficient internal seeds. It removes the old core-point seed method, builds reference points only from outside the old dependency region, and independently re-anchors affected observations from corners, reliable intersections/anchors, corner symmetry, midpoints, and finite-segment thirds.
 - Free-topology shadow rendering for coreless variants. Old high-degree CP nodes are only neighbourhood hints and may split into multiple nearby exact intersections instead of being forced back into one least-squares point.
 - Standardized project export filenames with timestamp and app version.
+- Observation-first ratio recovery for unresolved raster creases, including finite auxiliary segments between already-constructed exact points even when the segment itself is not a CP crease.
+- Explicit browser progress stages for shadow diagnostics, coreless search, ratio recovery, candidate rendering, and final candidate quality review.
 
 ### Changed
 - Large-coefficient algebraic construction is still available as a fallback, but coefficients above the guard threshold now incur an explicit magnitude-growing independent-parameter cost in addition to the algebraic complexity term.
@@ -39,6 +41,12 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - cAMV is now treated as a strong structural prior with cause-aware handling: violations coincident with geometry misalignment are strongly attributed to reconstruction quality, while clean local violations remain repair/search targets rather than hard vetoes.
 - A provenance rewrite that leaves a quarantined ray at essentially the same coordinates no longer counts as a repair; the search is pushed toward materially different reference points.
 - The coreless branch no longer treats `geometry_reroot` as an acceptable repair: moving the suspect core coordinate is explicitly different from abandoning the core-point construction method.
+- Ratio evidence may be parallel-shifted within the normal construction tolerance without moving the exact ratio-derived CP geometry; the raster displacement is retained as evidence metadata only.
+- CP and project exports keep the original image basename as the prefix and append result kind, app version, and timestamp to avoid ambiguous repeated filenames.
+
+## [0.2.0-dev.11] - 2026-08-19
+
+- Extended the visible progress budget through all shadow/coreless post-processing, changed ratio recovery to start from unresolved raster observations and exact auxiliary point-segments, allowed hand-drawn raster ridges to validate nearby exact ratio lines without shifting them, and standardized CP/project filenames while preserving the source-image basename.
 
 ## [0.2.0-dev.10] - 2026-08-19
 
