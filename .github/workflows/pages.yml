@@ -28,7 +28,7 @@ jobs:
         run: |
           mkdir -p _site/python
           cp -R web/. _site/
-          cp foldability.py reconstructor.py web_bridge.py construction_search.py shadow_search.py shadow_evidence.py shadow_geometry.py shadow_geometry_v2.py shadow_variant.py shadow_bridge.py _site/python/
+          cp foldability.py reconstructor.py web_bridge.py construction_search.py shadow_search.py shadow_evidence.py shadow_geometry.py shadow_geometry_v2.py shadow_variant.py provenance_v3.py provenance_v4.py shadow_variant_v3.py isolated_ratio.py shadow_variant_v4.py shadow_bridge.py _site/python/
           cp VERSION _site/VERSION
           VERSION_VALUE="$(tr -d '\r\n' < VERSION)"
           sed -E -i "s/^const WEB_ENGINE_VERSION = '.*';$/const WEB_ENGINE_VERSION = '${VERSION_VALUE}';/" _site/app.js _site/pyodide-worker.js
