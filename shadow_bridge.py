@@ -7,6 +7,10 @@ from typing import Any, Callable
 
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
+from shadow_variant import (
+    build_shadow_candidate_variant,
+    refine_trace_offsets_from_cp,
+)
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -22,13 +26,30 @@ def reconstruct_for_web_shadow_json(
         progress_callback=progress_callback,
     )
     try:
+        refined_offsets = refine_trace_offsets_from_cp(payload)
         estimates = attach_observed_offsets(
             image_bytes,
             settings_mapping,
             payload,
         )
-        payload["shadow_search"] = build_geometry_shadow_report_v2(payload)
-        payload["shadow_search"]["ridge_estimates"] = len(estimates)
+        report = build_geometry_shadow_report_v2(payload)
+        report["ridge_estimates"] = len(estimates)
+        report["precision_rebound_output_rays"] = refined_offsets
+        payload["shadow_search"] = report
+
+        if settings_mapping.get("construction_variants", True):
+            variant = build_shadow_candidate_variant(
+                image_bytes,
+                settings_mapping,
+                payload,
+                report,
+            )
+            if variant is not None:
+                payload.setdefault("variants", []).append(variant)
+                report["candidate_variant_emitted"] = True
+                report["candidate_variant_id"] = variant["id"]
+            else:
+                report["candidate_variant_emitted"] = False
     except Exception as error:  # Shadow mode must never break the production result.
         payload["shadow_search"] = {
             "enabled": False,
