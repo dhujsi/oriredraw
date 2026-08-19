@@ -10,22 +10,18 @@ from shadow_evidence import _bilinear
 from shadow_variant import _parse_cp
 
 
-_VERTEX_ROUND = 3
-_SQUARE_VERTEX_TOLERANCE_PX = 1.25
-_EXISTING_LINE_TOLERANCE_PX = 0.7
+_EXISTING_LINE_TOLERANCE_PX = 0.72
+_MIN_SOURCE_SEGMENT_PX = 8.0
+_MIN_CANDIDATE_SEGMENT_PX = 6.0
 
 
 def _orientation(start: np.ndarray, end: np.ndarray) -> int | None:
     delta = end - start
     length = float(np.linalg.norm(delta))
-    if length <= 1e-7:
+    if length <= 1e-8:
         return None
     angle = math.atan2(float(delta[1]), float(delta[0])) % math.pi
-    raw = angle / (math.pi / 8.0)
-    index = int(round(raw)) % 8
-    snapped = index * math.pi / 8.0
-    error = abs(((angle - snapped + math.pi / 2.0) % math.pi) - math.pi / 2.0)
-    return index if error <= math.radians(0.6) else None
+    return int(round(angle / (math.pi / 8.0))) % 8
 
 
 def _direction(orientation: int) -> np.ndarray:
@@ -34,21 +30,12 @@ def _direction(orientation: int) -> np.ndarray:
 
 
 def _normal(orientation: int) -> np.ndarray:
-    d = _direction(orientation)
-    return np.array([-d[1], d[0]], dtype=float)
+    direction = _direction(orientation)
+    return np.array([-direction[1], direction[0]], dtype=float)
 
 
-def _vertex_key(point: np.ndarray) -> tuple[float, float]:
-    return round(float(point[0]), _VERTEX_ROUND), round(float(point[1]), _VERTEX_ROUND)
-
-
-def _nearest_vertex(point: np.ndarray, vertices: Mapping[tuple[float, float], np.ndarray]) -> np.ndarray | None:
-    best = None
-    for candidate in vertices.values():
-        distance = float(np.linalg.norm(candidate - point))
-        if distance <= _SQUARE_VERTEX_TOLERANCE_PX and (best is None or distance < best[0]):
-            best = (distance, candidate)
-    return None if best is None else best[1]
+def _cross(a: np.ndarray, b: np.ndarray) -> float:
+    return float(a[0] * b[1] - a[1] * b[0])
 
 
 def _score_segment(confidence: np.ndarray, start: np.ndarray, end: np.ndarray) -> dict[str, float]:
@@ -71,57 +58,113 @@ def _score_segment(confidence: np.ndarray, start: np.ndarray, end: np.ndarray) -
     return {"score": score, "ridge": ridge, "lower": lower, "contrast": contrast}
 
 
+def _line_segment_parameter(
+    point: np.ndarray,
+    direction: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+) -> float | None:
+    segment_direction = end - start
+    denominator = _cross(direction, segment_direction)
+    if abs(denominator) <= 1e-10:
+        return None
+    delta = start - point
+    t = _cross(delta, segment_direction) / denominator
+    u = _cross(delta, direction) / denominator
+    if -1e-7 <= u <= 1.0 + 1e-7:
+        return float(t)
+    return None
+
+
+def _paper_parameters(point: np.ndarray, direction: np.ndarray, maximum: float) -> list[float]:
+    values: list[float] = []
+    for axis in (0, 1):
+        component = float(direction[axis])
+        if abs(component) <= 1e-10:
+            continue
+        for boundary in (0.0, maximum):
+            t = (boundary - float(point[axis])) / component
+            q = point + direction * t
+            other = 1 - axis
+            if -1e-7 <= q[other] <= maximum + 1e-7:
+                values.append(float(t))
+    return values
+
+
+def _candidate_span(
+    point: np.ndarray,
+    orientation: int,
+    rows,
+    maximum: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    direction = _direction(orientation)
+    parameters = _paper_parameters(point, direction, maximum)
+    for row in rows:
+        parameter = _line_segment_parameter(point, direction, row["start"], row["end"])
+        if parameter is not None and abs(parameter) > 0.45:
+            parameters.append(parameter)
+    negative = [value for value in parameters if value < -0.45]
+    positive = [value for value in parameters if value > 0.45]
+    if not negative or not positive:
+        return None
+    low = max(negative)
+    high = min(positive)
+    start = point + direction * low
+    end = point + direction * high
+    if float(np.linalg.norm(end - start)) < _MIN_CANDIDATE_SEGMENT_PX:
+        return None
+    return start, end
+
+
+def _overlap_length(
+    first_start: np.ndarray,
+    first_end: np.ndarray,
+    second_start: np.ndarray,
+    second_end: np.ndarray,
+) -> float:
+    delta = first_end - first_start
+    length = float(np.linalg.norm(delta))
+    if length <= 1e-8:
+        return 0.0
+    unit = delta / length
+    a0, a1 = sorted((float(unit @ first_start), float(unit @ first_end)))
+    b0, b1 = sorted((float(unit @ second_start), float(unit @ second_end)))
+    return max(0.0, min(a1, b1) - max(a0, b0))
+
+
 def _existing_same_line(rows, orientation: int, start: np.ndarray, end: np.ndarray) -> bool:
     normal = _normal(orientation)
     offset = float(normal @ ((start + end) * 0.5))
     for row in rows:
-        if row["line_type"] == 1:
+        if int(row["line_type"]) == 1:
             continue
-        row_orientation = _orientation(row["start"], row["end"])
-        if row_orientation != orientation:
+        if _orientation(row["start"], row["end"]) != orientation:
             continue
         row_offset = float(normal @ ((row["start"] + row["end"]) * 0.5))
-        if abs(row_offset - offset) <= _EXISTING_LINE_TOLERANCE_PX:
+        if abs(row_offset - offset) > _EXISTING_LINE_TOLERANCE_PX:
+            continue
+        if _overlap_length(start, end, row["start"], row["end"]) >= 3.0:
             return True
     return False
 
 
-def _inside_square(point: np.ndarray, a: np.ndarray, u: np.ndarray, v: np.ndarray, du: float, dv: float) -> bool:
-    relative = point - a
-    su = float(relative @ u) / du if abs(du) > 1e-9 else -1.0
-    sv = float(relative @ v) / dv if abs(dv) > 1e-9 else -1.0
-    return -0.03 <= su <= 1.03 and -0.03 <= sv <= 1.03
-
-
-def _infer_line_type(
-    square_image: np.ndarray,
-    rows,
-    orientation: int,
-    start: np.ndarray,
-    end: np.ndarray,
-    a: np.ndarray,
-    u: np.ndarray,
-    v: np.ndarray,
-    du: float,
-    dv: float,
-) -> int:
-    local_types = set()
+def _near_existing_vertex(point: np.ndarray, rows, tolerance: float = 0.85) -> bool:
     for row in rows:
-        if row["line_type"] not in {2, 3}:
-            continue
-        if _orientation(row["start"], row["end"]) != orientation:
-            continue
-        midpoint = (row["start"] + row["end"]) * 0.5
-        if _inside_square(midpoint, a, u, v, du, dv):
-            local_types.add(int(row["line_type"]))
-    if len(local_types) == 1:
-        return next(iter(local_types))
+        if float(np.linalg.norm(point - row["start"])) <= tolerance:
+            return True
+        if float(np.linalg.norm(point - row["end"])) <= tolerance:
+            return True
+    return False
 
+
+def _infer_line_type(square_image: np.ndarray, start: np.ndarray, end: np.ndarray) -> int:
+    if square_image.ndim != 3 or square_image.shape[2] < 3:
+        return 0
     delta = end - start
     length = float(np.linalg.norm(delta))
-    if length <= 1.0 or square_image.ndim != 3 or square_image.shape[2] < 3:
+    if length <= 1.0:
         return 0
-    count = max(12, int(length))
+    count = max(12, min(240, int(length)))
     parameters = np.linspace(0.08, 0.92, count)
     points = start[None, :] + parameters[:, None] * delta[None, :]
     channels = [
@@ -136,87 +179,21 @@ def _infer_line_type(
     return 0
 
 
-def _square_candidates(rows) -> list[dict[str, Any]]:
-    vertices: dict[tuple[float, float], np.ndarray] = {}
-    incidence: dict[tuple[float, float], set[int]] = {}
-    for row in rows:
-        if row["line_type"] == 1:
-            continue
-        orientation = _orientation(row["start"], row["end"])
-        if orientation is None:
-            continue
-        for point in (row["start"], row["end"]):
-            key = _vertex_key(point)
-            vertices.setdefault(key, point.copy())
-            incidence.setdefault(key, set()).add(orientation)
-
-    keys = list(vertices)
-    found: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for first_index in range(len(keys)):
-        first_key = keys[first_index]
-        a = vertices[first_key]
-        for second_index in range(first_index + 1, len(keys)):
-            second_key = keys[second_index]
-            b = vertices[second_key]
-            diagonal = b - a
-            diagonal_length = float(np.linalg.norm(diagonal))
-            if not 12.0 <= diagonal_length <= 260.0:
-                continue
-            common = incidence.get(first_key, set()) & incidence.get(second_key, set())
-            perpendicular_pairs = [
-                (first, second)
-                for first in common
-                for second in common
-                if first < second and (second - first) % 8 == 4
-            ]
-            for u_orientation, v_orientation in perpendicular_pairs:
-                u = _direction(u_orientation)
-                v = _direction(v_orientation)
-                du = float(diagonal @ u)
-                dv = float(diagonal @ v)
-                if min(abs(du), abs(dv)) < 5.0:
-                    continue
-                if abs(abs(du) - abs(dv)) / max(abs(du), abs(dv)) > 0.08:
-                    continue
-                c_expected = a + du * u
-                d_expected = a + dv * v
-                c = _nearest_vertex(c_expected, vertices)
-                d = _nearest_vertex(d_expected, vertices)
-                if c is None or d is None:
-                    continue
-                signature = tuple(sorted(_vertex_key(point) for point in (a, b, c, d)))
-                key = (signature, min(u_orientation, v_orientation), max(u_orientation, v_orientation))
-                found[key] = {
-                    "a": a.copy(),
-                    "b": b.copy(),
-                    "c": c.copy(),
-                    "d": d.copy(),
-                    "u": u,
-                    "v": v,
-                    "du": du,
-                    "dv": dv,
-                    "u_orientation": u_orientation,
-                    "v_orientation": v_orientation,
-                }
-    return list(found.values())
-
-
-def infer_isolated_square_ratio_segments(
+def infer_isolated_segment_ratio_segments(
     image_bytes: bytes,
     settings_mapping: Mapping[str, Any] | None,
     result: Mapping[str, Any],
     cp_text: str,
     *,
-    max_candidates: int = 12,
+    max_candidates: int = 16,
 ) -> list[dict[str, Any]]:
-    """Find locally isolated parallel creases from square-diagonal ratios.
+    """Recover image-supported creases through ratio points of known segments.
 
-    This pass runs after the main construction DAG.  It never divides the paper
-    boundary.  Candidate geometry is generated from an already reconstructed
-    square: the square diagonal may be trisected directly, or its half may be
-    trisected after taking the midpoint (yielding 1/6 and 5/6 positions).  A
-    candidate is retained only when the source raster contains strong line
-    evidence at that exact location.
+    No square, paper-edge division, or named region is assumed.  Every finite
+    reconstructed segment can supply simple ratio points.  Through each point
+    the pass tries canonical fold directions, clips the candidate between the
+    nearest already-constructed intersections, and admits it only when the
+    original raster supports the resulting finite line.
     """
 
     try:
@@ -226,8 +203,8 @@ def infer_isolated_square_ratio_segments(
     if maximum <= 0:
         return []
     rows = _parse_cp(cp_text, maximum)
-    internal_rows = [row for row in rows if row["line_type"] != 1]
-    if len(internal_rows) < 4:
+    internal = [row for row in rows if int(row["line_type"]) != 1]
+    if not internal:
         return []
 
     settings = Settings.from_mapping(dict(settings_mapping or {}))
@@ -237,82 +214,80 @@ def infer_isolated_square_ratio_segments(
 
     reference_scores = [
         _score_segment(confidence, row["start"], row["end"])["score"]
-        for row in internal_rows
+        for row in internal
         if float(np.linalg.norm(row["end"] - row["start"])) >= 8.0
     ]
     if not reference_scores:
         return []
-    evidence_floor = max(0.02, float(np.quantile(reference_scores, 0.35)) * 0.82)
+    evidence_floor = max(0.025, float(np.quantile(reference_scores, 0.42)) * 0.86)
 
     ratios = [
-        (1.0 / 6.0, "1/6", "midpoint_then_trisection"),
+        (1.0 / 6.0, "1/6", "midpoint_then_half_trisection"),
         (1.0 / 3.0, "1/3", "segment_trisection"),
         (2.0 / 3.0, "2/3", "segment_trisection"),
-        (5.0 / 6.0, "5/6", "midpoint_then_trisection"),
+        (5.0 / 6.0, "5/6", "midpoint_then_half_trisection"),
     ]
     candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for square in _square_candidates(rows):
-        a = square["a"]
-        b = square["b"]
-        u = square["u"]
-        v = square["v"]
-        du = float(square["du"])
-        dv = float(square["dv"])
-        for t, ratio, derivation in ratios:
-            options = [
-                (
-                    int(square["u_orientation"]),
-                    a + t * dv * v,
-                    a + du * u + t * dv * v,
-                ),
-                (
-                    int(square["v_orientation"]),
-                    a + t * du * u,
-                    a + t * du * u + dv * v,
-                ),
-            ]
-            for orientation, start, end in options:
-                if _existing_same_line(rows, orientation, start, end):
+    for source_index, source in enumerate(internal):
+        source_delta = source["end"] - source["start"]
+        source_length = float(np.linalg.norm(source_delta))
+        if not (_MIN_SOURCE_SEGMENT_PX <= source_length <= maximum * 0.75):
+            continue
+        source_orientation = _orientation(source["start"], source["end"])
+        for ratio_value, ratio, derivation in ratios:
+            point = source["start"] + source_delta * ratio_value
+            if _near_existing_vertex(point, internal):
+                continue
+            for orientation in range(8):
+                if orientation == source_orientation:
+                    continue
+                span = _candidate_span(point, orientation, internal, maximum)
+                if span is None:
+                    continue
+                start, end = span
+                if _existing_same_line(internal, orientation, start, end):
                     continue
                 evidence = _score_segment(confidence, start, end)
-                if evidence["score"] < evidence_floor or evidence["contrast"] < -0.015:
+                if evidence["score"] < evidence_floor or evidence["contrast"] < -0.01:
                     continue
-                line_type = _infer_line_type(
-                    square_image,
-                    rows,
+                normal = _normal(orientation)
+                offset = float(normal @ point)
+                key = (
                     orientation,
-                    start,
-                    end,
-                    a,
-                    u,
-                    v,
-                    du,
-                    dv,
-                )
-                segment_key = (
-                    orientation,
-                    round(float(_normal(orientation) @ ((start + end) * 0.5)), 3),
-                    round(float(np.linalg.norm(end - start)), 2),
+                    round(offset, 2),
+                    round(float(point[0]), 1),
+                    round(float(point[1]), 1),
                 )
                 item = {
                     "start": start.copy(),
                     "end": end.copy(),
-                    "line_type": int(line_type),
+                    "line_type": _infer_line_type(square_image, start, end),
                     "orientation": orientation,
                     "ratio": ratio,
                     "derivation": derivation,
-                    "source_diagonal_start_px": [round(float(a[0]), 6), round(float(a[1]), 6)],
-                    "source_diagonal_end_px": [round(float(b[0]), 6), round(float(b[1]), 6)],
+                    "ratio_point_px": [round(float(point[0]), 6), round(float(point[1]), 6)],
+                    "source_segment_index": source_index,
+                    "source_segment_start_px": [round(float(source["start"][0]), 6), round(float(source["start"][1]), 6)],
+                    "source_segment_end_px": [round(float(source["end"][0]), 6), round(float(source["end"][1]), 6)],
                     "evidence_score": round(evidence["score"], 6),
                     "ridge_score": round(evidence["ridge"], 6),
                     "ridge_contrast": round(evidence["contrast"], 6),
-                    "line_type_confident": line_type in {2, 3},
                 }
-                if segment_key not in candidates or item["evidence_score"] > candidates[segment_key]["evidence_score"]:
-                    candidates[segment_key] = item
+                previous = candidates.get(key)
+                if previous is None or item["evidence_score"] > previous["evidence_score"]:
+                    candidates[key] = item
 
-    ranked = sorted(candidates.values(), key=lambda item: (-item["evidence_score"], item["ratio"]))
+    ranked = sorted(
+        candidates.values(),
+        key=lambda item: (-item["evidence_score"], -item["ridge_contrast"], item["ratio"]),
+    )
     return ranked[:max_candidates]
 
 
-__all__ = ["infer_isolated_square_ratio_segments"]
+# Compatibility alias for the v4 caller while the public branch is still named
+# construction-search-v2.
+def infer_isolated_square_ratio_segments(*args, **kwargs):
+    return infer_isolated_segment_ratio_segments(*args, **kwargs)
+
+
+__all__ = ["infer_isolated_segment_ratio_segments", "infer_isolated_square_ratio_segments"]
