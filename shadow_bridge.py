@@ -6,7 +6,7 @@ import json
 from typing import Any, Callable
 
 from shadow_evidence import attach_observed_offsets
-from shadow_geometry import build_geometry_shadow_report
+from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -27,12 +27,12 @@ def reconstruct_for_web_shadow_json(
             settings_mapping,
             payload,
         )
-        payload["shadow_search"] = build_geometry_shadow_report(payload)
+        payload["shadow_search"] = build_geometry_shadow_report_v2(payload)
         payload["shadow_search"]["ridge_estimates"] = len(estimates)
     except Exception as error:  # Shadow mode must never break the production result.
         payload["shadow_search"] = {
             "enabled": False,
-            "mode": "shadow_geometry_propagation",
+            "mode": "shadow_geometry_v2",
             "output_unchanged": True,
             "reason": "shadow_error",
             "error": str(error),
