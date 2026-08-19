@@ -11,12 +11,19 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - High-complexity algebraic diagnostics for expressions such as large-coefficient `a+b√2` seeds.
 - Conservative `direct_point` and `symmetry_point` provenance candidates generated from already-constructed anchor points and exact rays.
 - Regression coverage for the dinosaur symmetry case, including the `-100√2`, `200(1-√2)`, and `400-300√2` construction relation.
+- Raster-ridge offset measurements for shadow scoring, using the same rectified paper square and adaptive evidence field as reconstruction.
+- Generic boundary-contact midpoint and symmetry reroot proofs. A formerly downstream observed ray can receive new provenance, intersect a paper midline, and regenerate a suspicious algebraic root without a dependency cycle.
 
 ### Changed
 - Algebraic construction complexity is modeled as a soft cost rather than a hard ban, so large-coefficient expressions can still win when the evidence genuinely supports them.
 - Symmetry has no special preference or penalty; unnecessary symmetry loses naturally when it adds construction steps, while reusable symmetry can still win globally.
 - Required auxiliary construction rays are scored as part of the shadow DAG so beam search does not treat necessary parents as disposable overhead.
 - Alternative provenance is spatially gated near the legacy anchor and indexed by point buckets, limiting symmetry overuse and avoiding cubic target scans.
+- GitHub Pages now packages every Python module referenced by the Pyodide worker, including the shadow evidence and geometry modules.
+
+## [0.2.0-dev.4] - 2026-08-19
+
+- Shadow geometry can now derive an implicit paper-edge contact, take its midpoint with a corner, reflect that point about an existing perpendicular ray, re-root a downstream observed ray, and propagate the resulting exact geometry through the old dependency graph. Exported CP geometry is still unchanged.
 
 ## [0.2.0-dev.3] - 2026-08-19
 
