@@ -23,10 +23,13 @@ PYTHON_FILES = [
     "shadow_variant.py",
     "provenance_v3.py",
     "provenance_v4.py",
+    "provenance_v5.py",
+    "quality_v5.py",
     "selected_geometry_v4.py",
     "shadow_variant_v3.py",
     "isolated_ratio.py",
     "shadow_variant_v4.py",
+    "shadow_variant_v5.py",
     "shadow_bridge.py",
 ]
 
