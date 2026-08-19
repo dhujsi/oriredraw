@@ -22,19 +22,27 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - Quality-v5 diagnostics that separate low-quality reconstructed geometry from unresolved image evidence. Near-miss endpoints and duplicate parallel ridges quarantine the current geometry hypothesis without discarding the underlying observation.
 - Generic paper-corner symmetry candidates and integration of geometry-v2 reroot proofs into the global provenance beam.
 - Exported `.oriredraw` project files now include `app_version` separately from `format_version`.
+- A deliberate coreless search branch for large-coefficient internal seeds. It removes the old core-point seed method, builds reference points only from outside the old dependency region, and independently re-anchors affected observations from corners, reliable intersections/anchors, corner symmetry, midpoints, and finite-segment thirds.
+- Free-topology shadow rendering for coreless variants. Old high-degree CP nodes are only neighbourhood hints and may split into multiple nearby exact intersections instead of being forced back into one least-squares point.
+- Standardized project export filenames with timestamp and app version.
 
 ### Changed
 - Large-coefficient algebraic construction is still available as a fallback, but coefficients above the guard threshold now incur an explicit magnitude-growing independent-parameter cost in addition to the algebraic complexity term.
 - Symmetry has no special preference or penalty; unnecessary symmetry loses naturally when it adds construction steps, while reusable symmetry can still win globally.
 - Required auxiliary construction rays are scored as part of the shadow DAG so beam search does not treat necessary parents as disposable overhead.
 - Alternative provenance is spatially gated near the legacy anchor and indexed by point buckets, limiting symmetry overuse and avoiding cubic target scans.
-- GitHub Pages now packages every Python module referenced by the Pyodide worker, including provenance-v5 and quality-v5 modules.
+- GitHub Pages now packages every Python module referenced by the Pyodide worker, including provenance-v6 and shadow-variant-v6 modules.
 - Candidate-variant failures are isolated from both the strict reconstruction and the shadow diagnostic report.
 - Derivation playback now uses semantic line states instead of the old thick highlight overlay: current crease segments are blue (mountain dash-dot, valley dashed), completed crease segments remain red dashed, and all historical construction helpers remain grey dashed even after their last dependency has been built.
 - The CP underlay is now off by default and remains an explicit viewing aid rather than part of the derivation drawing.
 - Ratio-line recovery no longer assumes a square or divides the paper boundary. Any reconstructed finite segment may supply simple ratio points; candidate creases are admitted only when the original raster supports them.
 - cAMV is now treated as a strong structural prior with cause-aware handling: violations coincident with geometry misalignment are strongly attributed to reconstruction quality, while clean local violations remain repair/search targets rather than hard vetoes.
 - A provenance rewrite that leaves a quarantined ray at essentially the same coordinates no longer counts as a repair; the search is pushed toward materially different reference points.
+- The coreless branch no longer treats `geometry_reroot` as an acceptable repair: moving the suspect core coordinate is explicitly different from abandoning the core-point construction method.
+
+## [0.2.0-dev.10] - 2026-08-19
+
+- Reworked the interrupted v6 attempt into a genuine coreless alternative. Large-coefficient core-point seeds and coordinate reroots are suppressed in that branch, affected observations are re-anchored from external reliable references, old common nodes may split instead of being forced to reconverge, and exported project files use formatted timestamp/version names.
 
 ## [0.2.0-dev.9] - 2026-08-19
 
