@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from provenance_v3 import build_provenance_report_v3
+from provenance_v4 import build_provenance_report_v4
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from shadow_variant import refine_trace_offsets_from_cp
-from shadow_variant_v3 import build_shadow_candidate_variant_v3
+from shadow_variant_v4 import build_shadow_candidate_variant_v4
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -32,7 +32,7 @@ def reconstruct_for_web_shadow_json(
             payload,
         )
         local_report = build_geometry_shadow_report_v2(payload)
-        provenance_report = build_provenance_report_v3(payload)
+        provenance_report = build_provenance_report_v4(payload)
         local_report["ridge_estimates"] = len(estimates)
         local_report["precision_rebound_output_rays"] = refined_offsets
         local_report["global_provenance"] = provenance_report
@@ -48,7 +48,7 @@ def reconstruct_for_web_shadow_json(
     else:
         if settings_mapping.get("construction_variants", True):
             try:
-                variant = build_shadow_candidate_variant_v3(
+                variant = build_shadow_candidate_variant_v4(
                     image_bytes,
                     settings_mapping,
                     payload,
@@ -62,12 +62,10 @@ def reconstruct_for_web_shadow_json(
                     payload.setdefault("variants", []).append(variant)
                     local_report["candidate_variant_emitted"] = True
                     local_report["candidate_variant_id"] = variant["id"]
-                    local_report["candidate_variant_provenance_mode"] = "global_v3"
+                    local_report["candidate_variant_provenance_mode"] = "global_v4_segment_ratios"
                 else:
-                    # Never emit a fake A/B tab when the global provenance
-                    # search has not produced materially different geometry.
                     local_report["candidate_variant_emitted"] = False
-                    local_report["candidate_variant_reason"] = "no_meaningful_global_geometry_change"
+                    local_report["candidate_variant_reason"] = "no_meaningful_global_or_isolated_change"
     return json.dumps(
         payload,
         ensure_ascii=False,
