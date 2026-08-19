@@ -1,11 +1,12 @@
-"""Browser wrapper that appends v2 shadow-search diagnostics without changing v1 output."""
+"""Browser wrapper that appends v2 shadow diagnostics without changing v1 output."""
 
 from __future__ import annotations
 
 import json
 from typing import Any, Callable
 
-from shadow_search import build_shadow_report
+from shadow_evidence import attach_observed_offsets
+from shadow_geometry import build_geometry_shadow_report
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -14,17 +15,24 @@ def reconstruct_for_web_shadow_json(
     settings_json: str,
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> str:
+    settings_mapping = json.loads(settings_json or "{}")
     payload = reconstruct_for_web(
         image_bytes,
-        json.loads(settings_json or "{}"),
+        settings_mapping,
         progress_callback=progress_callback,
     )
     try:
-        payload["shadow_search"] = build_shadow_report(payload)
+        estimates = attach_observed_offsets(
+            image_bytes,
+            settings_mapping,
+            payload,
+        )
+        payload["shadow_search"] = build_geometry_shadow_report(payload)
+        payload["shadow_search"]["ridge_estimates"] = len(estimates)
     except Exception as error:  # Shadow mode must never break the production result.
         payload["shadow_search"] = {
             "enabled": False,
-            "mode": "shadow",
+            "mode": "shadow_geometry_propagation",
             "output_unchanged": True,
             "reason": "shadow_error",
             "error": str(error),
