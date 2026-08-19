@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from provenance_v5 import build_provenance_report_v5
+from provenance_v6 import build_provenance_report_v6
 from quality_v5 import build_quality_report_v5
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from shadow_variant import refine_trace_offsets_from_cp
-from shadow_variant_v5 import build_shadow_candidate_variant_v5
+from shadow_variant_v6 import build_shadow_candidate_variant_v6
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -34,7 +34,7 @@ def reconstruct_for_web_shadow_json(
         )
         local_report = build_geometry_shadow_report_v2(payload)
         quality_report = build_quality_report_v5(payload)
-        provenance_report = build_provenance_report_v5(
+        provenance_report = build_provenance_report_v6(
             payload,
             quality_report=quality_report,
             geometry_report=local_report,
@@ -55,7 +55,7 @@ def reconstruct_for_web_shadow_json(
     else:
         if settings_mapping.get("construction_variants", True):
             try:
-                variant = build_shadow_candidate_variant_v5(
+                variant = build_shadow_candidate_variant_v6(
                     image_bytes,
                     settings_mapping,
                     payload,
@@ -71,11 +71,14 @@ def reconstruct_for_web_shadow_json(
                     payload.setdefault("variants", []).append(variant)
                     local_report["candidate_variant_emitted"] = True
                     local_report["candidate_variant_id"] = variant["id"]
-                    local_report["candidate_variant_provenance_mode"] = "quality_aware_v5"
+                    local_report["candidate_variant_provenance_mode"] = variant["stats"].get(
+                        "shadow_candidate_provenance_mode",
+                        "quality_aware_v6",
+                    )
                     local_report["candidate_variant_quality"] = variant_quality
                 else:
                     local_report["candidate_variant_emitted"] = False
-                    local_report["candidate_variant_reason"] = "no_material_quality_aware_geometry_change"
+                    local_report["candidate_variant_reason"] = "no_material_core_point_free_geometry_change"
     return json.dumps(
         payload,
         ensure_ascii=False,
