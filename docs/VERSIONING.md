@@ -9,4 +9,4 @@
 
 Every release-worthy change should be summarized under `Unreleased` in `CHANGELOG.md`. When a release is cut, move those entries under the released version and date, then bump `VERSION` for the next development cycle.
 
-Browser cache fingerprints such as `WEB_ENGINE_VERSION` are implementation cache keys, not release numbers. They may change more often than `VERSION`; a cache-key change must not be presented to users as a project release.
+`VERSION` is also the deployment cache source. During GitHub Pages assembly, the workflow stamps both `web/app.js` and `web/pyodide-worker.js` with the current `VERSION` value as their `WEB_ENGINE_VERSION` cache key. Source-tree cache strings remain implementation placeholders; deployed browser assets always use the canonical project version, so a version bump invalidates the worker and browser-loaded Python modules together.
