@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from provenance_v4 import build_provenance_report_v4
+from provenance_v5 import build_provenance_report_v5
+from quality_v5 import build_quality_report_v5
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from shadow_variant import refine_trace_offsets_from_cp
@@ -32,9 +33,15 @@ def reconstruct_for_web_shadow_json(
             payload,
         )
         local_report = build_geometry_shadow_report_v2(payload)
-        provenance_report = build_provenance_report_v4(payload)
+        quality_report = build_quality_report_v5(payload)
+        provenance_report = build_provenance_report_v5(
+            payload,
+            quality_report=quality_report,
+            geometry_report=local_report,
+        )
         local_report["ridge_estimates"] = len(estimates)
         local_report["precision_rebound_output_rays"] = refined_offsets
+        local_report["quality"] = quality_report
         local_report["global_provenance"] = provenance_report
         payload["shadow_search"] = local_report
     except Exception as error:  # Shadow diagnostics must never break production output.
@@ -59,13 +66,16 @@ def reconstruct_for_web_shadow_json(
                 local_report["candidate_variant_error"] = str(error)
             else:
                 if variant is not None:
+                    variant_quality = build_quality_report_v5(variant)
+                    variant.setdefault("stats", {})["quality_v5"] = variant_quality
                     payload.setdefault("variants", []).append(variant)
                     local_report["candidate_variant_emitted"] = True
                     local_report["candidate_variant_id"] = variant["id"]
-                    local_report["candidate_variant_provenance_mode"] = "global_v4_segment_ratios"
+                    local_report["candidate_variant_provenance_mode"] = "quality_aware_v5"
+                    local_report["candidate_variant_quality"] = variant_quality
                 else:
                     local_report["candidate_variant_emitted"] = False
-                    local_report["candidate_variant_reason"] = "no_meaningful_global_or_isolated_change"
+                    local_report["candidate_variant_reason"] = "no_material_quality_aware_geometry_change"
     return json.dumps(
         payload,
         ensure_ascii=False,
