@@ -14,6 +14,7 @@ def test_pages_packages_every_shadow_worker_module():
         "shadow_variant.py",
         "provenance_v3.py",
         "provenance_v4.py",
+        "selected_geometry_v4.py",
         "shadow_variant_v3.py",
         "isolated_ratio.py",
         "shadow_variant_v4.py",
