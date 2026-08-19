@@ -28,7 +28,8 @@ jobs:
         run: |
           mkdir -p _site/python
           cp -R web/. _site/
-          cp foldability.py reconstructor.py web_bridge.py _site/python/
+          cp foldability.py reconstructor.py web_bridge.py construction_search.py shadow_search.py shadow_bridge.py _site/python/
+          cp VERSION _site/VERSION
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
