@@ -15,6 +15,7 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - Generic boundary-contact midpoint and symmetry reroot proofs. A formerly downstream observed ray can receive new provenance, intersect a paper midline, and regenerate a suspicious algebraic root without a dependency cycle.
 - A browser-downloadable `construction-v2-shadow` CP variant. Winning shadow offsets are propagated through the dependency graph and then applied by rebuilding the original CP topology from exact line intersections and paper-boundary contacts.
 - Precision rebound from exported `.cp` geometry before shadow search, so six-decimal diagnostic trace serialization cannot degrade a newly selected exact construction.
+- A first-use derivation hint pointing out the optional CP underlay without enabling it by default.
 
 ### Changed
 - Algebraic construction complexity is modeled as a soft cost rather than a hard ban, so large-coefficient expressions can still win when the evidence genuinely supports them.
@@ -23,6 +24,12 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - Alternative provenance is spatially gated near the legacy anchor and indexed by point buckets, limiting symmetry overuse and avoiding cubic target scans.
 - GitHub Pages now packages every Python module referenced by the Pyodide worker, including the shadow evidence, geometry, and candidate-variant modules.
 - Candidate-variant failures are isolated from both the strict reconstruction and the shadow diagnostic report.
+- Derivation playback now uses semantic line states instead of the old thick highlight overlay: current crease segments are blue (mountain dash-dot, valley dashed), completed crease segments remain red dashed, still-needed construction helpers remain grey dashed, and dead helpers disappear.
+- The CP underlay is now off by default and remains an explicit viewing aid rather than part of the derivation drawing.
+
+## [0.2.0-dev.6] - 2026-08-19
+
+- Derivation-playback visual cleanup. The playback overlay now separates active crease formation, persistent CP segments, reusable helper rays, and dead construction lines while keeping the final rendered CP unchanged.
 
 ## [0.2.0-dev.5] - 2026-08-19
 
