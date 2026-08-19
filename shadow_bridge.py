@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from provenance_v3 import build_provenance_report_v3
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
-from shadow_variant import (
-    build_shadow_candidate_variant,
-    refine_trace_offsets_from_cp,
-)
+from shadow_variant import refine_trace_offsets_from_cp
+from shadow_variant_v3 import build_shadow_candidate_variant_v3
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -32,10 +31,12 @@ def reconstruct_for_web_shadow_json(
             settings_mapping,
             payload,
         )
-        report = build_geometry_shadow_report_v2(payload)
-        report["ridge_estimates"] = len(estimates)
-        report["precision_rebound_output_rays"] = refined_offsets
-        payload["shadow_search"] = report
+        local_report = build_geometry_shadow_report_v2(payload)
+        provenance_report = build_provenance_report_v3(payload)
+        local_report["ridge_estimates"] = len(estimates)
+        local_report["precision_rebound_output_rays"] = refined_offsets
+        local_report["global_provenance"] = provenance_report
+        payload["shadow_search"] = local_report
     except Exception as error:  # Shadow diagnostics must never break production output.
         payload["shadow_search"] = {
             "enabled": False,
@@ -47,22 +48,26 @@ def reconstruct_for_web_shadow_json(
     else:
         if settings_mapping.get("construction_variants", True):
             try:
-                variant = build_shadow_candidate_variant(
+                variant = build_shadow_candidate_variant_v3(
                     image_bytes,
                     settings_mapping,
                     payload,
-                    report,
+                    provenance_report,
                 )
             except Exception as error:  # Candidate rendering is even more isolated.
-                report["candidate_variant_emitted"] = False
-                report["candidate_variant_error"] = str(error)
+                local_report["candidate_variant_emitted"] = False
+                local_report["candidate_variant_error"] = str(error)
             else:
                 if variant is not None:
                     payload.setdefault("variants", []).append(variant)
-                    report["candidate_variant_emitted"] = True
-                    report["candidate_variant_id"] = variant["id"]
+                    local_report["candidate_variant_emitted"] = True
+                    local_report["candidate_variant_id"] = variant["id"]
+                    local_report["candidate_variant_provenance_mode"] = "global_v3"
                 else:
-                    report["candidate_variant_emitted"] = False
+                    # Never emit a fake A/B tab when the global provenance
+                    # search has not produced materially different geometry.
+                    local_report["candidate_variant_emitted"] = False
+                    local_report["candidate_variant_reason"] = "no_meaningful_global_geometry_change"
     return json.dumps(
         payload,
         ensure_ascii=False,
