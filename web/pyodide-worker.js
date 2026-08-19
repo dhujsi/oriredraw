@@ -17,6 +17,7 @@ const SOURCE_FILES = [
   'shadow_variant_v3.py',
   'isolated_ratio.py',
   'shadow_variant_v4.py',
+  'shadow_variant_v5.py',
   'shadow_bridge.py',
 ];
 const WEB_ENGINE_VERSION = '20260819-quality-v5-dev9';
@@ -103,7 +104,7 @@ self.onmessage = async event => {
       return;
     }
     if (type === 'rectify') {
-      const json = await rectifyInBrowser(event.data.buffer, event.data.corners);
+      const json = await rectifyInBrowser(event.data.buffer, event.data.corners, id);
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
     }
   } catch (error) {
