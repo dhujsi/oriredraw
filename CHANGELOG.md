@@ -18,18 +18,27 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - A first-use derivation hint pointing out the optional CP underlay without enabling it by default.
 - `scripts/preview.py`, a one-command local preview helper that assembles the branch exactly like Pages, patches the shared engine version, disables browser caching, and opens the preview in the default browser.
 - Segment-ratio construction provenance. Ratios are taken on already-constructed finite line segments; `1/6` is represented as midpoint plus trisection of the half-segment rather than a primitive sixth-division rule.
-- A post-DAG isolated-line pass for reconstructed squares. It tests trisection / half-trisection parallel lines against the original raster before admitting them into the shadow candidate.
 - Variant-specific playback traces, so the v2 derivation can show its own selected provenance instead of replaying the strict route.
+- Quality-v5 diagnostics that separate low-quality reconstructed geometry from unresolved image evidence. Near-miss endpoints and duplicate parallel ridges quarantine the current geometry hypothesis without discarding the underlying observation.
+- Generic paper-corner symmetry candidates and integration of geometry-v2 reroot proofs into the global provenance beam.
+- Exported `.oriredraw` project files now include `app_version` separately from `format_version`.
 
 ### Changed
 - Large-coefficient algebraic construction is still available as a fallback, but coefficients above the guard threshold now incur an explicit magnitude-growing independent-parameter cost in addition to the algebraic complexity term.
 - Symmetry has no special preference or penalty; unnecessary symmetry loses naturally when it adds construction steps, while reusable symmetry can still win globally.
 - Required auxiliary construction rays are scored as part of the shadow DAG so beam search does not treat necessary parents as disposable overhead.
 - Alternative provenance is spatially gated near the legacy anchor and indexed by point buckets, limiting symmetry overuse and avoiding cubic target scans.
-- GitHub Pages now packages every Python module referenced by the Pyodide worker, including provenance-v4 and isolated-ratio inference modules.
+- GitHub Pages now packages every Python module referenced by the Pyodide worker, including provenance-v5 and quality-v5 modules.
 - Candidate-variant failures are isolated from both the strict reconstruction and the shadow diagnostic report.
 - Derivation playback now uses semantic line states instead of the old thick highlight overlay: current crease segments are blue (mountain dash-dot, valley dashed), completed crease segments remain red dashed, and all historical construction helpers remain grey dashed even after their last dependency has been built.
 - The CP underlay is now off by default and remains an explicit viewing aid rather than part of the derivation drawing.
+- Ratio-line recovery no longer assumes a square or divides the paper boundary. Any reconstructed finite segment may supply simple ratio points; candidate creases are admitted only when the original raster supports them.
+- cAMV is now treated as a strong structural prior with cause-aware handling: violations coincident with geometry misalignment are strongly attributed to reconstruction quality, while clean local violations remain repair/search targets rather than hard vetoes.
+- A provenance rewrite that leaves a quarantined ray at essentially the same coordinates no longer counts as a repair; the search is pushed toward materially different reference points.
+
+## [0.2.0-dev.9] - 2026-08-19
+
+- Introduced observation-vs-hypothesis quality handling. Duplicate/near-miss geometry can be quarantined while its raster evidence remains unresolved, cAMV is a strong but cause-aware structural prior, reroot and paper-corner-symmetry candidates compete globally, ratio-line recovery is segment-based with no square assumption, and exported projects record `app_version`.
 
 ## [0.2.0-dev.8] - 2026-08-19
 
