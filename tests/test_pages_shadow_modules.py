@@ -11,6 +11,7 @@ def test_pages_packages_every_shadow_worker_module():
         "shadow_evidence.py",
         "shadow_geometry.py",
         "shadow_geometry_v2.py",
+        "shadow_variant.py",
         "shadow_bridge.py",
     ]
     for name in required:
