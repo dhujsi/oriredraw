@@ -520,6 +520,44 @@
     context.stroke();
   }
 
+  function drawFormedSegments(segments, geometry, dpr, color, width) {
+    for (const segment of segments) {
+      strokeSegment(segment.start, segment.end, geometry, color, width * dpr);
+    }
+  }
+
+  function revealedFormedSegment(segment, clipped, progress) {
+    const delta = [
+      clipped.end[0] - clipped.start[0],
+      clipped.end[1] - clipped.start[1],
+    ];
+    const length = Math.hypot(delta[0], delta[1]);
+    if (length <= 1e-9) return null;
+    const unit = [delta[0] / length, delta[1] / length];
+    const project = point =>
+      (Number(point[0]) - clipped.anchor[0]) * unit[0]
+      + (Number(point[1]) - clipped.anchor[1]) * unit[1];
+    const rayStart = project(clipped.start) * progress;
+    const rayEnd = project(clipped.end) * progress;
+    const lowRay = Math.min(rayStart, rayEnd);
+    const highRay = Math.max(rayStart, rayEnd);
+    const first = project(segment.start);
+    const second = project(segment.end);
+    const low = Math.max(Math.min(first, second), lowRay);
+    const high = Math.min(Math.max(first, second), highRay);
+    if (high <= low + 1e-7) return null;
+    return {
+      start: [
+        clipped.anchor[0] + unit[0] * low,
+        clipped.anchor[1] + unit[1] * low,
+      ],
+      end: [
+        clipped.anchor[0] + unit[0] * high,
+        clipped.anchor[1] + unit[1] * high,
+      ],
+    };
+  }
+
   function drawHistoricalAnchor(anchor, currentGeneration, geometry, dpr) {
     const clipped = clippedEndpoints(anchor, geometry.size);
     if (!clipped) return;
@@ -546,21 +584,14 @@
         clipped.start,
         clipped.end,
         geometry,
-        '#b7b8b2',
-        1.0 * dpr,
+        '#c3c4bf',
+        .9 * dpr,
       );
+      drawFormedSegments(segments, geometry, dpr, '#9cb85d', 1.45);
       return;
     }
 
-    for (const segment of segments) {
-      strokeSegment(
-        segment.start,
-        segment.end,
-        geometry,
-        '#aaaca6',
-        1.05 * dpr,
-      );
-    }
+    drawFormedSegments(segments, geometry, dpr, '#8da849', 1.55);
   }
 
   function drawCurrentRay(anchor, progress, geometry, dpr) {
@@ -575,6 +606,17 @@
       clipped.anchor[1] + (clipped.end[1] - clipped.anchor[1]) * progress,
     ];
     strokeSegment(left, right, geometry, '#171714', 1.9 * dpr);
+    for (const segment of formedSegments(anchor)) {
+      const revealed = revealedFormedSegment(segment, clipped, progress);
+      if (!revealed) continue;
+      strokeSegment(
+        revealed.start,
+        revealed.end,
+        geometry,
+        '#79a400',
+        2.9 * dpr,
+      );
+    }
     const marker = pointToCanvas(clipped.anchor, geometry);
     context.fillStyle = '#8bb900';
     context.beginPath();
@@ -598,8 +640,8 @@
             segment.start,
             segment.end,
             geometry,
-            '#aaaca6',
-            1.05 * dpr,
+            '#8da849',
+            1.55 * dpr,
           );
         }
         continue;
@@ -616,7 +658,7 @@
           segment.start[0] + (segment.end[0] - segment.start[0]) * progress,
           segment.start[1] + (segment.end[1] - segment.start[1]) * progress,
         ];
-        strokeSegment(segment.start, target, geometry, '#8bb900', 2.2 * dpr);
+        strokeSegment(segment.start, target, geometry, '#79a400', 2.9 * dpr);
       }
       return;
     }
