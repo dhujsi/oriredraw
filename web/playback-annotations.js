@@ -8,28 +8,25 @@
   const range = panel?.querySelector('.oriredraw-playback-range');
   const toggle = panel?.querySelector('.oriredraw-playback-toggle');
   const options = panel?.querySelector('.oriredraw-playback-options');
-  if (!bridge || !panel || !stage || !baseCanvas || !range || !toggle || !options) return;
+  const underlayToggle = panel?.querySelector('.oriredraw-playback-underlay input');
+  if (!bridge || !panel || !stage || !baseCanvas || !range || !toggle || !options || !underlayToggle) return;
 
-  const STORAGE_COLOR = 'oriredraw-playback-highlight-color';
-  const DEFAULT_COLOR = '#e53935';
-  const WARNING_COLOR = '#ff9800';
+  const BLUE = '#2563eb';
+  const RED = '#d94a45';
+  const GREY = '#a9aaa6';
+  const WARNING = '#ff9800';
   const ANIMATION_MS = 430;
-
-  function validColor(value) {
-    return /^#[0-9a-f]{6}$/i.test(String(value || ''));
-  }
-
-  let highlightColor = localStorage.getItem(STORAGE_COLOR) || DEFAULT_COLOR;
-  if (!validColor(highlightColor)) highlightColor = DEFAULT_COLOR;
+  const HINT_KEY = 'oriredraw-playback-underlay-hint-v1';
+  const DASH = [7, 5];
+  const DASH_DOT = [8, 4, 1.5, 4];
+  const AUX_DASH = [5, 5];
 
   const style = document.createElement('style');
   style.textContent = `
     .oriredraw-playback-annotation-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
-    .oriredraw-playback-highlight-picker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #6f706a); font: 700 10px/1.3 ui-monospace, Consolas, monospace; user-select: none; }
-    .oriredraw-playback-highlight-picker input { width: 25px; height: 18px; padding: 0; border: 1px solid var(--line, #d7d5cc); background: transparent; cursor: pointer; }
-    .oriredraw-playback-highlight-picker input::-webkit-color-swatch-wrapper { padding: 1px; }
-    .oriredraw-playback-highlight-picker input::-webkit-color-swatch { border: 0; }
-    .oriredraw-playback-options { gap: 13px; flex-wrap: wrap; }
+    .oriredraw-playback-options { position: relative; gap: 9px; flex-wrap: wrap; align-items: center; }
+    .oriredraw-playback-underlay-hint { max-width: 245px; padding: 6px 8px; border: 1px solid var(--line, #d7d5cc); background: rgba(255,255,255,.97); color: var(--muted, #6f706a); box-shadow: 0 4px 16px rgba(0,0,0,.08); font: 600 10px/1.45 system-ui, sans-serif; }
+    .oriredraw-playback-underlay-hint[hidden] { display: none; }
   `;
   document.head.append(style);
 
@@ -39,24 +36,29 @@
   const context = overlay.getContext('2d');
   if (!context) return;
 
-  const pickerLabel = document.createElement('label');
-  pickerLabel.className = 'oriredraw-playback-highlight-picker';
-  const pickerText = document.createElement('span');
-  const picker = document.createElement('input');
-  picker.type = 'color';
-  picker.value = highlightColor;
-  picker.setAttribute('aria-label', '最终 CP 高亮颜色');
-  pickerLabel.append(pickerText, picker);
-  options.prepend(pickerLabel);
+  const hint = document.createElement('div');
+  hint.className = 'oriredraw-playback-underlay-hint';
+  hint.hidden = true;
+  options.prepend(hint);
+
+  // CP reference is deliberately opt-in. The base playback owns the checkbox
+  // state, so update it through the existing change handler rather than a
+  // second private preference.
+  underlayToggle.checked = false;
+  underlayToggle.dispatchEvent(new Event('change', { bubbles: true }));
 
   function isEnglish() {
     return document.documentElement.lang.toLowerCase().startsWith('en');
   }
 
+  function hintCopy() {
+    return isEnglish()
+      ? 'Tip: turn on “CP reference” here if you want the final CP faintly underneath the derivation.'
+      : '提示：需要时可在这里打开「重构 CP 底图」，把最终 CP 淡淡垫在推导下面。';
+  }
+
   function updateLanguage() {
-    const english = isEnglish();
-    pickerText.textContent = english ? 'CP highlight' : '最终 CP 高亮';
-    picker.setAttribute('aria-label', english ? 'Final CP highlight color' : '最终 CP 高亮颜色');
+    hint.textContent = hintCopy();
   }
 
   new MutationObserver(updateLanguage).observe(document.documentElement, {
@@ -65,11 +67,31 @@
   });
   updateLanguage();
 
-  picker.addEventListener('input', () => {
-    if (!validColor(picker.value)) return;
-    highlightColor = picker.value;
-    localStorage.setItem(STORAGE_COLOR, highlightColor);
+  let hintTimer = null;
+  function dismissHint() {
+    if (hint.hidden) return;
+    hint.hidden = true;
+    if (hintTimer) window.clearTimeout(hintTimer);
+    hintTimer = null;
+    try { localStorage.setItem(HINT_KEY, '1'); } catch (_) { /* storage can be blocked */ }
+  }
+
+  function maybeShowHint() {
+    try {
+      if (localStorage.getItem(HINT_KEY)) return;
+    } catch (_) { /* still show the one-time hint for this session */ }
+    hint.textContent = hintCopy();
+    hint.hidden = false;
+    if (hintTimer) window.clearTimeout(hintTimer);
+    hintTimer = window.setTimeout(dismissHint, 7000);
+  }
+
+  document.addEventListener('click', event => {
+    const button = event.target.closest?.('.view-tabs button[data-view="playback"]');
+    if (button) queueMicrotask(maybeShowHint);
   });
+  underlayToggle.addEventListener('change', dismissHint);
+  hint.addEventListener('click', dismissHint);
 
   function activeVersion(root) {
     if (!root) return null;
@@ -82,6 +104,7 @@
 
   function isValidAnchor(anchor) {
     return Number.isFinite(Number(anchor?.angle))
+      && Number.isFinite(Number(anchor?.line_offset_px))
       && Array.isArray(anchor?.anchor_point_px)
       && anchor.anchor_point_px.length >= 2
       && Number.isFinite(Number(anchor.anchor_point_px[0]))
@@ -119,25 +142,10 @@
         && Array.isArray(end) && end.length >= 2
         && [...start.slice(0, 2), ...end.slice(0, 2)].every(value => Number.isFinite(Number(value)))
       ) {
-        values.push({ start: start.slice(0, 2).map(Number), end: end.slice(0, 2).map(Number) });
+        values.push({ start: start.slice(0, 2).map(Number), end: end.slice(0, 2).map(Number), foldType: 0 });
       }
     }
     return values;
-  }
-
-  function buildGroups(root, version) {
-    const byGeneration = new Map();
-    for (const anchor of traceAnchors(root)) {
-      const generation = Number(anchor.generation);
-      if (!byGeneration.has(generation)) byGeneration.set(generation, []);
-      byGeneration.get(generation).push(anchor);
-    }
-    const groups = [...byGeneration.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([generation, lines]) => ({ kind: 'rays', generation, lines }));
-    const additions = variantSegments(version);
-    if (additions.length) groups.push({ kind: 'segments', segments: additions });
-    return groups;
   }
 
   function analysisSize(root) {
@@ -150,6 +158,78 @@
         Number(anchor.anchor_point_px?.[1]) || 0,
       ]),
     );
+  }
+
+  function cpToPixel(value, size) {
+    return (Number(value) + 200) * size / 400;
+  }
+
+  function parseCp(version, root, size) {
+    const cp = String(version?.cp || root?.cp || '');
+    const rows = [];
+    for (const raw of cp.split(/\r?\n/)) {
+      const parts = raw.trim().split(/\s+/);
+      if (parts.length !== 5) continue;
+      const type = Number(parts[0]);
+      const values = parts.slice(1).map(Number);
+      if (![type, ...values].every(Number.isFinite) || type === 1) continue;
+      rows.push({
+        type,
+        start: [cpToPixel(values[0], size), cpToPixel(values[1], size)],
+        end: [cpToPixel(values[2], size), cpToPixel(values[3], size)],
+      });
+    }
+    return rows;
+  }
+
+  function pointSegmentDistance(point, segment) {
+    const ax = Number(segment.start[0]);
+    const ay = Number(segment.start[1]);
+    const bx = Number(segment.end[0]);
+    const by = Number(segment.end[1]);
+    const px = Number(point[0]);
+    const py = Number(point[1]);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared <= 1e-12) return Math.hypot(px - ax, py - ay);
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+
+  function foldTypeForSegment(segment, cpRows) {
+    let best = null;
+    for (const row of cpRows) {
+      const error = Math.max(
+        pointSegmentDistance(segment.start, row),
+        pointSegmentDistance(segment.end, row),
+      );
+      if (error <= 0.85 && (best === null || error < best.error)) {
+        best = { type: row.type, error };
+      }
+    }
+    return best?.type || 0;
+  }
+
+  function buildGroups(root, version) {
+    const size = analysisSize(root);
+    const cpRows = parseCp(version, root, size);
+    const byGeneration = new Map();
+    for (const anchor of traceAnchors(root)) {
+      const generation = Number(anchor.generation);
+      if (!byGeneration.has(generation)) byGeneration.set(generation, []);
+      const segments = formedSegments(anchor).map(segment => ({
+        ...segment,
+        foldType: foldTypeForSegment(segment, cpRows),
+      }));
+      byGeneration.get(generation).push({ anchor, segments });
+    }
+    const groups = [...byGeneration.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([generation, lines]) => ({ kind: 'rays', generation, lines }));
+    const additions = variantSegments(version);
+    if (additions.length) groups.push({ kind: 'segments', segments: additions });
+    return groups;
   }
 
   function resizeOverlay() {
@@ -178,16 +258,19 @@
     ];
   }
 
-  function strokeSegment(start, end, geo, color, width) {
+  function strokeSegment(start, end, geo, color, width, dash = []) {
     const first = pointToCanvas(start, geo);
     const second = pointToCanvas(end, geo);
+    context.save();
     context.strokeStyle = color;
     context.lineWidth = width * geo.dpr;
     context.lineCap = 'round';
+    context.setLineDash(dash.map(value => value * geo.dpr));
     context.beginPath();
     context.moveTo(first[0], first[1]);
     context.lineTo(second[0], second[1]);
     context.stroke();
+    context.restore();
   }
 
   function clippedEndpoints(anchor, size) {
@@ -236,22 +319,96 @@
     };
   }
 
+  function drawAnimatedRay(anchor, progress, geo, color, width, dash) {
+    const clipped = clippedEndpoints(anchor, geo.size);
+    if (!clipped) return;
+    const left = [
+      clipped.anchor[0] + (clipped.start[0] - clipped.anchor[0]) * progress,
+      clipped.anchor[1] + (clipped.start[1] - clipped.anchor[1]) * progress,
+    ];
+    const right = [
+      clipped.anchor[0] + (clipped.end[0] - clipped.anchor[0]) * progress,
+      clipped.anchor[1] + (clipped.end[1] - clipped.anchor[1]) * progress,
+    ];
+    strokeSegment(left, right, geo, color, width, dash);
+  }
+
+  function currentDash(foldType) {
+    return foldType === 2 ? DASH_DOT : DASH;
+  }
+
+  function drawHistoricalLine(item, currentGeneration, geo) {
+    const { anchor, segments } = item;
+    const direct = segments.length > 0 || anchor.forms_output === true;
+    if (direct) {
+      if (segments.length) {
+        for (const segment of segments) {
+          strokeSegment(segment.start, segment.end, geo, RED, 1.35, DASH);
+        }
+      } else {
+        const clipped = clippedEndpoints(anchor, geo.size);
+        if (clipped) strokeSegment(clipped.start, clipped.end, geo, RED, 1.35, DASH);
+      }
+      return;
+    }
+
+    const generation = Number(anchor.generation);
+    const rawLastUse = Number(anchor.last_used_generation);
+    const lastUse = Number.isFinite(rawLastUse) ? rawLastUse : generation;
+    if (currentGeneration > lastUse) return;
+    const clipped = clippedEndpoints(anchor, geo.size);
+    if (clipped) strokeSegment(clipped.start, clipped.end, geo, GREY, 1.0, AUX_DASH);
+  }
+
+  function drawCurrentLine(item, progress, geo) {
+    const { anchor, segments } = item;
+    const direct = segments.length > 0 || anchor.forms_output === true;
+    if (!direct || !segments.length) {
+      drawAnimatedRay(anchor, progress, geo, BLUE, 1.55, DASH);
+      return;
+    }
+
+    const clipped = clippedEndpoints(anchor, geo.size);
+    if (!clipped) return;
+    for (const segment of segments) {
+      const revealed = revealedFormedSegment(segment, clipped, progress);
+      if (!revealed) continue;
+      strokeSegment(revealed.start, revealed.end, geo, BLUE, 1.65, currentDash(segment.foldType));
+    }
+  }
+
+  function drawHistorical(groups, step, geo) {
+    const current = groups[step] || null;
+    const currentGeneration = current?.kind === 'rays' ? Number(current.generation) : Infinity;
+    for (let index = 0; index < step && index < groups.length; index += 1) {
+      const group = groups[index];
+      if (group.kind === 'segments') {
+        for (const segment of group.segments) {
+          strokeSegment(segment.start, segment.end, geo, RED, 1.35, DASH);
+        }
+      } else {
+        for (const item of group.lines) drawHistoricalLine(item, currentGeneration, geo);
+      }
+    }
+  }
+
+  function drawCurrent(group, progress, geo) {
+    if (!group) return;
+    if (group.kind === 'segments') {
+      for (const segment of group.segments) {
+        const target = [
+          segment.start[0] + (segment.end[0] - segment.start[0]) * progress,
+          segment.start[1] + (segment.end[1] - segment.start[1]) * progress,
+        ];
+        strokeSegment(segment.start, target, geo, BLUE, 1.65, DASH);
+      }
+      return;
+    }
+    for (const item of group.lines) drawCurrentLine(item, progress, geo);
+  }
+
   function pointOnSegment(point, segment, tolerance = 0.5) {
-    const ax = Number(segment.start[0]);
-    const ay = Number(segment.start[1]);
-    const bx = Number(segment.end[0]);
-    const by = Number(segment.end[1]);
-    const px = Number(point[0]);
-    const py = Number(point[1]);
-    const dx = bx - ax;
-    const dy = by - ay;
-    const lengthSquared = dx * dx + dy * dy;
-    if (lengthSquared <= 1e-12) return Math.hypot(px - ax, py - ay) <= tolerance;
-    const t = ((px - ax) * dx + (py - ay) * dy) / lengthSquared;
-    if (t < -1e-5 || t > 1.00001) return false;
-    const qx = ax + Math.max(0, Math.min(1, t)) * dx;
-    const qy = ay + Math.max(0, Math.min(1, t)) * dy;
-    return Math.hypot(px - qx, py - qy) <= tolerance;
+    return pointSegmentDistance(point, segment) <= tolerance;
   }
 
   function rayProgressToPoint(anchor, point, size) {
@@ -298,9 +455,9 @@
     groups.forEach((group, index) => {
       const thresholds = [];
       if (group.kind === 'rays') {
-        for (const anchor of group.lines) {
-          if (!formedSegments(anchor).some(segment => pointOnSegment(violation.point, segment))) continue;
-          thresholds.push(rayProgressToPoint(anchor, violation.point, size));
+        for (const item of group.lines) {
+          if (!item.segments.some(segment => pointOnSegment(violation.point, segment))) continue;
+          thresholds.push(rayProgressToPoint(item.anchor, violation.point, size));
         }
       } else {
         for (const segment of group.segments) {
@@ -318,10 +475,67 @@
     return { ...violation, appearanceIndex, threshold };
   }
 
+  function drawCamvMarker(marker, step, progress, geo) {
+    if (step < marker.appearanceIndex) return;
+    if (step === marker.appearanceIndex && progress + 1e-6 < marker.threshold) return;
+
+    const [x, y] = pointToCanvas(marker.point, geo);
+    const appearing = step === marker.appearanceIndex;
+    const radius = (appearing ? 8.5 : 5.0) * geo.dpr;
+    context.save();
+    context.fillStyle = 'rgba(255,255,255,.92)';
+    context.strokeStyle = WARNING;
+    context.lineWidth = (appearing ? 2.3 : 1.6) * geo.dpr;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#6a3b00';
+    context.font = `700 ${Math.max(7, 7 * geo.dpr)}px ui-monospace, Consolas, monospace`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('!', x, y + .2 * geo.dpr);
+    if (appearing) {
+      const label = 'cAMV';
+      context.font = `700 ${Math.max(8, 8 * geo.dpr)}px ui-monospace, Consolas, monospace`;
+      context.textAlign = 'left';
+      const metrics = context.measureText(label);
+      const padding = 3 * geo.dpr;
+      const labelWidth = metrics.width + padding * 2;
+      const labelHeight = 13 * geo.dpr;
+      let labelX = x + 11 * geo.dpr;
+      if (labelX + labelWidth > overlay.width - geo.margin) labelX = x - 11 * geo.dpr - labelWidth;
+      const labelY = Math.max(geo.margin, Math.min(overlay.height - geo.margin - labelHeight, y - labelHeight / 2));
+      context.fillStyle = 'rgba(255,255,255,.96)';
+      context.strokeStyle = WARNING;
+      context.lineWidth = geo.dpr;
+      context.fillRect(labelX, labelY, labelWidth, labelHeight);
+      context.strokeRect(labelX, labelY, labelWidth, labelHeight);
+      context.fillStyle = '#6a3b00';
+      context.textBaseline = 'middle';
+      context.fillText(label, labelX + padding, labelY + labelHeight / 2 + .2 * geo.dpr);
+    }
+    context.restore();
+  }
+
   let cacheRoot = null;
   let cacheVersion = null;
   let cacheGroups = [];
   let cacheMarkers = [];
+  let finalImage = null;
+  let finalImageUri = '';
+
+  function ensureFinalImage(root, version) {
+    const uri = version?.reconstruction_data_uri || root?.reconstruction_data_uri || '';
+    if (!uri || uri === finalImageUri) return;
+    finalImageUri = uri;
+    finalImage = null;
+    const image = new Image();
+    image.onload = () => {
+      if (finalImageUri === uri) finalImage = image;
+    };
+    image.src = uri;
+  }
 
   function playbackModel() {
     const root = bridge.result;
@@ -335,94 +549,34 @@
       cacheMarkers = camvViolations(version)
         .map(violation => markerSchedule(cacheGroups, violation, size))
         .filter(Boolean);
+      ensureFinalImage(root, version);
     }
     return { root, version, groups: cacheGroups, markers: cacheMarkers };
   }
 
-  function drawHistoricalHighlights(groups, step, geo) {
-    for (let index = 0; index < step && index < groups.length; index += 1) {
-      const group = groups[index];
-      if (group.kind === 'rays') {
-        for (const anchor of group.lines) {
-          for (const segment of formedSegments(anchor)) {
-            strokeSegment(segment.start, segment.end, geo, highlightColor, 2.05);
-          }
-        }
-      } else {
-        for (const segment of group.segments) {
-          strokeSegment(segment.start, segment.end, geo, highlightColor, 2.05);
-        }
-      }
+  function setupOverlay(root) {
+    const geo = geometry(root);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, overlay.width, overlay.height);
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, overlay.width, overlay.height);
+
+    if (underlayToggle.checked && finalImage) {
+      context.save();
+      context.globalAlpha = 0.12;
+      context.drawImage(finalImage, geo.margin, geo.margin, geo.inner, geo.inner);
+      context.restore();
     }
-  }
 
-  function drawCurrentHighlight(group, progress, geo) {
-    if (!group) return;
-    if (group.kind === 'segments') {
-      for (const segment of group.segments) {
-        const target = [
-          segment.start[0] + (segment.end[0] - segment.start[0]) * progress,
-          segment.start[1] + (segment.end[1] - segment.start[1]) * progress,
-        ];
-        strokeSegment(segment.start, target, geo, highlightColor, 3.55);
-      }
-      return;
-    }
-    for (const anchor of group.lines) {
-      const clipped = clippedEndpoints(anchor, geo.size);
-      if (!clipped) continue;
-      for (const segment of formedSegments(anchor)) {
-        const revealed = revealedFormedSegment(segment, clipped, progress);
-        if (revealed) strokeSegment(revealed.start, revealed.end, geo, highlightColor, 3.55);
-      }
-    }
-  }
-
-  function drawCamvMarker(marker, step, progress, geo) {
-    if (step < marker.appearanceIndex) return;
-    if (step === marker.appearanceIndex && progress + 1e-6 < marker.threshold) return;
-
-    const [x, y] = pointToCanvas(marker.point, geo);
-    const appearing = step === marker.appearanceIndex;
-    const radius = (appearing ? 8.5 : 5.0) * geo.dpr;
-
-    context.save();
-    context.fillStyle = 'rgba(255,255,255,.92)';
-    context.strokeStyle = WARNING_COLOR;
-    context.lineWidth = (appearing ? 2.3 : 1.6) * geo.dpr;
-    context.beginPath();
-    context.arc(x, y, radius, 0, Math.PI * 2);
-    context.fill();
-    context.stroke();
-
-    context.fillStyle = '#6a3b00';
-    context.font = `700 ${Math.max(7, 7 * geo.dpr)}px ui-monospace, Consolas, monospace`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText('!', x, y + .2 * geo.dpr);
-
-    if (appearing) {
-      const label = 'cAMV';
-      context.font = `700 ${Math.max(8, 8 * geo.dpr)}px ui-monospace, Consolas, monospace`;
-      context.textAlign = 'left';
-      context.textBaseline = 'middle';
-      const metrics = context.measureText(label);
-      const padding = 3 * geo.dpr;
-      const labelWidth = metrics.width + padding * 2;
-      const labelHeight = 13 * geo.dpr;
-      let labelX = x + 11 * geo.dpr;
-      if (labelX + labelWidth > overlay.width - geo.margin) labelX = x - 11 * geo.dpr - labelWidth;
-      let labelY = y - labelHeight / 2;
-      labelY = Math.max(geo.margin, Math.min(overlay.height - geo.margin - labelHeight, labelY));
-      context.fillStyle = 'rgba(255,255,255,.96)';
-      context.strokeStyle = WARNING_COLOR;
-      context.lineWidth = geo.dpr;
-      context.fillRect(labelX, labelY, labelWidth, labelHeight);
-      context.strokeRect(labelX, labelY, labelWidth, labelHeight);
-      context.fillStyle = '#6a3b00';
-      context.fillText(label, labelX + padding, labelY + labelHeight / 2 + .2 * geo.dpr);
-    }
-    context.restore();
+    context.strokeStyle = '#171714';
+    context.lineWidth = Math.max(1, geo.dpr);
+    context.strokeRect(
+      geo.margin + .5,
+      geo.margin + .5,
+      overlay.width - geo.margin * 2 - 1,
+      overlay.height - geo.margin * 2 - 1,
+    );
+    return geo;
   }
 
   let lastStep = Number(range.value || 0);
@@ -458,14 +612,14 @@
       const progress = playing
         ? Math.max(0, Math.min(1, (now - transitionStarted) / ANIMATION_MS))
         : 1;
-      const geo = geometry(model.root);
 
+      // At the final step the overlay becomes transparent so the original
+      // final-result renderer remains the source of truth.
       if (step < model.groups.length) {
-        drawHistoricalHighlights(model.groups, step, geo);
-        drawCurrentHighlight(model.groups[step], progress, geo);
-      }
-      for (const marker of model.markers) {
-        drawCamvMarker(marker, step, progress, geo);
+        const geo = setupOverlay(model.root);
+        drawHistorical(model.groups, step, geo);
+        drawCurrent(model.groups[step], progress, geo);
+        for (const marker of model.markers) drawCamvMarker(marker, step, progress, geo);
       }
     }
 
