@@ -10,7 +10,7 @@ from quality_v5 import build_quality_report_v5
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from shadow_variant import refine_trace_offsets_from_cp
-from shadow_variant_v4 import build_shadow_candidate_variant_v4
+from shadow_variant_v5 import build_shadow_candidate_variant_v5
 from web_bridge import reconstruct_for_web, rectify_for_web_json
 
 
@@ -55,7 +55,7 @@ def reconstruct_for_web_shadow_json(
     else:
         if settings_mapping.get("construction_variants", True):
             try:
-                variant = build_shadow_candidate_variant_v4(
+                variant = build_shadow_candidate_variant_v5(
                     image_bytes,
                     settings_mapping,
                     payload,
