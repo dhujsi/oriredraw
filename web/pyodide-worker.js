@@ -11,13 +11,15 @@ const SOURCE_FILES = [
   'shadow_variant.py',
   'provenance_v3.py',
   'provenance_v4.py',
+  'provenance_v5.py',
+  'quality_v5.py',
   'selected_geometry_v4.py',
   'shadow_variant_v3.py',
   'isolated_ratio.py',
   'shadow_variant_v4.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260819-shadow-geometry-dev8-segment-ratio';
+const WEB_ENGINE_VERSION = '20260819-quality-v5-dev9';
 
 let pyodide;
 let readyPromise;
