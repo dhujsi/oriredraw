@@ -6,8 +6,13 @@ from typing import Any, Mapping
 import numpy as np
 
 from isolated_ratio import infer_isolated_square_ratio_segments
-from shadow_variant import _node_key, _parse_cp, _to_cp
-from shadow_variant_v3 import build_candidate_cp_v3
+from selected_geometry_v4 import resolve_selected_geometry_v4
+import shadow_variant as legacy_variant
+from shadow_variant_v3 import _build_playback_trace
+
+
+def _trace_id(anchor: Mapping[str, Any], fallback: int) -> int:
+    return legacy_variant._trace_id(anchor, fallback)
 
 
 def _cross(a: np.ndarray, b: np.ndarray) -> float:
@@ -80,8 +85,91 @@ def _split_segments(segments, additions):
 def _segments_from_cp(cp_text: str, maximum: float):
     return [
         (int(row["line_type"]), row["start"].copy(), row["end"].copy())
-        for row in _parse_cp(cp_text, maximum)
+        for row in legacy_variant._parse_cp(cp_text, maximum)
     ]
+
+
+def _changed_rays(anchors, offsets) -> set[int]:
+    changed = set()
+    for trace_id, anchor in anchors.items():
+        if trace_id not in offsets or anchor.get("line_offset_px") is None:
+            continue
+        if abs(float(offsets[trace_id]) - float(anchor["line_offset_px"])) > 1e-5:
+            changed.add(trace_id)
+    return changed
+
+
+def _rebuild_core_from_selected_geometry(
+    result: Mapping[str, Any],
+    report: Mapping[str, Any],
+    maximum: float,
+):
+    trace = [item for item in list(result.get("playback_trace") or []) if isinstance(item, Mapping)]
+    anchors = {_trace_id(anchor, index): anchor for index, anchor in enumerate(trace)}
+    offsets, points, unresolved = resolve_selected_geometry_v4(result, report)
+    changed = _changed_rays(anchors, offsets)
+    alternatives = [
+        item for item in list(report.get("selected_alternatives") or [])
+        if isinstance(item, Mapping)
+    ]
+    if not alternatives or unresolved or not changed:
+        return None, offsets, points, unresolved, changed
+
+    rows = legacy_variant._parse_cp(result.get("cp", ""), maximum)
+    unmatched = legacy_variant._match_rays(rows, anchors)
+    internal_count = sum(row["line_type"] != 1 for row in rows)
+    if unmatched or internal_count == 0:
+        return None, offsets, points, unresolved, changed
+
+    nodes, topology_residual, changed_nodes = legacy_variant._rebuild_nodes(
+        rows, anchors, offsets, maximum
+    )
+    if topology_residual > 0.05:
+        return None, offsets, points, unresolved, changed
+
+    internal = []
+    seen = set()
+    dropped = 0
+    for row in rows:
+        if row["line_type"] == 1:
+            continue
+        start = nodes[legacy_variant._node_key(row["start"])]
+        end = nodes[legacy_variant._node_key(row["end"])]
+        if float(np.linalg.norm(end - start)) <= 0.05:
+            dropped += 1
+            continue
+        first = (round(float(start[0]), 7), round(float(start[1]), 7))
+        second = (round(float(end[0]), 7), round(float(end[1]), 7))
+        key = (int(row["line_type"]),) + tuple(sorted((first, second)))
+        if key in seen:
+            continue
+        seen.add(key)
+        internal.append((int(row["line_type"]), start.copy(), end.copy()))
+    if dropped > max(4, math.ceil(internal_count * 0.12)):
+        return None, offsets, points, unresolved, changed
+
+    boundaries = legacy_variant._boundaries(internal, maximum)
+    segments = internal + boundaries
+    cp_text = legacy_variant._to_cp(segments, maximum)
+    playback_trace = _build_playback_trace(result, report, cp_text, maximum, offsets)
+    for index, anchor in enumerate(playback_trace):
+        trace_id = _trace_id(anchor, index)
+        if trace_id in points:
+            anchor["anchor_point_px"] = [
+                float(points[trace_id][0]),
+                float(points[trace_id][1]),
+            ]
+        if trace_id in offsets:
+            anchor["line_offset_px"] = float(offsets[trace_id])
+
+    return {
+        "cp": cp_text,
+        "segments": segments,
+        "playback_trace": playback_trace,
+        "changed_nodes": int(changed_nodes),
+        "topology_residual": float(topology_residual),
+        "dropped": int(dropped),
+    }, offsets, points, unresolved, changed
 
 
 def _synthetic_trace(playback_trace, isolated):
@@ -138,24 +226,25 @@ def build_candidate_cp_v4(
     if maximum <= 0:
         return None
 
-    base = build_candidate_cp_v3(result, report)
-    if base is None:
+    core, offsets, _, unresolved, changed = _rebuild_core_from_selected_geometry(
+        result, report, maximum
+    )
+    if core is None:
         cp_text = str(result.get("cp") or "")
         segments = _segments_from_cp(cp_text, maximum)
-        info = {
-            "changed_rays": 0,
-            "changed_output_rays": 0,
-            "changed_nodes": 0,
-            "dropped_collapsed_segments": 0,
-            "topology_max_residual_px": 0.0,
-            "internal_segments": sum(line_type != 1 for line_type, _, _ in segments),
-            "boundary_segments": sum(line_type == 1 for line_type, _, _ in segments),
-            "alternatives": list(report.get("selected_alternatives") or []),
-            "selected_operations": list(report.get("selected_operations") or []),
-            "playback_trace": list(result.get("playback_trace") or []),
-        }
+        playback_trace = list(result.get("playback_trace") or [])
+        changed_nodes = 0
+        topology_residual = 0.0
+        dropped = 0
+        core_changed = False
     else:
-        cp_text, info, segments = base
+        cp_text = core["cp"]
+        segments = core["segments"]
+        playback_trace = core["playback_trace"]
+        changed_nodes = core["changed_nodes"]
+        topology_residual = core["topology_residual"]
+        dropped = core["dropped"]
+        core_changed = True
 
     isolated = infer_isolated_square_ratio_segments(
         image_bytes,
@@ -163,25 +252,28 @@ def build_candidate_cp_v4(
         result,
         cp_text,
     )
-    if not isolated and base is None:
+    if not isolated and not core_changed:
         return None
 
     if isolated:
         segments = _split_segments(segments, isolated)
-        cp_text = _to_cp(segments, maximum)
-    playback_trace = _synthetic_trace(info.get("playback_trace") or result.get("playback_trace") or [], isolated)
+        cp_text = legacy_variant._to_cp(segments, maximum)
+    playback_trace = _synthetic_trace(playback_trace, isolated)
 
-    info = dict(info)
-    info.update(
-        {
-            "isolated_ratio_segments": isolated,
-            "isolated_ratio_segment_count": len(isolated),
-            "isolated_ratio_unknown_mv_count": sum(int(item["line_type"]) not in {2, 3} for item in isolated),
-            "playback_trace": playback_trace,
-            "internal_segments": sum(line_type != 1 for line_type, _, _ in segments),
-            "boundary_segments": sum(line_type == 1 for line_type, _, _ in segments),
-        }
-    )
+    info = {
+        "changed_rays": len(changed) if core_changed else 0,
+        "changed_nodes": int(changed_nodes),
+        "unresolved_selected_geometry": list(unresolved),
+        "dropped_collapsed_segments": int(dropped),
+        "topology_max_residual_px": float(topology_residual),
+        "isolated_ratio_segments": isolated,
+        "isolated_ratio_segment_count": len(isolated),
+        "isolated_ratio_unknown_mv_count": sum(int(item["line_type"]) not in {2, 3} for item in isolated),
+        "playback_trace": playback_trace,
+        "internal_segments": sum(line_type != 1 for line_type, _, _ in segments),
+        "boundary_segments": sum(line_type == 1 for line_type, _, _ in segments),
+        "alternatives": list(report.get("selected_alternatives") or []),
+    }
     return cp_text, info, segments
 
 
@@ -203,9 +295,7 @@ def _construction_rows(info: Mapping[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "label": "孤立线段等分取线",
-                "expression": (
-                    f"ratio={item['ratio']} · {item['derivation']} · evidence={item['evidence_score']:.3f}"
-                ),
+                "expression": f"ratio={item['ratio']} · {item['derivation']} · evidence={item['evidence_score']:.3f}",
                 "support": float(item.get("evidence_score", 0.0) or 0.0),
             }
         )
@@ -260,8 +350,8 @@ def build_shadow_candidate_variant_v4(
             "camv_structure_violation_count": structure["violation_count"],
             "camv_structure": structure,
             "camv_full": full,
-            "shadow_candidate_changed_rays": int(info.get("changed_rays", 0)),
-            "shadow_candidate_changed_nodes": int(info.get("changed_nodes", 0)),
+            "shadow_candidate_changed_rays": info["changed_rays"],
+            "shadow_candidate_changed_nodes": info["changed_nodes"],
             "shadow_candidate_isolated_ratio_segments": info["isolated_ratio_segment_count"],
             "shadow_candidate_isolated_unknown_mv": info["isolated_ratio_unknown_mv_count"],
             "shadow_candidate_provenance_mode": "global_v4_segment_ratios",
@@ -269,6 +359,7 @@ def build_shadow_candidate_variant_v4(
     )
     warnings = [
         "这是 construction-search v2 的全局构造影子候选；strict 仍是默认输出。",
+        "选中的 provenance 会重新传播到后续交点/纸边交点，不再冻结旧 trace 的后代 offset。",
         "线段等分只作用于已构造线段/正方形局部，不再把纸边当成三等分对象。",
     ]
     if info["isolated_ratio_segment_count"]:
