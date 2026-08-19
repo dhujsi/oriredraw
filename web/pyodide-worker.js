@@ -7,9 +7,10 @@ const SOURCE_FILES = [
   'shadow_search.py',
   'shadow_evidence.py',
   'shadow_geometry.py',
+  'shadow_geometry_v2.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260819-shadow-geometry-dev4';
+const WEB_ENGINE_VERSION = '20260819-shadow-geometry-dev4-reroot';
 
 let pyodide;
 let readyPromise;
