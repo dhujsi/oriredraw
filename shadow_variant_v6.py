@@ -289,13 +289,16 @@ def _build_coreless_candidate(
     if maximum <= 0:
         return None
 
+    unexplained_count = int(coreless_report.get("unexplained_observations", 999) or 0)
+    unresolved_budget = int(coreless_report.get("unresolved_budget", 0) or 0)
+    if unresolved_budget <= 0 or unexplained_count > unresolved_budget:
+        return None
+
     segments, anchors, offsets, points, unresolved, unmatched = _prepare_shifted_segments(
         result,
         coreless_report,
         maximum,
     )
-    if int(coreless_report.get("unexplained_observations", 99) or 99) > 2:
-        return None
 
     split_nodes = _free_old_nodes(segments, maximum)
     internal = _internal_tuples(segments)
@@ -401,6 +404,8 @@ def _build_coreless_candidate(
             "shadow_candidate_coreless_root": int(coreless_report.get("coreless_root_trace_id", -1)),
             "shadow_candidate_coreless_reference_rays": int(coreless_report.get("coreless_reference_ray_count", 0) or 0),
             "shadow_candidate_free_topology_split_nodes": int(split_nodes),
+            "shadow_candidate_unresolved_observations": unexplained_count,
+            "shadow_candidate_unresolved_budget": unresolved_budget,
             "shadow_candidate_unresolved_geometry": len(unresolved),
             "shadow_candidate_unmatched_cp_rows": int(unmatched),
             "shadow_candidate_isolated_ratio_segments": len(isolated),
@@ -411,6 +416,10 @@ def _build_coreless_candidate(
         "该候选不会把旧核心节点做最小二乘强制共点；旧高阶节点允许拆成多个附近交点或保持待解端点。",
         "cAMV 仍作为强结构先验参与质量比较，但不是绝对硬门槛。",
     ]
+    if unexplained_count:
+        warnings.append(
+            f"去核心分支仍有 {unexplained_count} 条图像 observation 未解释（预算 {unresolved_budget}）；作为不完整备选保留，而不是静默隐藏。"
+        )
     if isolated:
         warnings.append(f"另外由有限线段比例点 + 原图证据补出 {len(isolated)} 条候选线。")
     if unresolved:
@@ -487,4 +496,4 @@ def build_shadow_candidate_variant_v6(
     return variant
 
 
-__all__ = ["build_shadow_candidate_variant_v6"]
+__all__ = ["build_shadow_candidate_variant_v6", "_free_old_nodes"]
