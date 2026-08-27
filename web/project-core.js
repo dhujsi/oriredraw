@@ -20,6 +20,8 @@
     .oriredraw-project-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
     .oriredraw-project-actions button { min-height: 42px; padding: 0 12px; border: 1px solid var(--ink, #171714); background: #fff; color: var(--ink, #171714); cursor: pointer; font-size: 11px; font-weight: 700; }
     .oriredraw-project-actions button:hover { background: #f5f5ef; }
+    .oriredraw-project-actions button:disabled { cursor: not-allowed; opacity: .42; }
+    .oriredraw-project-actions button:disabled:hover { background: #fff; }
     .oriredraw-project-actions #download { background: var(--acid, #c7ff2f); padding-inline: 18px; }
     .oriredraw-project-actions #download:hover { background: #aff400; }
     .oriredraw-project-dialog { width: min(620px, calc(100% - 28px)); max-height: min(78vh, 720px); padding: 0; border: 1px solid var(--ink, #171714); background: var(--panel, #fbfaf6); color: var(--ink, #171714); box-shadow: 8px 8px 0 rgba(23, 23, 20, .22); }
@@ -74,6 +76,17 @@
   exportButton.type = 'button';
   actions.append(saveButton, exportButton, downloadButton);
   resultHead.append(actions);
+
+  function setOutputReady(ready) {
+    const outputReady = Boolean(ready);
+    saveButton.disabled = !outputReady;
+    exportButton.disabled = !outputReady;
+    downloadButton.disabled = !outputReady;
+  }
+  setOutputReady(false);
+  document.addEventListener('oriredraw:result-state', event => {
+    setOutputReady(event.detail?.outputReady);
+  });
 
   const dialog = document.createElement('dialog');
   dialog.className = 'oriredraw-project-dialog';

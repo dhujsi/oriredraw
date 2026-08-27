@@ -109,6 +109,7 @@ def _beam_search_continue(
     weights: SearchWeights,
     beam_width: int,
     max_rounds: int,
+    initial_state: SearchState | None = None,
 ) -> SearchState:
     """Beam search that does not stop at the first complete legacy route.
 
@@ -118,7 +119,7 @@ def _beam_search_continue(
     cost than a magic independent seed.
     """
 
-    initial = SearchState(known_nodes=frozenset())
+    initial = initial_state or SearchState(known_nodes=frozenset())
     beam = [initial]
     best = initial
     best_score = score_state(best, observations, weights)

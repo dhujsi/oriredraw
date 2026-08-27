@@ -8,6 +8,17 @@ def test_pages_packages_every_shadow_worker_module():
 
     required = [
         "shadow_search.py",
+        "boundary_relations.py",
+        "exact_qsqrt2.py",
+        "qsqrt2_coordinates.py",
+        "exact_graph_propagation.py",
+        "finite_endpoint_closure.py",
+        "guided_cp_output.py",
+        "guided_construction.py",
+        "raw_boundary_evidence.py",
+        "raw_crease_evidence.py",
+        "raw_crease_topology.py",
+        "raw_primary_bridge.py",
         "shadow_evidence.py",
         "shadow_geometry.py",
         "shadow_geometry_v2.py",

@@ -4,6 +4,17 @@ const SOURCE_FILES = [
   'reconstructor.py',
   'web_bridge.py',
   'construction_search.py',
+  'boundary_relations.py',
+  'exact_qsqrt2.py',
+  'qsqrt2_coordinates.py',
+  'exact_graph_propagation.py',
+  'finite_endpoint_closure.py',
+  'guided_cp_output.py',
+  'guided_construction.py',
+  'raw_boundary_evidence.py',
+  'raw_crease_evidence.py',
+  'raw_crease_topology.py',
+  'raw_primary_bridge.py',
   'shadow_search.py',
   'shadow_evidence.py',
   'shadow_geometry.py',
@@ -22,7 +33,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260819-core-free-dev10';
+const WEB_ENGINE_VERSION = '20260826-finite-endpoint-closure-v1';
 
 let pyodide;
 let readyPromise;
@@ -47,7 +58,7 @@ async function initialize() {
     }
     pyodide.FS.writeFile(fileName, await response.text(), { encoding: 'utf8' });
   }
-  pyodide.runPython('from shadow_bridge import reconstruct_for_web_shadow_json, rectify_for_web_json');
+  pyodide.runPython('from shadow_bridge import reconstruct_for_web_shadow_json, rectify_for_web_json; from guided_construction import build_guided_boundary_report_json; from raw_primary_bridge import analyze_raw_primary_json');
   announce('ready', '浏览器识别引擎已就绪');
 }
 
@@ -92,6 +103,43 @@ rectify_for_web_json(Path("${inputPath}").read_bytes(), _oriredraw_corners_json)
   }
 }
 
+async function analyzeRawInBrowser(buffer, settings, id) {
+  await ensureReady();
+  const inputPath = '/tmp/oriredraw-raw-primary-input';
+  pyodide.FS.writeFile(inputPath, new Uint8Array(buffer));
+  pyodide.globals.set('_oriredraw_raw_settings_json', JSON.stringify(settings));
+  pyodide.globals.set('_oriredraw_raw_progress', (percent, message) => {
+    announce('analyze-raw', String(message), Number(percent), id);
+  });
+  try {
+    return pyodide.runPython(`
+from pathlib import Path
+analyze_raw_primary_json(Path("${inputPath}").read_bytes(), _oriredraw_raw_settings_json, _oriredraw_raw_progress)
+    `);
+  } finally {
+    pyodide.globals.delete('_oriredraw_raw_settings_json');
+    pyodide.globals.delete('_oriredraw_raw_progress');
+    try { pyodide.FS.unlink(inputPath); } catch (_) { /* best-effort cleanup */ }
+  }
+}
+
+async function guidedBoundaryInBrowser(result, selection) {
+  await ensureReady();
+  pyodide.globals.set('_oriredraw_guided_result_json', JSON.stringify(result));
+  pyodide.globals.set('_oriredraw_guided_selection_json', JSON.stringify(selection));
+  try {
+    return pyodide.runPython(`
+build_guided_boundary_report_json(
+    _oriredraw_guided_result_json,
+    _oriredraw_guided_selection_json,
+)
+    `);
+  } finally {
+    pyodide.globals.delete('_oriredraw_guided_result_json');
+    pyodide.globals.delete('_oriredraw_guided_selection_json');
+  }
+}
+
 self.onmessage = async event => {
   const { type, id } = event.data;
   try {
@@ -105,9 +153,20 @@ self.onmessage = async event => {
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
       return;
     }
+    if (type === 'analyze-raw') {
+      const json = await analyzeRawInBrowser(event.data.buffer, event.data.settings, id);
+      self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
+      return;
+    }
     if (type === 'rectify') {
       const json = await rectifyInBrowser(event.data.buffer, event.data.corners, id);
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
+      return;
+    }
+    if (type === 'guided-boundary') {
+      const json = await guidedBoundaryInBrowser(event.data.result, event.data.selection);
+      self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
+      return;
     }
   } catch (error) {
     self.postMessage({

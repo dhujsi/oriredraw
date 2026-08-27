@@ -41,7 +41,10 @@
     }
 
     postMessage(message, transfer) {
-      if (message?.type === 'reconstruct' && state.projectRestorePayload) {
+      if (
+        (message?.type === 'reconstruct' || message?.type === 'analyze-raw')
+        && state.projectRestorePayload
+      ) {
         const payload = state.projectRestorePayload;
         state.projectRestorePayload = null;
         queueMicrotask(() => {

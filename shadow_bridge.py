@@ -5,8 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+from guided_construction import (
+    build_boundary_relation_catalog,
+    build_boundary_relation_catalog_from_points,
+)
 from provenance_v6 import build_provenance_report_v6
 from quality_v5 import build_quality_report_v5
+from raw_boundary_evidence import extract_raw_boundary_contacts
+from raw_crease_evidence import extract_raw_crease_entities
+from raw_crease_topology import build_raw_crease_topology_graph
 from shadow_evidence import attach_observed_offsets
 from shadow_geometry_v2 import build_geometry_shadow_report_v2
 from shadow_variant import refine_trace_offsets_from_cp
@@ -55,9 +62,94 @@ def reconstruct_for_web_shadow_json(
             settings_mapping,
             payload,
         )
+        try:
+            raw_crease_evidence = extract_raw_crease_entities(
+                image_bytes,
+                settings_mapping,
+            )
+        except Exception as raw_crease_error:
+            raw_crease_evidence = {
+                "enabled": False,
+                "mode": "raw_finite_crease_entities_v1",
+                "source": "raw_image_finite_line_evidence",
+                "reason": "raw_crease_evidence_error",
+                "error": str(raw_crease_error),
+                "lines": [],
+            }
+        try:
+            _, _, raw_crease_topology = build_raw_crease_topology_graph(
+                raw_crease_evidence
+            )
+        except Exception as raw_topology_error:
+            raw_crease_topology = {
+                "enabled": False,
+                "mode": "raw_finite_crease_topology_v1",
+                "source": "raw_image_finite_line_evidence",
+                "reason": "raw_crease_topology_error",
+                "error": str(raw_topology_error),
+                "boundary_contacts": [],
+            }
+        try:
+            topology_contacts = (
+                raw_crease_topology.get("boundary_contacts")
+                if raw_crease_topology.get("enabled")
+                else None
+            )
+            if isinstance(topology_contacts, list) and topology_contacts:
+                raw_maximum = float(
+                    raw_crease_topology["maximum_coordinate_px"]
+                )
+                candidate_points = topology_contacts
+                candidate_evidence_source = "raw_image_finite_topology"
+                raw_boundary_evidence = {
+                    "enabled": False,
+                    "mode": "raw_boundary_directional_scan_v1",
+                    "source": "raw_image_directional_scan",
+                    "reason": "superseded_by_finite_crease_topology",
+                    "maximum_coordinate_px": raw_maximum,
+                    "points": [],
+                }
+            else:
+                raw_boundary_evidence = extract_raw_boundary_contacts(
+                    image_bytes,
+                    settings_mapping,
+                )
+                raw_maximum = float(
+                    raw_boundary_evidence["maximum_coordinate_px"]
+                )
+                candidate_points = raw_boundary_evidence.get("points") or []
+                candidate_evidence_source = "raw_image_directional_scan"
+            boundary_candidates = build_boundary_relation_catalog_from_points(
+                candidate_points,
+                raw_maximum,
+                evidence_source=candidate_evidence_source,
+                tolerance_px=max(5.0, raw_maximum * 0.012),
+                fit_algebraic_geometry=True,
+            )
+            boundary_candidate_source = candidate_evidence_source
+        except Exception as raw_boundary_error:
+            # Boundary guidance is optional and must not hide the rest of the
+            # diagnostics.  The fallback is explicitly labelled as playback.
+            raw_boundary_evidence = {
+                "enabled": False,
+                "mode": "raw_boundary_directional_scan_v1",
+                "source": "raw_image_directional_scan",
+                "reason": "raw_boundary_evidence_error",
+                "error": str(raw_boundary_error),
+                "points": [],
+            }
+            boundary_candidates = build_boundary_relation_catalog(payload)
+            boundary_candidate_source = "strict_playback_trace_boundary_contacts_fallback"
         report(84, "正在检查局部几何与结构…")
         local_report = build_geometry_shadow_report_v2(payload)
         quality_report = build_quality_report_v5(payload)
+        # This only lists user-selectable hypotheses. It never changes the
+        # strict output or starts a construction route on its own.
+        local_report["raw_boundary_evidence"] = raw_boundary_evidence
+        local_report["raw_crease_evidence"] = raw_crease_evidence
+        local_report["raw_crease_topology"] = raw_crease_topology
+        local_report["boundary_relation_candidates"] = boundary_candidates
+        local_report["boundary_relation_candidate_source"] = boundary_candidate_source
         report(88, "正在搜索替代构造与去核心参考点…")
         provenance_report = build_provenance_report_v6(
             payload,
