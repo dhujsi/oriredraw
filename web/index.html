@@ -79,7 +79,7 @@
         <h1 data-i18n-html="heroTitle">将图片 CP 重绘为<br><span>.cp 文件</span></h1>
       </div>
       <div class="intro-block">
-        <p class="intro" data-i18n-html="heroIntro">先从原图列出有限折痕、纸边与对角线上的 <em>a+b√2</em> 候选点，由人选择取线起点，再沿已观测拓扑继续拟合。</p>
+        <p class="intro" data-i18n-html="heroIntro">先看原图中的线。点图上的一个绿色点，再选一种开始方式，程序就会继续。</p>
         <p class="privacy" data-i18n="privacy">图片仅在你的浏览器中处理，不会上传服务器。</p>
       </div>
     </header>
@@ -88,7 +88,7 @@
       <aside class="controls panel">
         <form id="upload-form">
           <button class="primary upload-action" id="submit-button" type="submit" disabled>
-            <span data-i18n="start">分析原图并选择起点</span>
+              <span data-i18n="start">分析原图并选起点</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
 
@@ -158,11 +158,11 @@
             <div class="parameter mode-parameter">
               <div><label for="mv-mode" data-i18n="mvMode">线条颜色</label></div>
               <select id="mv-mode" name="mv_mode">
-                <option value="auto" data-i18n="mvAuto">自动判断红蓝 / 纯黑</option>
-                <option value="color" data-i18n="mvColor">强制按红蓝图识别</option>
-                <option value="monochrome" data-i18n="mvMono">纯黑线：统一按峰线导出</option>
+                <option value="auto" data-i18n="mvAuto">自动读取红蓝；无色按红色</option>
+                <option value="color" data-i18n="mvColor">优先读取红蓝；其余按红色</option>
+                <option value="monochrome" data-i18n="mvMono">无色线：统一按红色导出</option>
               </select>
-              <small data-i18n="mvHint">纯黑图没有峰谷信息；程序只重绘几何，不用 cAMV 猜颜色。</small>
+              <small data-i18n="mvHint">原图中的红蓝色会保留；无色、黑色或无法判断的折痕直接按红色导出。</small>
             </div>
 
             <div class="parameter">
@@ -194,7 +194,7 @@
 
             <label class="variant-option">
               <input id="construction-variants" type="checkbox" checked>
-              <span><strong data-i18n="variants">生成精确备选构造版本</strong><small data-i18n="variantsHint">仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。</small></span>
+              <span><strong data-i18n="variants">生成其他构造版本</strong><small data-i18n="variantsHint">只有需要时才尝试其他角度、补线或等分方案。</small></span>
             </label>
           </details>
         </form>
@@ -210,7 +210,7 @@
         </div>
 
         <div id="loading" class="loading hidden" aria-live="polite">
-          <span></span><p id="loading-stage" data-i18n="loadingInitial">正在读取原图有限折痕与边界接触…</p><small id="loading-note" data-i18n="loadingSlow">通常约一秒完成；此阶段不会运行旧版严格重建</small>
+              <span></span><p id="loading-stage" data-i18n="loadingInitial">正在读取原图折痕和交点…</p><small id="loading-note" data-i18n="loadingSlow">先显示原图和绿色起点；你只需选择一个起点。</small>
           <div class="progress-block">
             <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重绘进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
             <b id="loading-progress-value">0%</b>
@@ -232,13 +232,29 @@
             <button class="active" data-view="overlay" role="tab" aria-selected="true" data-i18n="overlay">叠加检查</button>
             <button data-view="clean" role="tab" aria-selected="false" data-i18n="clean">纯重绘</button>
           </div>
+          <div class="line-legend hidden" id="line-legend" aria-label="线条颜色说明">
+            <span><i class="line-legend-swatch red" aria-hidden="true"></i>红线：原图为红色，或无色线按红色输出</span>
+            <span><i class="line-legend-swatch blue" aria-hidden="true"></i>蓝线：原图标为蓝色</span>
+          </div>
           <div class="result-visuals">
             <figure class="preview">
               <div class="preview-stage" id="preview-stage">
                 <svg class="mv-segment-layer hidden" id="mv-segment-layer" viewBox="-200 -200 400 400" preserveAspectRatio="xMidYMid meet" aria-label="逐段山谷线标注层"></svg>
                 <img id="preview-image" alt="折痕重绘预览">
-                <div class="topology-point-layer hidden" id="topology-point-layer" aria-label="可选内部拓扑点"></div>
+                <div class="topology-point-layer hidden" id="topology-point-layer" aria-label="图上的可选点"></div>
                 <div class="topology-point-tooltip hidden" id="topology-point-tooltip" role="status"></div>
+                <div class="topology-point-popover hidden" id="topology-point-popover" role="dialog" aria-label="选择这个点的开始方式"></div>
+                <div class="topology-point-confirmation hidden" id="topology-point-confirmation" role="dialog" aria-labelledby="topology-point-confirmation-title">
+                  <div>
+                    <strong id="topology-point-confirmation-title">要不要用这个黄色点补线？</strong>
+                    <small id="topology-point-confirmation-coordinate">图中的黄色点</small>
+                    <small id="topology-point-confirmation-note"></small>
+                  </div>
+                  <div class="topology-point-confirmation-actions">
+                    <button type="button" id="topology-point-confirm">用这个点</button>
+                    <button type="button" id="topology-point-cancel">跳过</button>
+                  </div>
+                </div>
               </div>
             </figure>
             <aside class="core-point-card" id="core-point-card">
@@ -246,78 +262,27 @@
               <canvas id="core-point-canvas" width="180" height="180" aria-label="核心点位置示意"></canvas>
               <strong id="core-point-title" data-i18n="coreNone">未使用额外核心点</strong>
               <code id="core-point-coordinate">—</code>
-              <small data-i18n="coreHint">坐标采用纸张中心为原点的归一化 a+b√2 表示。</small>
+              <small data-i18n="coreHint">点上的坐标用根号二表示；把光标移到点上可以查看近似位置。</small>
             </aside>
           </div>
 
           <div id="warnings" class="warnings"></div>
 
-          <div class="legacy-reconstruct hidden" id="legacy-reconstruct-panel">
-            <div>
-              <strong>需要旧版结果？</strong>
-              <small>兼容流程会执行完整严格重建，复杂图可能需要十几分钟；它不再是上传后的默认步骤。</small>
-            </div>
-            <button type="button" id="legacy-reconstruct">运行旧版严格重建</button>
-          </div>
-
           <div id="stats" class="stats"></div>
 
           <details class="boundary-relations hidden" id="boundary-relations">
-            <summary><span>选择取线起点与续选步骤</span> <span id="boundary-relation-count"></span></summary>
-            <p class="boundary-relation-intro" id="boundary-relation-intro">这些候选按完整度、残差和 √2 表达式复杂度排序。请由人选择；系统不会自动把候选当成构造事实。</p>
+            <summary><span id="boundary-relations-summary">选择一个起点</span> <span id="boundary-relation-count"></span></summary>
+            <p class="boundary-relation-intro" id="boundary-relation-intro">第一步：点图上的一个绿色点，再在点旁边选一种开始方式。只需选一次；不想继续可以不选。</p>
             <div class="boundary-relation-history hidden" id="boundary-relation-history">
               <div>
-                <strong>同一条取线链</strong>
+                <strong>已经选好的起点</strong>
                 <div class="boundary-relation-history-list" id="boundary-relation-history-list"></div>
               </div>
-              <button type="button" id="boundary-relation-undo">撤销上一轮</button>
-            </div>
-            <div class="topology-point-confirmation hidden" id="topology-point-confirmation">
-              <div>
-                <strong id="topology-point-confirmation-title">确认内部点</strong>
-                <code id="topology-point-confirmation-coordinate">—</code>
-                <small id="topology-point-confirmation-note"></small>
-              </div>
-              <div class="topology-point-confirmation-actions">
-                <button type="button" id="topology-point-confirm">确认作为下一步</button>
-                <button type="button" id="topology-point-cancel">取消</button>
-              </div>
+                <button type="button" id="boundary-relation-undo">撤销上一步</button>
             </div>
             <div class="boundary-relation-list" id="boundary-relation-list"></div>
             <p class="boundary-relation-status" id="boundary-relation-status" aria-live="polite"></p>
           </details>
-
-          <section class="mv-editor hidden" id="mv-editor" aria-labelledby="mv-editor-title">
-            <div class="mv-editor-head">
-              <div>
-                <p class="eyebrow">SEGMENT M / V</p>
-                <h3 id="mv-editor-title">确认含混线段的山线与谷线</h3>
-                <p>原图中红蓝颜色明确的有限折痕会自动判定；这里只列出颜色证据不足的线段。选好画笔后可点击或按住拖过线段。</p>
-              </div>
-              <div class="mv-editor-progress">
-                <strong id="mv-editor-count">0 / 0</strong>
-                <progress id="mv-editor-progress" value="0" max="1"></progress>
-              </div>
-            </div>
-            <div class="mv-editor-toolbar" role="toolbar" aria-label="含混线段山谷线画笔">
-              <button type="button" class="active mountain" id="mv-brush-mountain" data-line-type="2" aria-pressed="true">山线 M</button>
-              <button type="button" class="valley" id="mv-brush-valley" data-line-type="3" aria-pressed="false">谷线 V</button>
-              <button type="button" class="unknown" id="mv-brush-unknown" data-line-type="0" aria-pressed="false">清除 U</button>
-              <span>明确红蓝的线段只展示、不接受修改；快捷键 M / V / U 仅作用于含混线段</span>
-            </div>
-            <div class="mv-editor-state">
-              <p id="mv-editor-status" aria-live="polite"></p>
-              <div class="mv-editor-selection">
-                <code id="mv-editor-current">尚未选择线段</code>
-                <button type="button" id="mv-next-unassigned">定位下一条未标注</button>
-              </div>
-            </div>
-            <div class="mv-editor-actions">
-              <button type="button" id="mv-undo" disabled>撤销上次涂改</button>
-              <button type="button" id="mv-clear" disabled>清除全部</button>
-              <button type="button" class="primary" id="mv-apply">应用人工确认并检查导出</button>
-            </div>
-          </section>
 
           <details class="anchors" id="anchor-details">
             <summary><span data-i18n="anchors">查看种子与迭代构造来源</span> <span id="anchor-count"></span></summary>

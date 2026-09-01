@@ -201,9 +201,11 @@ def build_finite_endpoint_closed_topology(
     """Rebind each finite segment endpoint to an existing exact graph point.
 
     A target is eligible only when it is an existing raw-evidence exact point,
-    or the intersection of this exact crease with a boundary side already
-    observed at the endpoint.  Its projected location must remain within both
-    the paper-scale and local segment-evidence limits.  Near ties are rejected
+    or the intersection of this exact crease with a nearby paper boundary.
+    Boundary contact may be explicit in the raw topology or conservatively
+    inferred when a finite endpoint stops within two line-width tolerances of
+    the paper edge.  Its projected location must remain within both the
+    paper-scale and local segment-evidence limits.  Near ties are rejected
     instead of guessed.
     """
 
@@ -430,17 +432,37 @@ def build_finite_endpoint_closed_topology(
                 if isinstance(observed_endpoint, Mapping)
                 else None
             )
-            for side in boundary_sides or []:
+            explicit_boundary_sides = [str(side) for side in boundary_sides or []]
+            inferred_boundary_limit = min(
+                gap_limit,
+                max(
+                    max(0.0, max_target_residual_px),
+                    2.0 * line_residual_tolerance,
+                ),
+            )
+            boundary_candidates = [
+                (side, False) for side in explicit_boundary_sides
+            ]
+            if not boundary_candidates and inferred_boundary_limit > 0:
+                boundary_candidates = [
+                    (side, True) for side in ("top", "right", "bottom", "left")
+                ]
+            for side, inferred_boundary_side in boundary_candidates:
                 boundary_point = _line_boundary_intersection(
                     line,
-                    str(side),
+                    side,
                     side_length,
                 )
                 if boundary_point is None:
                     continue
                 target_px = _project_to_pixel(boundary_point, side_length, maximum)
                 gap = math.dist(endpoint_px, target_px)
-                if gap > min(gap_limit, max(0.0, max_target_residual_px)) + 1e-9:
+                boundary_gap_limit = (
+                    inferred_boundary_limit
+                    if inferred_boundary_side
+                    else min(gap_limit, max(0.0, max_target_residual_px))
+                )
+                if gap > boundary_gap_limit + 1e-9:
                     continue
                 if not _same_endpoint_ray(
                     endpoint_px,
@@ -453,7 +475,8 @@ def build_finite_endpoint_closed_topology(
                 candidate = {
                     "target_point_id": observed_id,
                     "target_kind": "known_paper_boundary_intersection",
-                    "boundary_side": str(side),
+                    "boundary_side": side,
+                    "boundary_side_inferred": inferred_boundary_side,
                     "target_projected_point_px": [round(value, 6) for value in target_px],
                     "target_project_coordinate": [
                         qsqrt2_to_mapping(boundary_point[0]),
@@ -547,6 +570,9 @@ def build_finite_endpoint_closed_topology(
             }
             if selected.get("boundary_side"):
                 binding["boundary_side"] = selected["boundary_side"]
+                binding["boundary_side_inferred"] = bool(
+                    selected.get("boundary_side_inferred")
+                )
                 binding["resolved_project_coordinate"] = selected[
                     "target_project_coordinate"
                 ]
@@ -651,6 +677,7 @@ def build_finite_endpoint_closed_topology(
             "maximum_target_observation_residual_px": round(
                 max(0.0, max_target_residual_px), 6
             ),
+            "inferred_boundary_gap_multiplier": 2.0,
         },
         "invariants": {
             "global_observed_point_merges": 0,

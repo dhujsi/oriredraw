@@ -199,25 +199,36 @@ body.corner-editor-open { overflow: hidden; }
 .preview-stage { position: relative; width: min(100%, 680px); aspect-ratio: 1; }
 .preview img { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
 .mv-segment-layer { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; pointer-events: none; }
-.mv-segment { pointer-events: stroke; }
-.mv-segment.automatic { pointer-events: none; }
-.mv-segment.automatic .mv-segment-hit { pointer-events: none; cursor: default; }
-.mv-segment-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: crosshair; }
-.mv-segment-visible { fill: none; stroke: #6f716d; stroke-width: 2.2; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
-.mv-segment[data-line-type="0"] .mv-segment-visible { stroke-dasharray: 5 4; }
+.mv-segment { pointer-events: none; }
+.mv-segment-visible { fill: none; stroke: #d53d35; stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .mv-segment[data-line-type="2"] .mv-segment-visible { stroke: #d53d35; stroke-width: 3; }
 .mv-segment[data-line-type="3"] .mv-segment-visible { stroke: #2878d0; stroke-width: 3; }
-.mv-segment:hover .mv-segment-visible, .mv-segment:focus .mv-segment-visible, .mv-segment.selected .mv-segment-visible { stroke-width: 5; filter: drop-shadow(0 0 2px #fff); }
-.mv-segment:focus { outline: none; }
+.line-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.line-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.line-legend-swatch { display: inline-block; width: 22px; height: 3px; border-radius: 2px; }
+.line-legend-swatch.red { background: #d53d35; }
+.line-legend-swatch.blue { background: #2878d0; }
 .topology-point-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .topology-point-marker { position: absolute; width: 17px; height: 17px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 2px var(--ink); transform: translate(-50%, -50%); cursor: crosshair; pointer-events: auto; }
-.topology-point-marker.boundary-relation-point { width: 13px; height: 13px; background: #fff; border-color: var(--green); border-style: dashed; cursor: help; }
+.topology-point-marker.boundary-relation-point { width: 15px; height: 15px; background: #fff; border-color: var(--green); border-style: solid; cursor: pointer; }
 .topology-point-marker:hover, .topology-point-marker:focus-visible, .topology-point-marker.pending { z-index: 2; background: #fff; box-shadow: 0 0 0 3px var(--green); outline: 0; }
 .topology-point-marker[aria-disabled="true"] { background: #aaa; box-shadow: 0 0 0 2px #555; cursor: help; }
 .topology-point-tooltip { position: absolute; z-index: 4; max-width: min(300px, 80%); padding: 8px 9px; border: 1px solid var(--ink); background: rgba(23, 23, 20, .94); color: #fff; box-shadow: 3px 3px 0 rgba(0, 0, 0, .18); transform: translate(10px, calc(-100% - 10px)); pointer-events: none; font: 700 9px/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
 .topology-point-tooltip.below { transform: translate(10px, 10px); }
 .topology-point-tooltip.leftward { transform: translate(calc(-100% - 10px), calc(-100% - 10px)); }
 .topology-point-tooltip.leftward.below { transform: translate(calc(-100% - 10px), 10px); }
+.topology-point-tooltip.viewport-positioned, .topology-point-popover.viewport-positioned, .topology-point-confirmation.viewport-positioned { position: fixed; }
+.topology-point-popover { position: absolute; z-index: 6; width: min(230px, 72%); padding: 10px; border: 2px solid var(--ink); background: var(--panel); color: var(--ink); box-shadow: 4px 4px 0 rgba(23, 23, 20, .2); transform: translate(12px, calc(-100% - 12px)); }
+.topology-point-popover.below { transform: translate(12px, 12px); }
+.topology-point-popover.leftward { transform: translate(calc(-100% - 12px), calc(-100% - 12px)); }
+.topology-point-popover.leftward.below { transform: translate(calc(-100% - 12px), 12px); }
+.topology-point-popover strong, .topology-point-popover small { display: block; }
+.topology-point-popover strong { font-size: 12px; }
+.topology-point-popover small { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.topology-point-popover-choices { display: grid; gap: 5px; margin-top: 8px; }
+.topology-point-popover button { min-height: 32px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 6px 8px; cursor: pointer; font-size: 10px; font-weight: 700; text-align: left; }
+.topology-point-popover button:hover, .topology-point-popover button:focus-visible { background: var(--acid); outline: 0; }
+.topology-point-popover-close { margin-top: 7px; color: var(--muted) !important; font-weight: 400 !important; }
 .core-point-card { padding: 10px; border: 1px solid var(--line); background: #f5f5ef; }
 .core-point-card > span { display: block; color: var(--green); font: 700 9px ui-monospace, monospace; letter-spacing: .14em; }
 .core-point-card canvas { display: block; width: 100%; height: auto; margin: 8px 0; background: #fff; }
@@ -226,13 +237,6 @@ body.corner-editor-open { overflow: hidden; }
 .core-point-card code { margin-top: 6px; color: var(--green); font-size: 10px; overflow-wrap: anywhere; }
 .core-point-card small { margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.45; }
 .warnings p { margin: 12px 0 0; padding: 10px 12px; border-left: 3px solid var(--warning); background: #fff7dd; font-size: 12px; }
-.legacy-reconstruct { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; padding: 12px; border: 1px solid var(--ink); background: #fff; }
-.legacy-reconstruct strong, .legacy-reconstruct small { display: block; }
-.legacy-reconstruct strong { font-size: 12px; }
-.legacy-reconstruct small { margin-top: 4px; max-width: 680px; color: var(--muted); font-size: 10px; line-height: 1.5; }
-.legacy-reconstruct button { flex: 0 0 auto; min-height: 36px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 7px 10px; cursor: pointer; font-size: 10px; font-weight: 700; }
-.legacy-reconstruct button:hover:not(:disabled) { background: #f5f5ef; }
-.legacy-reconstruct button:disabled { cursor: wait; opacity: .5; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
 .stats div { border: 1px solid var(--line); padding: 14px; background: #fff; min-width: 0; }
 .stats strong { display: block; overflow: hidden; text-overflow: ellipsis; font: 700 24px ui-monospace, monospace; }
@@ -259,10 +263,13 @@ body.corner-editor-open { overflow: hidden; }
 .boundary-relation-history button { flex: 0 0 auto; min-height: 32px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 6px 9px; cursor: pointer; font-size: 10px; font-weight: 700; }
 .boundary-relation-history button:hover:not(:disabled) { background: var(--acid); }
 .boundary-relation-history button:disabled { cursor: wait; opacity: .55; }
-.topology-point-confirmation { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-top: 10px; padding: 11px; border: 2px solid var(--green); background: #f7ffe0; }
-.topology-point-confirmation strong, .topology-point-confirmation code, .topology-point-confirmation small { display: block; }
+.topology-point-confirmation { position: absolute; z-index: 7; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; width: min(300px, 78%); box-sizing: border-box; padding: 11px; border: 2px solid var(--green); background: #f7ffe0; box-shadow: 4px 4px 0 rgba(23, 23, 20, .2); transform: translate(12px, calc(-100% - 12px)); }
+.topology-point-confirmation.below { transform: translate(12px, 12px); }
+.topology-point-confirmation.leftward { transform: translate(calc(-100% - 12px), calc(-100% - 12px)); }
+.topology-point-confirmation.leftward.below { transform: translate(calc(-100% - 12px), 12px); }
+.topology-point-confirmation strong, .topology-point-confirmation small { display: block; }
 .topology-point-confirmation strong { font-size: 12px; }
-.topology-point-confirmation code { margin-top: 5px; color: var(--green); font-size: 11px; }
+.topology-point-confirmation small + small { margin-top: 5px; }
 .topology-point-confirmation small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .topology-point-confirmation-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .topology-point-confirmation-actions button { min-height: 34px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 6px 9px; cursor: pointer; font-size: 10px; font-weight: 700; }
@@ -275,34 +282,13 @@ body.corner-editor-open { overflow: hidden; }
 .boundary-relation-heading strong { font-size: 12px; }
 .boundary-relation-heading small, .boundary-relation-note { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .boundary-relation-item code { grid-column: 1 / -1; overflow-wrap: anywhere; color: var(--green); font-size: 10px; line-height: 1.45; }
+.boundary-relation-coordinates { grid-column: 1 / -1; margin-top: 2px; }
+.boundary-relation-coordinates summary { cursor: pointer; color: var(--green); font-size: 10px; font-weight: 700; }
+.boundary-relation-coordinates code { display: block; margin-top: 5px; }
 .boundary-relation-note { grid-column: 1 / -1; }
 .boundary-relation-select { align-self: center; min-height: 34px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 6px 9px; cursor: pointer; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .boundary-relation-select:hover, .boundary-relation-select.selected { background: var(--acid); }
 .boundary-relation-select:disabled { cursor: wait; opacity: .58; }
-.mv-editor { margin-top: 14px; padding: 14px; border: 2px solid var(--ink); background: #fff; }
-.mv-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-.mv-editor-head h3 { margin: 0; font-size: 18px; }
-.mv-editor-head p:not(.eyebrow) { max-width: 720px; margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.mv-editor-progress { flex: 0 0 150px; text-align: right; }
-.mv-editor-progress strong { display: block; font: 700 20px ui-monospace, Consolas, monospace; }
-.mv-editor-progress progress { display: block; width: 100%; height: 8px; margin-top: 7px; accent-color: var(--green); }
-.mv-editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 14px; }
-.mv-editor-toolbar button, .mv-editor-actions button { min-height: 36px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 7px 11px; cursor: pointer; font-size: 10px; font-weight: 750; }
-.mv-editor-toolbar button.active { color: #fff; box-shadow: inset 0 0 0 2px #fff; }
-.mv-editor-toolbar button.mountain.active { background: #d53d35; }
-.mv-editor-toolbar button.valley.active { background: #2878d0; }
-.mv-editor-toolbar button.unknown.active { background: #6f716d; }
-.mv-editor-toolbar span { color: var(--muted); font-size: 10px; }
-.mv-editor-state { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 9px 10px; border: 1px solid var(--line); background: #f5f5ef; }
-.mv-editor-state p { margin: 0; font-size: 11px; line-height: 1.5; }
-.mv-editor-state code { color: var(--green); font-size: 9px; overflow-wrap: anywhere; }
-.mv-editor-selection { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.mv-editor-selection button { min-height: 30px; border: 1px solid var(--ink); background: #fff; color: var(--ink); padding: 5px 8px; cursor: pointer; font-size: 9px; font-weight: 700; white-space: nowrap; }
-.mv-editor-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
-.mv-editor-actions button { white-space: nowrap; }
-.mv-editor-actions button.primary { background: var(--acid); }
-.mv-editor button:hover:not(:disabled) { filter: brightness(.96); }
-.mv-editor button:disabled { cursor: not-allowed; opacity: .45; }
 .construction-list { margin-top: 10px; border: 1px solid var(--line); }
 .construction-list div { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(160px, 2fr) 75px; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 11px; }
 .construction-list code { color: var(--green); }
@@ -324,12 +310,6 @@ body.corner-editor-open { overflow: hidden; }
   .boundary-relation-select { justify-self: start; }
   .boundary-relation-history { flex-direction: column; }
   .topology-point-confirmation { flex-direction: column; }
-  .mv-editor-head, .mv-editor-state { align-items: stretch; flex-direction: column; }
-  .mv-editor-selection { justify-content: space-between; }
-  .mv-editor-progress { flex-basis: auto; width: 100%; text-align: left; }
-  .mv-editor-actions { flex-wrap: wrap; justify-content: stretch; }
-  .mv-editor-actions button { flex: 1 1 140px; }
-  .legacy-reconstruct { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 520px) {

@@ -7,11 +7,11 @@ const language = preferredLanguage || (navigator.language?.toLowerCase().startsW
 const messages = {
   zh: {
     pageTitle: 'Oriredraw · CP 重绘',
-    pageDescription: '在浏览器中从 22.5° 系 CP 原图提取有限折痕与边界候选，由人选择取线起点后继续拟合。',
+    pageDescription: '在浏览器中读取 CP 原图。先点一个绿色点，再选一种开始方式。',
     heroTitle: '将图片 CP 重绘为<br><span>.cp 文件</span>',
-    heroIntro: '先从原图列出有限折痕、纸边与对角线上的 <em>a+b√2</em> 候选点，由人选择取线起点，再沿已观测拓扑继续拟合。',
+    heroIntro: '先看原图中的线。点图上的一个绿色点，再选一种开始方式，程序就会继续。',
     privacy: '图片仅在你的浏览器中处理，不会上传服务器。',
-    start: '分析原图并选择起点',
+    start: '分析原图并选起点',
     upload: '选择、拖入或粘贴 CP 图片',
     uploadMeta: 'PNG / JPG · 最大 12 MB',
     noFile: '尚未选择文件',
@@ -33,10 +33,10 @@ const messages = {
     cancel: '取消',
     advanced: '高级设置',
     mvMode: '线条颜色',
-    mvAuto: '自动判断红蓝 / 纯黑',
-    mvColor: '强制按红蓝图识别',
-    mvMono: '纯黑线：统一按峰线导出',
-    mvHint: '纯黑图没有峰谷信息；程序只重绘几何，不用 cAMV 猜颜色。',
+    mvAuto: '自动读取红蓝；无色按红色',
+    mvColor: '优先读取红蓝；其余按红色',
+    mvMono: '无色线：统一按红色导出',
+    mvHint: '原图中的红蓝色会保留；无色、黑色或无法判断的折痕直接按红色导出。',
     angle: '像素线方向误差',
     autoRecommended: '自动（推荐）',
     manual: '手动上限',
@@ -46,21 +46,21 @@ const messages = {
     sqrtSnap: '√2 吸附范围',
     offset: '构造与观测偏移上限',
     offsetHint: '只关联精确射线与它自己检测到的像素位置，不移动 .cp 坐标。AI 调整图仍漏线时可小幅提高；过高可能绑定错误交点。',
-    variants: '生成精确备选构造版本',
-    variantsHint: '仅在严格 22.5° 版仍有强像素未解释时，另列角平分、局部可平折补线和线段等分版本。',
+    variants: '生成其他构造版本',
+    variantsHint: '只有需要时才尝试其他角度、补线或等分方案。',
     waiting: '等待一张折痕图',
     engineLoading: '正在准备浏览器识别引擎…',
     emptyCopy: '重绘结果会在这里与原图叠加显示',
-    loadingInitial: '正在读取原图有限折痕与边界接触…',
-    loadingSlow: '通常约一秒完成；此阶段不会运行旧版严格重建',
+    loadingInitial: '正在读取原图中的线和交点…',
+    loadingSlow: '先显示原图和绿色点；只需选一次开始方式。',
     resultTitle: '重绘结果',
     download: '下载 .cp',
     overlay: '叠加检查',
     clean: '纯重绘',
     coreNone: '未使用额外核心点',
-    coreHint: '坐标采用纸张中心为原点的归一化 a+b√2 表示。',
-    anchors: '查看种子与迭代构造来源',
-    constructions: '查看本版本新增的精确构造',
+    coreHint: '坐标会显示为包含 √2 的精确形式；鼠标移到点上可看近似位置。',
+    anchors: '查看程序找到这些线的依据',
+    constructions: '查看程序补出的精确线',
     expand: '展开',
     collapse: '收起',
     welcomeTitle: '欢迎使用 Oriredraw',
@@ -72,11 +72,11 @@ const messages = {
   },
   en: {
     pageTitle: 'Oriredraw · CP Redraw',
-    pageDescription: 'Extract finite creases and boundary candidates from 22.5° CP images, then let a person choose the construction start.',
+    pageDescription: 'Read a CP image in your browser. Click one green point, then choose one way to start.',
     heroTitle: 'Redraw CP images as<br><span>.cp files</span>',
-    heroIntro: 'First list finite creases and <em>a+b√2</em> candidates on edges or diagonals, let a person choose the construction start, then fit along the observed topology.',
+    heroIntro: 'First show the lines in the image. Click one green point, then choose one way to start.',
     privacy: 'Images are processed only in your browser and are never uploaded.',
-    start: 'Analyze image and choose start',
+    start: 'Analyze image and choose a start',
     upload: 'Choose, drop, or paste a CP image',
     uploadMeta: 'PNG / JPG · up to 12 MB',
     noFile: 'No file selected',
@@ -98,10 +98,10 @@ const messages = {
     cancel: 'Cancel',
     advanced: 'Advanced settings',
     mvMode: 'Line colors',
-    mvAuto: 'Auto-detect red/blue or black',
-    mvColor: 'Force red/blue recognition',
-    mvMono: 'Black lines: export all as mountain',
-    mvHint: 'Black-line CPs contain no mountain/valley evidence; only geometry is redrawn, and cAMV is not used to invent colors.',
+    mvAuto: 'Read red/blue; use red for uncoloured lines',
+    mvColor: 'Prefer red/blue; use red otherwise',
+    mvMono: 'Uncoloured lines: export as red',
+    mvHint: 'Source red and blue are retained. Uncoloured, black, or unclear creases are exported as red.',
     angle: 'Pixel-line direction tolerance',
     autoRecommended: 'Auto (recommended)',
     manual: 'Manual limit',
@@ -111,21 +111,21 @@ const messages = {
     sqrtSnap: '√2 snap range',
     offset: 'Construction / observation offset limit',
     offsetHint: 'Associates an exact ray with its observed pixel position without moving .cp coordinates. Raise slightly when AI-cleaned images still miss lines; too high may bind the wrong intersection.',
-    variants: 'Generate exact alternative constructions',
-    variantsHint: 'When the strict 22.5° result leaves strong pixels unexplained, also try angle bisectors, local flat-fold completion, and exact segment divisions.',
+    variants: 'Generate other construction versions',
+    variantsHint: 'Try other angles, added creases, or divisions only when needed.',
     waiting: 'Waiting for a crease pattern',
     engineLoading: 'Preparing the browser recognition engine…',
     emptyCopy: 'The redrawn result will be overlaid with the source image here',
-    loadingInitial: 'Reading finite creases and boundary contacts from the image…',
-    loadingSlow: 'Usually about one second; legacy strict reconstruction is not run at this stage',
+    loadingInitial: 'Reading lines and intersections from the image…',
+    loadingSlow: 'The image and green points will appear first; choose one way to start.',
     resultTitle: 'Redraw result',
     download: 'Download .cp',
     overlay: 'Overlay check',
     clean: 'Redraw only',
     coreNone: 'No extra core point used',
-    coreHint: 'Coordinates use the paper center as the origin and normalized a+b√2 notation.',
-    anchors: 'View seed and iterative construction sources',
-    constructions: 'View exact constructions added in this version',
+    coreHint: 'Coordinates are shown in exact √2 form; hover over a point to see an estimate.',
+    anchors: 'View why the program found these lines',
+    constructions: 'View exact lines added by the program',
     expand: 'Open',
     collapse: 'Close',
     welcomeTitle: 'Welcome to Oriredraw',
@@ -265,12 +265,118 @@ const exactEnglish = new Map(Object.entries({
   '没有找到足够多的 22.5° 折痕节点。': 'Not enough 22.5° crease nodes were found.',
   '没有候选线通过 22.5° 与 a+b√2 约束。': 'No candidate lines passed the 22.5° and a+b√2 constraints.',
   '生成预览图失败。': 'Failed to generate the preview image.',
+  '正在处理…': 'Processing…',
+  '正在分析原图中的线…': 'Analyzing lines in the source image…',
+  '先显示原图和绿色点；只需选一次开始方式。': 'The source image and green points appear first; choose one way to start.',
+  '现在显示的是原图。点一个绿色点，再在点旁边选择开始方式。': 'This is the source image. Click one green point, then choose a start option beside it.',
+  '当前 .cp 可以直接下载；继续取线后，下载内容会随结果更新。': 'The current .cp can be downloaded now; continuing will update its contents.',
+  '红线和蓝线按原图颜色输出；无色、黑色或无法判断的折痕按红色输出。': 'Red and blue creases keep their source colours. Uncoloured, black, or unclear creases are exported as red.',
+  '没有找到可用的起点。请检查纸张边缘和线条是否完整、清楚。': 'No usable start was found. Check that the paper edge and lines are complete and clear.',
+  '原图折痕': 'Source creases',
+  '原图线条': 'Source lines',
+  '红线：原图为红色，或无色线按红色输出': 'Red: red in the source image, or an uncoloured crease exported as red',
+  '蓝线：原图标为蓝色': 'Blue: marked blue in the source image',
+  '选择这个点的开始方式': 'Choose how to start from this point',
+  '要不要用这个黄色点补线？': 'Use this yellow point to add lines?',
+  '用这个点': 'Use this point',
+  '跳过': 'Skip',
+  '已经选好的起点': 'Chosen start',
+  '这个点怎么开始？': 'How do you want to start from this point?',
+  '下面每个按钮是一种开始方式，选一个就行。': 'Each button below is one way to start; choose one.',
+  '点下面的按钮就开始，也可以暂时不选。': 'Click a button below to start, or skip it for now.',
+  '按“左边完整三等分”开始': 'Start with “complete trisection on the left edge”',
+  '暂时不选': 'Skip for now',
+  '绿色起点，点击选择开始方式': 'Green start point: click to choose how to start',
+  '黄色补充点，点击查看是否要继续': 'Yellow optional point: click to review whether to continue',
+  '第一步：点图上的一个绿色点，再在点旁边选一种开始方式。只需选一次；不想继续可以不选。': 'Step 1: click one green point, then choose one way to start beside it. Choose only once; you can skip it if you do not want to continue.',
+  '下面是可选的补充方式，不选也可以；当前结果已经保留。': 'The options below are optional additions; the current result is kept if you skip them.',
+  '下面的黄色点是可选补充，不确定就不要点；当前结果已经保留。': 'The yellow points below are optional additions; skip them if unsure. The current result is kept.',
+  '没有找到可靠的补充方式。当前结果已经保留，可以停在这里。': 'No reliable way to add more lines was found. The current result is kept; you can stop here.',
+  '不确定时可以停在这里；已经选好的内容会保留。': 'If unsure, you can stop here; your choices will be kept.',
+  '没有找到可靠的补充方式。当前结果会保留。': 'No reliable way to add more lines was found. The current result will be kept.',
+  '这是可选的补充方式；不确定就不要选。': 'This is an optional way to add lines; skip it if unsure.',
+  '这是程序从原图中找到的一个可能起点。': 'This is one possible start found from the source image.',
+  '这是已有结果中的一个可能起点。': 'This is one possible start from the existing result.',
+  '查看坐标（含 √2）': 'View coordinates (with √2)',
+  '山折（M）': 'Mountain (M)',
+  '谷折（V）': 'Valley (V)',
+  '不需要再选点，可以下载当前 .cp。': 'No more points are required. You can download the current .cp.',
+  '当前 .cp 可以下载；看不出补充点时不用硬选。': 'The current .cp can be downloaded. Do not choose an extra point unless it is clear.',
+  '请先选一个起点': 'Choose a start point first',
+  '重绘结果': 'Redraw result',
+  '先选一个起点': 'Choose a start point first',
+  '还可以继续（可选）': 'Continue (optional)',
+  '第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。': 'Step 1: click one green point. A start option will appear beside it; choose one.',
+  '这是图上的黄色点，不需要输入坐标。': 'This is a yellow point on the image; no coordinates are needed.',
+  '请先点图上的绿色点；黄色点要等程序提示后才能选。': 'Click a green point first; yellow points can be chosen only when prompted.',
+  '这个黄色点暂时不能使用，请换另一个点。': 'This yellow point cannot be used right now. Try another point.',
 }));
 
 function translateEnglish(text) {
   if (exactEnglish.has(text)) return exactEnglish.get(text);
 
-  let match = text.match(/^第 (\d+) 代交点$/);
+  let match = text.match(/^第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。$/);
+  if (match) return 'Step 1: click one green point. A start option will appear beside it; choose one.';
+  match = text.match(/^已经补上 (\d+) 条线。当前 \.cp 可以下载；也可以继续补充。$/);
+  if (match) return `${match[1]} lines were added. The current .cp can be downloaded, or you can continue.`;
+  match = text.match(/^已经补上 (\d+) 条线；还有 (\d+) 条没补上。下面是可选的补充方式，不选也可以。$/);
+  if (match) return `${match[1]} lines were added; ${match[2]} are still missing. The options below are optional.`;
+  match = text.match(/^没有找到可靠的补充方式。下面的黄色点是可选的；不确定就不要点，当前结果会保留。$/);
+  if (match) return 'No reliable way to add more lines was found. The yellow points below are optional; skip them if unsure. The current result is kept.';
+  match = text.match(/^正在根据你的选择更新结果，请稍候…$/);
+  if (match) return 'Updating the result from your choice…';
+  match = text.match(/^更新失败：(.*)$/);
+  if (match) return `Update failed: ${match[1]}`;
+  match = text.match(/^这个黄色点暂时不能使用$/);
+  if (match) return 'This yellow point cannot be used right now.';
+  match = text.match(/^可以先选一个绿色点；后面的补充都不是必须。$/);
+  if (match) return 'You can choose one green point first; the later additions are optional.';
+  match = text.match(/^这个方式不能和之前的选择一起用，之前的选择已经保留。$/);
+  if (match) return 'This way cannot be combined with the earlier choice; the earlier choice was kept.';
+  match = text.match(/^这个方式和之前的选择冲突，没有采用。$/);
+  if (match) return 'This way conflicts with the earlier choice and was not used.';
+  match = text.match(/^这个方式已经失效，请重新点一个绿色点。$/);
+  if (match) return 'This way is no longer available. Click a green point again.';
+  match = text.match(/^这个方式没有补上原图里的线。请换一个点或方式。$/);
+  if (match) return 'This way did not add any source lines. Try another point or way.';
+  match = text.match(/^这个方式已接受，但没有补上新线。$/);
+  if (match) return 'This way was accepted, but it added no new lines.';
+  match = text.match(/^这个方式已接受，但没有补上新线；原来的 \.cp 没有改动。$/);
+  if (match) return 'This way was accepted, but it added no new lines; the original .cp was unchanged.';
+  match = text.match(/^已经补上 (\d+) 条线。原来的 \.cp 没有改动。$/);
+  if (match) return `${match[1]} lines were added. The original .cp was unchanged.`;
+  match = text.match(/^(\d+) 条折痕已写入当前 \.cp，可以下载。$/);
+  if (match) return `${match[1]} creases were written to the current .cp, which can be downloaded.`;
+  match = text.match(/^(\d+) 条折痕已写入当前 \.cp，可以下载。 当前结果还有问题：(.*)。$/);
+  if (match) return `${match[1]} creases were written to the current .cp, which can be downloaded. Current issues: ${match[2]}.`;
+  match = text.match(/^目前没有找到可靠的补充方式。$/);
+  if (match) return 'No reliable way to add more lines was found.';
+  match = text.match(/^没有找到可靠的补充方式。下面的黄色点是可选的；不确定就不要点，当前结果会保留。$/);
+  if (match) return 'No reliable way to add more lines was found. The yellow points below are optional; skip them if unsure. The current result is kept.';
+  match = text.match(/^已经补上 (\d+) 条线；还有 (\d+) 条没补上。暂时没有找到可靠的补充点，当前结果会保留。$/);
+  if (match) return `${match[1]} lines were added; ${match[2]} are still missing. No reliable extra point was found, so the current result is kept.`;
+  match = text.match(/^黄色补充点：可能补上 (\d+) 条线；点一下查看，确认后才会使用$/);
+  if (match) return `Yellow optional point: may add ${match[1]} lines. Click to review; it is used only after confirmation.`;
+  match = text.match(/^按“(.+)”开始$/);
+  if (match) return `Start with “${translateEnglish(match[1])}”`;
+  match = text.match(/^这个方式用到 (\d+) 个点$/);
+  if (match) return `This way uses ${match[1]} points`;
+  match = text.match(/^大约还能补上 (\d+) 条线$/);
+  if (match) return `About ${match[1]} more lines may be added`;
+  match = text.match(/^可能的开始方式：(.+)$/);
+  if (match) return `Possible way to start: ${translateEnglish(match[1])}`;
+  match = text.match(/^可选补充方式：(.+)$/);
+  if (match) return `Optional way to add lines: ${translateEnglish(match[1])}`;
+  match = text.match(/^起点方式：(.+)$/);
+  if (match) return `Start: ${translateEnglish(match[1])}`;
+  match = text.match(/^补充点：(.+)$/);
+  if (match) return `Added point: ${translateEnglish(match[1])}`;
+  match = text.match(/^(.+边)(完整)?([二三])等分$/);
+  if (match) return `${match[1]}${match[2] ? 'complete ' : ''}${match[3] === '二' ? 'bisection' : 'trisection'}`;
+  match = text.match(/^可选方式：(.+)$/);
+  if (match) return `Optional way: ${translateEnglish(match[1])}`;
+
+  match = text.match(/^第 (\d+) 代交点$/);
   if (match) return `Generation ${match[1]} intersection`;
   match = text.match(/^第 (\d+) 代纸边交点$/);
   if (match) return `Generation ${match[1]} paper-edge intersection`;

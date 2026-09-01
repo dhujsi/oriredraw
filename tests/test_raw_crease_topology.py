@@ -4,7 +4,11 @@ import unittest
 from exact_graph_propagation import propagate_exact_geometry
 from guided_construction import build_guided_boundary_report
 from qsqrt2_coordinates import qsqrt2_from_coefficients, qsqrt2_to_mapping
-from raw_crease_topology import build_raw_crease_topology_graph
+from raw_crease_topology import (
+    apply_segment_line_type_evidence,
+    build_raw_crease_topology_graph,
+    resolve_topology_segment_line_types,
+)
 
 
 def _line(raw_id, orientation, offset, intervals):
@@ -75,6 +79,45 @@ def _point_near(graph, expected, tolerance=0.5):
     )
 
 
+def _mv_record(line_type=None):
+    if line_type in {2, 3}:
+        return {
+            "status": "assigned",
+            "line_type": line_type,
+            "source": "source_image_color_evidence",
+            "ambiguous": False,
+        }
+    return {
+        "status": "ambiguous",
+        "line_type": None,
+        "source": None,
+        "reason": "ambiguous_source_image_mv",
+        "ambiguous": True,
+    }
+
+
+def _direct_topology(point_specs, segment_specs):
+    return {
+        "enabled": True,
+        "points": [
+            {
+                "id": point_id,
+                "point": [float(index), 0.0],
+                "boundary_sides": list(boundary_sides),
+            }
+            for index, (point_id, boundary_sides) in enumerate(point_specs)
+        ],
+        "segments": [
+            {
+                "id": segment_id,
+                "start_point_id": start_id,
+                "end_point_id": end_id,
+            }
+            for segment_id, start_id, end_id in segment_specs
+        ],
+    }
+
+
 class RawCreaseTopologyTest(unittest.TestCase):
     def test_trusted_source_color_evidence_follows_segment_id_into_topology(self):
         raw = _report([_line("horizontal", 0, 50.0, [[10.0, 90.0]])])
@@ -103,6 +146,203 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(
             segment["line_type_source"],
             "source_image_color_evidence",
+        )
+
+    def test_default_mountain_evidence_follows_segment_id_into_topology(self):
+        segments = [{"id": "neutral-segment"}]
+        applied = apply_segment_line_type_evidence(
+            segments,
+            {
+                "segments": {
+                    "neutral-segment": {
+                        "status": "assigned",
+                        "line_type": 2,
+                        "source": "source_image_default_mountain",
+                        "ambiguous": True,
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(segments[0]["line_type"], 2)
+        self.assertEqual(
+            segments[0]["line_type_source"],
+            "source_image_default_mountain",
+        )
+        self.assertEqual(applied["default_mountain_segment_count"], 1)
+
+    def test_single_unknown_internal_vertex_is_inferred_by_maekawa(self):
+        topology = _direct_topology(
+            [("center", ()), *((f"edge-{index}", ("top",)) for index in range(4))],
+            [
+                ("m1", "center", "edge-0"),
+                ("m2", "center", "edge-1"),
+                ("m3", "center", "edge-2"),
+                ("unknown", "center", "edge-3"),
+            ],
+        )
+        report = resolve_topology_segment_line_types(
+            topology,
+            {
+                "segments": {
+                    "m1": _mv_record(2),
+                    "m2": _mv_record(2),
+                    "m3": _mv_record(2),
+                    "unknown": _mv_record(),
+                }
+            },
+        )
+
+        unknown = next(item for item in topology["segments"] if item["id"] == "unknown")
+        self.assertEqual(unknown["line_type"], 3)
+        self.assertEqual(
+            unknown["line_type_source"],
+            "maekawa_single_unknown_propagation",
+        )
+        self.assertEqual(report["maekawa_inferred_segment_count"], 1)
+        self.assertEqual(report["default_mountain_segment_count"], 0)
+        self.assertEqual(report["propagation_round_count"], 1)
+
+    def test_inferred_segment_can_unlock_the_next_internal_vertex(self):
+        topology = _direct_topology(
+            [
+                ("first", ()),
+                ("second", ()),
+                *((f"edge-{index}", ("top",)) for index in range(6)),
+            ],
+            [
+                ("a", "first", "edge-0"),
+                ("b", "first", "edge-1"),
+                ("c", "first", "edge-2"),
+                ("shared", "first", "second"),
+                ("d", "second", "edge-3"),
+                ("e", "second", "edge-4"),
+                ("tail", "second", "edge-5"),
+            ],
+        )
+        report = resolve_topology_segment_line_types(
+            topology,
+            {
+                "segments": {
+                    **{segment_id: _mv_record(2) for segment_id in ("a", "b", "c", "d", "e")},
+                    "shared": _mv_record(),
+                    "tail": _mv_record(),
+                }
+            },
+        )
+        resolved = {item["id"]: item for item in topology["segments"]}
+
+        self.assertEqual(resolved["shared"]["line_type"], 3)
+        self.assertEqual(resolved["tail"]["line_type"], 2)
+        self.assertEqual(report["maekawa_inferred_segment_count"], 2)
+        self.assertEqual(report["propagation_round_count"], 2)
+        self.assertEqual(report["default_mountain_segment_count"], 0)
+
+    def test_multiple_unknowns_default_to_red_only_after_fixed_point(self):
+        topology = _direct_topology(
+            [("center", ()), *((f"edge-{index}", ("top",)) for index in range(4))],
+            [
+                ("m1", "center", "edge-0"),
+                ("m2", "center", "edge-1"),
+                ("unknown-a", "center", "edge-2"),
+                ("unknown-b", "center", "edge-3"),
+            ],
+        )
+        report = resolve_topology_segment_line_types(
+            topology,
+            {
+                "segments": {
+                    "m1": _mv_record(2),
+                    "m2": _mv_record(2),
+                    "unknown-a": _mv_record(),
+                    "unknown-b": _mv_record(),
+                }
+            },
+        )
+        resolved = {item["id"]: item for item in topology["segments"]}
+
+        self.assertEqual(report["maekawa_inferred_segment_count"], 0)
+        self.assertEqual(report["propagation_round_count"], 0)
+        self.assertEqual(report["default_mountain_segment_count"], 2)
+        self.assertEqual(
+            report["unresolved_before_fallback_segment_ids"],
+            ["unknown-a", "unknown-b"],
+        )
+        self.assertTrue(
+            all(
+                resolved[segment_id]["line_type"] == 2
+                and resolved[segment_id]["line_type_source"]
+                == "source_image_default_mountain"
+                for segment_id in ("unknown-a", "unknown-b")
+            )
+        )
+
+    def test_boundary_vertex_does_not_apply_internal_maekawa_rule(self):
+        topology = _direct_topology(
+            [("boundary", ("top",)), *((f"edge-{index}", ("left",)) for index in range(4))],
+            [
+                ("m1", "boundary", "edge-0"),
+                ("m2", "boundary", "edge-1"),
+                ("m3", "boundary", "edge-2"),
+                ("unknown", "boundary", "edge-3"),
+            ],
+        )
+        report = resolve_topology_segment_line_types(
+            topology,
+            {
+                "segments": {
+                    "m1": _mv_record(2),
+                    "m2": _mv_record(2),
+                    "m3": _mv_record(2),
+                    "unknown": _mv_record(),
+                }
+            },
+        )
+        unknown = next(item for item in topology["segments"] if item["id"] == "unknown")
+
+        self.assertEqual(report["maekawa_inferred_segment_count"], 0)
+        self.assertEqual(report["skipped_boundary_node_count"], 5)
+        self.assertEqual(unknown["line_type"], 2)
+        self.assertEqual(unknown["line_type_source"], "source_image_default_mountain")
+
+    def test_opposite_endpoint_inferences_do_not_depend_on_iteration_order(self):
+        topology = _direct_topology(
+            [
+                ("first", ()),
+                ("second", ()),
+                *((f"edge-{index}", ("top",)) for index in range(6)),
+            ],
+            [
+                ("a", "first", "edge-0"),
+                ("b", "first", "edge-1"),
+                ("c", "first", "edge-2"),
+                ("shared", "first", "second"),
+                ("d", "second", "edge-3"),
+                ("e", "second", "edge-4"),
+                ("f", "second", "edge-5"),
+            ],
+        )
+        report = resolve_topology_segment_line_types(
+            topology,
+            {
+                "segments": {
+                    "a": _mv_record(2),
+                    "b": _mv_record(2),
+                    "c": _mv_record(2),
+                    "shared": _mv_record(),
+                    "d": _mv_record(2),
+                    "e": _mv_record(2),
+                    "f": _mv_record(3),
+                }
+            },
+        )
+        shared = next(item for item in topology["segments"] if item["id"] == "shared")
+
+        self.assertEqual(report["maekawa_inferred_segment_count"], 0)
+        self.assertEqual(shared["line_type_source"], "source_image_default_mountain")
+        self.assertIn(
+            "opposite_maekawa_inferences_at_segment_ends",
+            {item["reason"] for item in report["conflicts"]},
         )
 
     def test_supported_crossing_becomes_one_incident_point_and_four_segments(self):
@@ -346,7 +586,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
             0,
         )
 
-    def test_multiple_boundary_rounds_share_one_graph_and_can_be_undone(self):
+    def test_one_boundary_seed_auto_fits_a_separate_existing_component(self):
         side_length = qsqrt2_from_coefficients(2)
         zero = qsqrt2_from_coefficients(0)
         half = qsqrt2_from_coefficients(1, 0, 2)
@@ -387,17 +627,27 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertTrue(first["enabled"])
-        self.assertEqual(first["phase"], "awaiting_additional_relation")
+        self.assertEqual(first["phase"], "complete_existing_creases")
         self.assertEqual(first["selected_relation_ids"], [top["id"]])
-        self.assertEqual(first["unexplained_observations"], 1)
-        self.assertEqual(len(first["unresolved_crease_entity_ids"]), 1)
-        self.assertEqual(first["next_relation_candidate_count"], 1)
-        self.assertEqual(first["next_relation_candidates"][0]["id"], bottom["id"])
+        self.assertEqual(first["unexplained_observations"], 0)
+        self.assertEqual(first["unresolved_crease_entity_ids"], [])
+        self.assertEqual(first["next_relation_candidate_count"], 0)
+        self.assertEqual(first["next_relation_candidates"], [])
+        self.assertEqual(first["automatic_topology_point_count"], 1)
         self.assertEqual(
-            first["next_relation_candidates"][0]["projected_new_crease_count"],
+            first["automatic_topology_point_history"][0][
+                "resolved_crease_count"
+            ],
             1,
         )
+        self.assertEqual(first["geometry_graph"]["crease_count"], 2)
+        self.assertEqual(
+            first["geometry_graph"]["invariants"]["invented_crease_count"],
+            0,
+        )
 
+        # Existing projects that explicitly stored the second relation still
+        # replay with the same final observed graph.
         second = build_guided_boundary_report(
             result,
             {"relation_ids": [top["id"], bottom["id"]]},
@@ -408,21 +658,12 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(second["selection_round"], 2)
         self.assertEqual(second["unexplained_observations"], 0)
         self.assertEqual(second["next_relation_candidates"], [])
+        self.assertEqual(second["automatic_topology_point_ids"], [])
         self.assertEqual(second["geometry_graph"]["crease_count"], 2)
         self.assertEqual(
             second["geometry_graph"]["invariants"]["invented_crease_count"],
             0,
         )
-
-        undone = build_guided_boundary_report(
-            result,
-            {"relation_ids": [top["id"]]},
-        )
-        self.assertEqual(
-            undone["unresolved_crease_entity_ids"],
-            first["unresolved_crease_entity_ids"],
-        )
-        self.assertEqual(undone["selected_relation_ids"], [top["id"]])
 
     def test_multiple_rounds_reject_a_different_global_side_length(self):
         side_length = qsqrt2_from_coefficients(2)
@@ -462,7 +703,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(report["reason"], "incompatible_relation_coordinate_gauge")
         self.assertEqual(report["incompatible_relation_ids"], [incompatible["id"]])
 
-    def test_internal_topology_point_is_a_confirmed_step_on_the_same_chain(self):
+    def test_internal_topology_point_is_automatically_fitted_after_one_boundary_seed(self):
         side_length = qsqrt2_from_coefficients(2)
         zero = qsqrt2_from_coefficients(0)
         half = qsqrt2_from_coefficients(1, 0, 2)
@@ -497,19 +738,38 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertTrue(first["enabled"])
-        self.assertEqual(first["phase"], "awaiting_topology_point")
+        self.assertEqual(first["phase"], "complete_existing_creases")
         self.assertEqual(first["next_relation_candidates"], [])
-        self.assertEqual(first["unexplained_observations"], 2)
-        crossing = next(
-            candidate
-            for candidate in first["next_topology_point_candidates"]
-            if candidate["point_kind"] == "line_intersection"
-        )
-        self.assertTrue(crossing["selectable"])
+        self.assertEqual(first["next_topology_point_candidates"], [])
+        self.assertEqual(first["unexplained_observations"], 0)
+        self.assertEqual(first["selection_steps"], [
+            {"kind": "boundary_relation", "id": top["id"]},
+        ])
+        self.assertEqual(first["selected_topology_point_ids"], [])
+        self.assertEqual(first["automatic_topology_point_count"], 1)
+        crossing = first["automatic_topology_point_history"][0]
+        self.assertEqual(first["automatic_topology_point_ids"], [crossing["id"]])
+        self.assertEqual(crossing["point_kind"], "line_intersection")
         self.assertEqual(crossing["coordinate_expression"], ["3/2", "3/2"])
         self.assertAlmostEqual(crossing["fit_residual_px"], 0.0, places=6)
-        self.assertEqual(crossing["projected_new_crease_count"], 2)
+        self.assertEqual(crossing["resolved_crease_count"], 2)
+        self.assertEqual(crossing["remaining_unresolved_crease_count"], 0)
+        self.assertEqual(
+            [item["step_kind"] for item in first["selection_history"]],
+            ["boundary_relation"],
+        )
+        self.assertEqual(first["geometry_graph"]["crease_count"], 3)
+        self.assertEqual(
+            first["geometry_graph"]["invariants"]["invented_crease_count"],
+            0,
+        )
+        self.assertEqual(
+            first["geometry_graph"]["invariants"]["invented_direction_count"],
+            0,
+        )
 
+        # Old projects that already stored the same point as an explicit step
+        # still replay deterministically instead of being invalidated.
         steps = [
             {"kind": "boundary_relation", "id": top["id"]},
             {"kind": "topology_point", "id": crossing["id"]},
@@ -523,6 +783,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(completed["phase"], "complete_existing_creases")
         self.assertEqual(completed["selection_steps"], steps)
         self.assertEqual(completed["selected_topology_point_ids"], [crossing["id"]])
+        self.assertEqual(completed["automatic_topology_point_ids"], [])
         self.assertEqual(
             [item["step_kind"] for item in completed["selection_history"]],
             ["boundary_relation", "topology_point"],
@@ -537,16 +798,6 @@ class RawCreaseTopologyTest(unittest.TestCase):
             completed["geometry_graph"]["invariants"]["invented_direction_count"],
             0,
         )
-
-        undone = build_guided_boundary_report(
-            result,
-            {"selection_steps": steps[:-1]},
-        )
-        self.assertEqual(
-            undone["unresolved_crease_entity_ids"],
-            first["unresolved_crease_entity_ids"],
-        )
-        self.assertEqual(undone["selected_topology_point_ids"], [])
 
     def test_arbitrary_cursor_coordinate_cannot_become_a_topology_seed(self):
         side_length = qsqrt2_from_coefficients(2)

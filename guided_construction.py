@@ -64,6 +64,8 @@ _CORNER_POINTS = (
     ("corner:bottom_left", "左下角", (0.0, 1.0)),
 )
 _RADICAL_DENOMINATORS = (1, 2, 3, 4, 6, 8, 12)
+_MAX_FREE_POINT_COMPLEXITY = 28
+_MAX_LINE_CONSTRAINED_POINT_COMPLEXITY = 48
 
 
 def _reduce_radical(a: int, b: int, denominator: int) -> tuple[int, int, int]:
@@ -1397,10 +1399,196 @@ def _fit_project_axis(
     }
 
 
+def _guided_direction_vector(direction_index: int) -> tuple[Qsqrt2, Qsqrt2]:
+    """Return the same exact direction basis used by graph propagation."""
+
+    zero = Qsqrt2()
+    one = Qsqrt2(1)
+    diagonal = Qsqrt2(1, 1)
+    vectors = (
+        (one, zero),
+        (diagonal, one),
+        (one, one),
+        (one, diagonal),
+        (zero, one),
+        (-one, diagonal),
+        (-one, one),
+        (-diagonal, one),
+    )
+    if not 0 <= direction_index < len(vectors):
+        raise ValueError(f"invalid 22.5-degree direction index: {direction_index}")
+    return vectors[direction_index]
+
+
+def _line_constrained_topology_point_fit(
+    entity: GeometryEntity,
+    graph: ConstructionGraph,
+    side_length: Qsqrt2,
+    maximum: float,
+    observed: tuple[float, float],
+    tolerance: float,
+) -> dict[str, Any] | None:
+    """Fit one scalar on an already exact incident crease.
+
+    A free x/y fit can place a selected topology point slightly off a crease
+    that is already exact.  With exactly one exact incident crease, the source
+    image only needs to determine the point's position along that crease.  The
+    resulting point is exact and incident by construction; a later copied-graph
+    trial still decides whether committing it resolves existing geometry.
+    """
+
+    exact_incident: list[tuple[GeometryEntity, tuple[Qsqrt2, Qsqrt2], int]] = []
+    for crease in graph.incident_entities(entity.id):
+        if crease.kind != "crease":
+            continue
+        through_raw = crease.exact_geometry.get("through_point_project")
+        if not isinstance(through_raw, (list, tuple)) or len(through_raw) != 2:
+            continue
+        try:
+            through = (
+                qsqrt2_from_mapping(through_raw[0]),
+                qsqrt2_from_mapping(through_raw[1]),
+            )
+            direction_index = int(crease.exact_geometry.get("direction_index"))
+            _guided_direction_vector(direction_index)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        exact_incident.append((crease, through, direction_index))
+
+    # Two exact incident creases belong to deterministic propagation.  If that
+    # propagation rejected their intersection, do not override the conflict by
+    # fitting a third, unrelated point.
+    if len(exact_incident) != 1:
+        return None
+
+    crease, through, direction_index = exact_incident[0]
+    direction = _guided_direction_vector(direction_index)
+    observed_project = (
+        observed[0] / maximum * float(side_length),
+        observed[1] / maximum * float(side_length),
+    )
+    through_float = (float(through[0]), float(through[1]))
+    direction_float = (float(direction[0]), float(direction[1]))
+    direction_norm_squared = (
+        direction_float[0] * direction_float[0]
+        + direction_float[1] * direction_float[1]
+    )
+    if direction_norm_squared <= 1e-12:
+        return None
+    target_parameter = (
+        (observed_project[0] - through_float[0]) * direction_float[0]
+        + (observed_project[1] - through_float[1]) * direction_float[1]
+    ) / direction_norm_squared
+
+    candidates: dict[tuple[int, int, int], dict[str, Any]] = {}
+    for denominator in _RADICAL_DENOMINATORS:
+        for b in range(-12, 13):
+            a = int(round(denominator * target_parameter - b * math.sqrt(2.0)))
+            if abs(a) > 24:
+                continue
+            parameter = qsqrt2_from_coefficients(a, b, denominator)
+            parameter_key = qsqrt2_canonical_coefficients(parameter)
+            coordinate = (
+                through[0] + parameter * direction[0],
+                through[1] + parameter * direction[1],
+            )
+            if not all(
+                -1e-9 <= float(value) <= float(side_length) + 1e-9
+                for value in coordinate
+            ):
+                continue
+            fitted_pixel = (
+                float(coordinate[0] / side_length) * maximum,
+                float(coordinate[1] / side_length) * maximum,
+            )
+            residual = math.hypot(
+                fitted_pixel[0] - observed[0],
+                fitted_pixel[1] - observed[1],
+            )
+            complexity = (
+                qsqrt2_complexity(coordinate[0])
+                + qsqrt2_complexity(coordinate[1])
+            )
+            candidate = {
+                "coordinate": coordinate,
+                "fitted_pixel": fitted_pixel,
+                "residual_px": residual,
+                "complexity": complexity,
+                "parameter": parameter,
+                "parameter_complexity": qsqrt2_complexity(parameter),
+                "score": residual + 0.15 * complexity,
+            }
+            previous = candidates.get(parameter_key)
+            if previous is None or (
+                candidate["score"],
+                candidate["residual_px"],
+                candidate["complexity"],
+            ) < (
+                previous["score"],
+                previous["residual_px"],
+                previous["complexity"],
+            ):
+                candidates[parameter_key] = candidate
+
+    within_tolerance = [
+        candidate
+        for candidate in candidates.values()
+        if candidate["residual_px"] <= tolerance
+    ]
+    if not within_tolerance:
+        return None
+    within_complexity = [
+        candidate
+        for candidate in within_tolerance
+        if candidate["complexity"] <= _MAX_LINE_CONSTRAINED_POINT_COMPLEXITY
+    ]
+    candidate = min(
+        within_complexity or within_tolerance,
+        key=lambda item: (
+            item["score"],
+            item["residual_px"],
+            item["complexity"],
+            qsqrt2_canonical_coefficients(item["parameter"]),
+        ),
+    )
+    coordinate = candidate["coordinate"]
+    fit_is_selectable = (
+        candidate["complexity"] <= _MAX_LINE_CONSTRAINED_POINT_COMPLEXITY
+    )
+    return {
+        "observed_point_px": [round(observed[0], 6), round(observed[1], 6)],
+        "fitted_point_px": [
+            round(float(candidate["fitted_pixel"][0]), 6),
+            round(float(candidate["fitted_pixel"][1]), 6),
+        ],
+        "project_coordinate": [
+            qsqrt2_to_mapping(coordinate[0]),
+            qsqrt2_to_mapping(coordinate[1]),
+        ],
+        "coordinate_expression": [
+            qsqrt2_expression(coordinate[0]),
+            qsqrt2_expression(coordinate[1]),
+        ],
+        "fit_residual_px": round(float(candidate["residual_px"]), 6),
+        "fit_tolerance_px": round(float(tolerance), 6),
+        "algebraic_complexity": int(candidate["complexity"]),
+        "fit_is_selectable": fit_is_selectable,
+        "fit_block_reason": (
+            None if fit_is_selectable else "algebraic_complexity_too_high"
+        ),
+        "fit_constraint": "existing_exact_incident_crease",
+        "fit_constraint_crease_id": str(crease.id),
+        "fit_parameter": qsqrt2_to_mapping(candidate["parameter"]),
+        "fit_parameter_complexity": int(candidate["parameter_complexity"]),
+    }
+
+
 def _fit_topology_point(
     entity: GeometryEntity,
     side_length: Qsqrt2,
     maximum: float,
+    *,
+    graph: ConstructionGraph | None = None,
 ) -> dict[str, Any] | None:
     raw_point = entity.observed_geometry.get("point_px")
     if not isinstance(raw_point, (list, tuple)) or len(raw_point) < 2:
@@ -1422,6 +1610,17 @@ def _fit_topology_point(
     except (TypeError, ValueError):
         observed_tolerance = 1.75
     tolerance = min(3.2, max(1.25, observed_tolerance))
+    if graph is not None:
+        constrained = _line_constrained_topology_point_fit(
+            entity,
+            graph,
+            side_length,
+            maximum,
+            observed,
+            tolerance,
+        )
+        if constrained is not None:
+            return constrained
     complexity = int(x_fit["complexity"]) + int(y_fit["complexity"])
     coordinates = [
         {key: value for key, value in x_fit.items() if key not in {"fitted_pixel", "residual_px"}},
@@ -1434,7 +1633,7 @@ def _fit_topology_point(
     fit_is_selectable = (
         within_paper
         and residual <= tolerance
-        and complexity <= 28
+        and complexity <= _MAX_FREE_POINT_COMPLEXITY
     )
     return {
         "observed_point_px": [round(observed[0], 6), round(observed[1], 6)],
@@ -1451,7 +1650,7 @@ def _fit_topology_point(
             else "outside_paper"
             if not within_paper
             else "algebraic_complexity_too_high"
-            if complexity > 28
+            if complexity > _MAX_FREE_POINT_COMPLEXITY
             else "coordinate_residual_too_large"
         ),
     }
@@ -1491,7 +1690,12 @@ def _rank_next_topology_point_candidates(
         ]
         if not incident_unresolved:
             continue
-        fitted = _fit_topology_point(entity, side_length, maximum)
+        fitted = _fit_topology_point(
+            entity,
+            side_length,
+            maximum,
+            graph=graph,
+        )
         if fitted is None:
             continue
         projected_gain = 0
@@ -1563,8 +1767,15 @@ def _add_guided_topology_point_operation(
     side_length: Qsqrt2,
     *,
     selection_round: int,
+    automatic: bool = False,
 ) -> ConstructionOperation:
     point_id = str(candidate["id"])
+    source = (
+        "guided_automatic_topology_point"
+        if automatic
+        else "guided_internal_topology_point"
+    )
+    round_key = "automatic_fit_order" if automatic else "selection_round"
     entity = next(
         item
         for item in graph.geometry_entities.values()
@@ -1573,23 +1784,28 @@ def _add_guided_topology_point_operation(
     graph.exactify_geometry(
         entity.id,
         {
-            "source": "guided_internal_topology_point",
+            "source": source,
             "project_coordinate": list(candidate["project_coordinate"]),
             "side_length": qsqrt2_to_mapping(side_length),
             "exact_generation": 0,
             "observed_residual_px": candidate["fit_residual_px"],
-            "guided_selection_round": int(selection_round),
+            f"guided_{round_key}": int(selection_round),
         },
     )
-    entity.metadata.setdefault("guided_internal_point_selections", []).append(
+    metadata_key = (
+        "guided_automatic_point_fits"
+        if automatic
+        else "guided_internal_point_selections"
+    )
+    entity.metadata.setdefault(metadata_key, []).append(
         {
-            "selection_round": int(selection_round),
+            round_key: int(selection_round),
             "fit_residual_px": candidate["fit_residual_px"],
         }
     )
     operation = ConstructionOperation(
-        id=("guided_internal_topology_point", point_id, int(selection_round)),
-        kind="guided_internal_topology_point",
+        id=(source, point_id, int(selection_round)),
+        kind=source,
         parents=(),
         outputs=(entity.id,),
         generation=0,
@@ -1597,8 +1813,9 @@ def _add_guided_topology_point_operation(
     )
     graph.add_operation(operation)
     details[operation.id] = {
-        "provenance": "guided_internal_topology_point",
-        "selection_round": int(selection_round),
+        "provenance": source,
+        round_key: int(selection_round),
+        "automatic": bool(automatic),
         "topology_point_id": point_id,
         "observed_point_px": list(candidate["observed_point_px"]),
         "fitted_point_px": list(candidate["fitted_point_px"]),
@@ -1607,6 +1824,102 @@ def _add_guided_topology_point_operation(
         "projected_new_crease_count": candidate["projected_new_crease_count"],
     }
     return operation
+
+
+def _automatically_fit_topology_points(
+    graph: ConstructionGraph,
+    details: dict[Hashable, dict[str, Any]],
+    side_length: Qsqrt2,
+    *,
+    maximum: float,
+) -> tuple[
+    ConstructionGraph,
+    dict[Hashable, dict[str, Any]],
+    list[ConstructionOperation],
+    list[dict[str, Any]],
+    list[Mapping[str, Any]],
+]:
+    """Greedily exactify only observed points that prove useful on a trial graph.
+
+    Candidate ranking already exactifies each existing topology point on a copy
+    and keeps it selectable only when deterministic propagation resolves at
+    least one additional observed crease.  This loop commits the best such
+    trial, recomputes the frontier, and stops when no verified gain remains.
+    It cannot add a point, crease, or direction that was absent from the raw
+    finite topology.
+    """
+
+    operations: list[ConstructionOperation] = []
+    history: list[dict[str, Any]] = []
+    reports: list[Mapping[str, Any]] = []
+    current_report = propagate_exact_geometry(graph, maximum=maximum)
+    reports.append(current_report)
+    fit_order = 0
+
+    while int(current_report.get("unresolved_crease_count", 0) or 0) > 0:
+        baseline = int(current_report.get("unresolved_crease_count", 0) or 0)
+        candidates = _rank_next_topology_point_candidates(
+            graph,
+            current_report,
+            side_length,
+            maximum=maximum,
+        )
+        committed = False
+        for candidate in candidates:
+            if not candidate.get("selectable"):
+                continue
+            trial_graph = copy.deepcopy(graph)
+            trial_details = copy.deepcopy(details)
+            trial_order = fit_order + 1
+            operation = _add_guided_topology_point_operation(
+                trial_graph,
+                trial_details,
+                candidate,
+                side_length,
+                selection_round=trial_order,
+                automatic=True,
+            )
+            trial_report = propagate_exact_geometry(
+                trial_graph,
+                maximum=maximum,
+            )
+            remaining = int(
+                trial_report.get("unresolved_crease_count", baseline) or 0
+            )
+            if remaining >= baseline:
+                continue
+
+            graph = trial_graph
+            details = trial_details
+            current_report = trial_report
+            fit_order = trial_order
+            operations.append(operation)
+            history.append(
+                {
+                    "automatic_fit_order": fit_order,
+                    "id": str(candidate["id"]),
+                    "label": str(
+                        candidate.get("label") or "observed topology point"
+                    ),
+                    "kind": "topology_point",
+                    "point_kind": candidate.get("point_kind"),
+                    "observed_point_px": list(candidate["observed_point_px"]),
+                    "fitted_point_px": list(candidate["fitted_point_px"]),
+                    "coordinate_expression": list(
+                        candidate["coordinate_expression"]
+                    ),
+                    "fit_residual_px": candidate["fit_residual_px"],
+                    "resolved_crease_count": baseline - remaining,
+                    "remaining_unresolved_crease_count": remaining,
+                }
+            )
+            reports.append(trial_report)
+            committed = True
+            break
+        if not committed:
+            break
+
+    return graph, details, operations, history, reports
 
 
 def _combine_propagation_reports(
@@ -2013,7 +2326,30 @@ def build_guided_boundary_report(
             }
         )
 
-    propagation_reports.append(propagate_exact_geometry(graph, maximum=maximum))
+    automatic_point_operations: list[ConstructionOperation] = []
+    automatic_point_history: list[dict[str, Any]] = []
+    if (
+        raw_available
+        and exact_side_length is not None
+        and sum(guided_candidate_counts) > 0
+    ):
+        (
+            graph,
+            details,
+            automatic_point_operations,
+            automatic_point_history,
+            automatic_reports,
+        ) = _automatically_fit_topology_points(
+            graph,
+            details,
+            exact_side_length,
+            maximum=maximum,
+        )
+        propagation_reports.extend(automatic_reports)
+    else:
+        propagation_reports.append(
+            propagate_exact_geometry(graph, maximum=maximum)
+        )
     geometry_propagation = _combine_propagation_reports(propagation_reports)
     relation_summaries = [
         _operation_summary(operation, details)
@@ -2022,6 +2358,10 @@ def build_guided_boundary_report(
     selected_point_summaries = [
         _operation_summary(operation, details)
         for operation in selected_point_operations
+    ]
+    automatic_point_summaries = [
+        _operation_summary(operation, details)
+        for operation in automatic_point_operations
     ]
     guided_operations = [
         _operation_summary(operation, details)
@@ -2043,6 +2383,7 @@ def build_guided_boundary_report(
     operations = [
         *relation_summaries,
         *selected_point_summaries,
+        *automatic_point_summaries,
         *guided_operations,
         *propagation_operations,
     ]
@@ -2156,6 +2497,9 @@ def build_guided_boundary_report(
     selected_topology_point_ids = [
         str(item["id"]) for item in selected_point_history
     ]
+    automatic_topology_point_ids = [
+        str(item["id"]) for item in automatic_point_history
+    ]
     selection_history = sorted(
         [
             *(
@@ -2189,6 +2533,9 @@ def build_guided_boundary_report(
         "selected_relation_history": selected_relation_history,
         "selected_topology_point_ids": selected_topology_point_ids,
         "selected_topology_point_history": selected_point_history,
+        "automatic_topology_point_ids": automatic_topology_point_ids,
+        "automatic_topology_point_history": automatic_point_history,
+        "automatic_topology_point_count": len(automatic_point_history),
         "selection_steps": [dict(step) for step in selection_steps],
         "selection_history": selection_history,
         "selection_round": len(selection_steps),
@@ -2234,6 +2581,7 @@ def build_guided_boundary_report(
         "selected_operations": operations,
         "selected_guided_operations": guided_operations,
         "selected_guided_point_operations": selected_point_summaries,
+        "automatic_guided_point_operations": automatic_point_summaries,
         "geometry_propagation": geometry_propagation,
         "geometry_graph": geometry_snapshot,
         "notes": [
@@ -2272,8 +2620,10 @@ def build_guided_boundary_report(
         "segment_line_type_assignments"
     ]
     report["output_ready"] = bool(output_contract["output_ready"])
+    report["checks_passed"] = bool(output_contract["checks_passed"])
+    report["cp_available"] = bool(output_contract["cp_available"])
     report["cp"] = output_contract["cp"]
-    report["output_unchanged"] = not report["output_ready"]
+    report["output_unchanged"] = not report["cp_available"]
     return report
 
 

@@ -160,7 +160,7 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         self.assertEqual(sum(row.line_type == 3 for row in rows), 1)
         self.assertNotEqual(contract["cp"], report["cp"])
 
-    def test_complete_lines_do_not_bypass_missing_finite_endpoint(self):
+    def test_missing_exact_endpoint_uses_observed_endpoint_in_downloadable_draft(self):
         report = _complete_report()
         right = next(
             item for item in report["geometry_graph"]["entities"] if item["id"] == "right"
@@ -172,7 +172,13 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
 
         self.assertFalse(contract["output_ready"])
-        self.assertIsNone(contract["cp"])
+        self.assertFalse(contract["checks_passed"])
+        self.assertTrue(contract["cp_available"])
+        self.assertEqual(contract["status"], "incomplete")
+        self.assertIsInstance(contract["cp"], str)
+        self.assertEqual(contract["draft_internal_segment_count"], 2)
+        self.assertEqual(contract["draft_observed_endpoint_fallback_count"], 1)
+        self.assertEqual(contract["draft_skipped_internal_segment_ids"], [])
         self.assertEqual(contract["unresolved_endpoint_point_ids"], ["right"])
         self.assertIn(
             "unresolved_finite_segment_endpoints",
@@ -180,19 +186,55 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
         self.assertTrue(contract["gate_results"]["exact_crease_closure"]["passed"])
         self.assertFalse(contract["gate_results"]["exact_endpoint_closure"]["passed"])
+        rows, issues = parse_cp(contract["cp"])
+        self.assertEqual(issues, [])
+        self.assertEqual(len(rows), 8)
+        self.assertNotIn(0, {row.line_type for row in rows})
 
-    def test_line_type_is_required_per_segment_and_never_defaulted(self):
+    def test_missing_source_colour_defaults_to_red_per_segment(self):
         contract = build_guided_cp_output_contract(_complete_report())
 
-        self.assertFalse(contract["output_ready"])
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["output_ready"])
+        self.assertIsNotNone(contract["cp"])
         self.assertEqual(
             contract["unassigned_segment_ids"],
-            ["left-half", "right-half"],
+            [],
         )
-        self.assertEqual(contract["blocker_counts"]["missing_segment_line_types"], 2)
-        self.assertEqual(contract["segment_line_type_assignments"], {})
-        self.assertFalse(contract["gate_results"]["segment_line_types"]["passed"])
+        self.assertEqual(
+            contract["segment_line_type_assignments"],
+            {
+                "left-half": {
+                    "line_type": 2,
+                    "source": "source_image_default_mountain",
+                },
+                "right-half": {
+                    "line_type": 2,
+                    "source": "source_image_default_mountain",
+                },
+            },
+        )
+        self.assertEqual(contract["invariants"]["default_line_type_count"], 2)
+        self.assertTrue(contract["gate_results"]["segment_line_types"]["passed"])
+
+    def test_maekawa_inference_is_a_trusted_segment_type_source(self):
+        report = _complete_report()
+        left, right = report["raw_topology"]["segments"]
+        left["line_type"] = 2
+        left["line_type_source"] = "source_image_color_evidence"
+        right["line_type"] = 2
+        right["line_type_source"] = "maekawa_single_unknown_propagation"
+
+        contract = build_guided_cp_output_contract(report)
+
+        self.assertTrue(contract["output_ready"])
+        self.assertEqual(
+            contract["segment_line_type_assignments"]["right-half"],
+            {
+                "line_type": 2,
+                "source": "maekawa_single_unknown_propagation",
+            },
+        )
+        self.assertEqual(contract["invariants"]["default_line_type_count"], 0)
 
     def test_untrusted_type_source_and_direction_mismatch_both_block_export(self):
         report = _complete_report()
@@ -209,6 +251,8 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
 
         self.assertFalse(contract["output_ready"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsInstance(contract["cp"], str)
         self.assertIn("untrusted_segment_line_type_provenance", contract["blocker_counts"])
         self.assertNotIn("left-half", contract["segment_line_type_assignments"])
         self.assertEqual(
@@ -229,6 +273,8 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
 
         self.assertFalse(contract["output_ready"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsInstance(contract["cp"], str)
         self.assertEqual(
             contract["blocker_counts"]["unknown_segment_line_type_assignments"],
             1,

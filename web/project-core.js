@@ -77,15 +77,15 @@
   actions.append(saveButton, exportButton, downloadButton);
   resultHead.append(actions);
 
-  function setOutputReady(ready) {
-    const outputReady = Boolean(ready);
-    saveButton.disabled = !outputReady;
-    exportButton.disabled = !outputReady;
-    downloadButton.disabled = !outputReady;
+  function setOutputState({ cpAvailable = false, projectAvailable = false } = {}) {
+    saveButton.disabled = !projectAvailable;
+    exportButton.disabled = !projectAvailable;
+    downloadButton.disabled = !cpAvailable;
+    downloadButton.classList.toggle('hidden', !cpAvailable);
   }
-  setOutputReady(false);
+  setOutputState();
   document.addEventListener('oriredraw:result-state', event => {
-    setOutputReady(event.detail?.outputReady);
+    setOutputState(event.detail || {});
   });
 
   const dialog = document.createElement('dialog');
@@ -126,19 +126,19 @@
     return isEnglish()
       ? {
           open: 'Open project',
-          save: 'Save project',
-          export: 'Export project',
+          save: 'Save current project',
+          export: 'Export .oriredraw project',
           dialog: 'Open project',
-          importCopy: 'Open an exported .oriredraw project file without rerunning reconstruction.',
+          importCopy: 'Open an .oriredraw project file without recalculating it.',
           importButton: 'Open project file',
           empty: 'No projects saved in this browser yet.',
           openSaved: 'Open',
           deleteSaved: 'Delete',
-          saved: 'Project saved in this browser.',
-          exported: 'Project file exported.',
+          saved: 'Current project saved in this browser.',
+          exported: '.oriredraw project file exported.',
           loaded: 'Project opened without reconstruction.',
           deleted: 'Saved project deleted.',
-          noResult: 'Run a reconstruction or open a project first.',
+          noResult: 'Analyze an image or open a project first.',
           invalid: 'This is not a valid Oriredraw project file.',
           newer: 'This project was created by a newer Oriredraw project format.',
           storageError: 'Could not save in browser storage. Export the project file instead.',
@@ -146,22 +146,22 @@
         }
       : {
           open: '打开项目',
-          save: '保存项目',
-          export: '导出项目',
+          save: '保存当前项目',
+          export: '导出 .oriredraw 项目',
           dialog: '打开项目',
-          importCopy: '打开导出的 .oriredraw 项目文件，直接恢复结果，不重新运行重建。',
+          importCopy: '打开 .oriredraw 项目文件，恢复已保存结果，不重新计算。',
           importButton: '从项目文件打开',
           empty: '这个浏览器里还没有保存的项目。',
           openSaved: '打开',
           deleteSaved: '删除',
-          saved: '项目已保存到这个浏览器。',
-          exported: '项目文件已导出。',
-          loaded: '项目已直接恢复，没有重新重建。',
+          saved: '当前项目已保存到这个浏览器。',
+          exported: '.oriredraw 项目文件已导出。',
+          loaded: '项目已打开，没有重新计算。',
           deleted: '已删除本地保存项目。',
-          noResult: '请先完成一次重建或打开一个项目。',
+          noResult: '请先分析一张图片或打开一个项目。',
           invalid: '这不是有效的 Oriredraw 项目文件。',
           newer: '这个项目由更新版本的 Oriredraw 项目格式生成，当前版本无法打开。',
-          storageError: '浏览器本地保存失败；可以改用“导出项目”保存为文件。',
+          storageError: '浏览器本地保存失败；可以导出项目文件保存。',
           readError: '项目文件读取失败。',
         };
   }
@@ -232,7 +232,9 @@
 
   async function buildProject() {
     const root = bridge.result;
-    if (!root?.cp || typeof root.reconstruction_data_uri !== 'string') {
+    const isGuidedRaw = root?.mode === 'guided_raw_primary_v1';
+    const hasCp = typeof root?.cp === 'string' && root.cp.length > 0;
+    if (!root || typeof root.reconstruction_data_uri !== 'string' || (!isGuidedRaw && !hasCp)) {
       throw new Error(copy().noResult);
     }
     const sourceFile = input.files?.[0] || null;
@@ -260,12 +262,14 @@
   }
 
   function validateProject(project) {
+    const isGuidedRaw = project?.result?.mode === 'guided_raw_primary_v1';
+    const hasCp = typeof project?.result?.cp === 'string' && project.result.cp.length > 0;
     if (
       !project
       || project.format !== FORMAT
       || !Number.isInteger(Number(project.format_version))
       || !project.result
-      || typeof project.result.cp !== 'string'
+      || (!isGuidedRaw && !hasCp)
       || typeof project.result.reconstruction_data_uri !== 'string'
     ) {
       throw new Error(copy().invalid);

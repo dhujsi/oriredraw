@@ -1,10 +1,11 @@
-"""Hard export contract for the user-guided finite crease graph.
+"""CP serialization and diagnostics for the user-guided finite crease graph.
 
-This module is deliberately downstream of exact propagation.  It never
-extends a line, creates an internal segment, chooses a direction, or guesses a
-mountain/valley assignment.  A CP is emitted only when every observed finite
-topology segment has exact endpoints and an explicitly sourced segment-level
-line type.
+This module never extends a line or creates an internal segment.  It always
+serializes the currently observed finite topology when coordinates are
+available.  Exact fitted endpoints are preferred; unresolved endpoints fall
+back to their source-image positions.  Source-image colour is used where it is
+clear, and every missing or unusable M/V value is exported as red/mountain.
+Diagnostics describe defects in that current CP but never suppress it.
 """
 
 from __future__ import annotations
@@ -26,7 +27,9 @@ ExactPoint = tuple[Qsqrt2, Qsqrt2]
 _RAW_SEGMENT_SOURCE = "raw_image_finite_line_evidence"
 _TRUSTED_LINE_TYPE_SOURCES = {
     "explicit_segment_assignment",
+    "maekawa_single_unknown_propagation",
     "source_image_color_evidence",
+    "source_image_default_mountain",
     "user_confirmed",
 }
 
@@ -134,6 +137,77 @@ def _serialize_cp(rows: list[tuple[int, float, float, float, float]]) -> str:
     )
 
 
+def _pixel_point_to_cp(
+    raw: Any,
+    maximum: float,
+    boundary_sides: Any = (),
+) -> tuple[float, float] | None:
+    if (
+        not isinstance(raw, (list, tuple))
+        or len(raw) < 2
+        or not math.isfinite(maximum)
+        or maximum <= 0
+    ):
+        return None
+    try:
+        x = -200.0 + 400.0 * float(raw[0]) / maximum
+        y = -200.0 + 400.0 * float(raw[1]) / maximum
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    sides = {str(item) for item in boundary_sides or ()}
+    if "left" in sides:
+        x = -200.0
+    if "right" in sides:
+        x = 200.0
+    if "top" in sides:
+        y = -200.0
+    if "bottom" in sides:
+        y = 200.0
+    return x, y
+
+
+def _draft_boundary_rows(
+    endpoint_points: list[tuple[float, float]],
+) -> tuple[list[tuple[int, float, float, float, float]], dict[str, int]]:
+    side_values: dict[str, set[float]] = {
+        side: {-200.0, 200.0} for side in ("top", "right", "bottom", "left")
+    }
+
+    def remember(side: str, value: float) -> None:
+        side_values[side].add(round(float(value), 12))
+
+    for x, y in endpoint_points:
+        if abs(y + 200.0) <= 1e-7:
+            remember("top", x)
+        if abs(x - 200.0) <= 1e-7:
+            remember("right", y)
+        if abs(y - 200.0) <= 1e-7:
+            remember("bottom", x)
+        if abs(x + 200.0) <= 1e-7:
+            remember("left", y)
+
+    rows: list[tuple[int, float, float, float, float]] = []
+    counts: dict[str, int] = {}
+    for side in ("top", "right", "bottom", "left"):
+        values = sorted(side_values[side])
+        if side in {"bottom", "left"}:
+            values.reverse()
+        counts[side] = max(0, len(values) - 1)
+        for first, second in zip(values, values[1:]):
+            if side == "top":
+                row = (1, first, -200.0, second, -200.0)
+            elif side == "right":
+                row = (1, 200.0, first, 200.0, second)
+            elif side == "bottom":
+                row = (1, first, 200.0, second, 200.0)
+            else:
+                row = (1, -200.0, first, -200.0, second)
+            rows.append(row)
+    return rows, counts
+
+
 def _segment_line_type(
     segment: Mapping[str, Any],
     assignments: Mapping[str, Any],
@@ -152,6 +226,8 @@ def _segment_line_type(
     else:
         raw_source = segment.get("line_type_source")
         source = str(raw_source) if raw_source else None
+    if raw is None and not explicitly_assigned:
+        return 2, "source_image_default_mountain", None
     try:
         line_type = int(raw)
     except (TypeError, ValueError):
@@ -161,6 +237,133 @@ def _segment_line_type(
     if source not in _TRUSTED_LINE_TYPE_SOURCES:
         return line_type, source, "untrusted_segment_line_type_source"
     return line_type, source, None
+
+
+def _build_topology_draft_cp(
+    topology: Mapping[str, Any],
+    assignments: Mapping[str, Any],
+    *,
+    endpoint_cp_overrides: Mapping[tuple[str, str], tuple[float, float]] | None = None,
+    observed_cp_points: Mapping[str, tuple[float, float]] | None = None,
+) -> dict[str, Any]:
+    """Serialize every currently representable raw segment without gating it."""
+
+    if not isinstance(topology, Mapping) or not topology.get("enabled", False):
+        return {
+            "cp": None,
+            "cp_available": False,
+            "internal_segment_count": 0,
+            "boundary_segment_count": 0,
+            "boundary_segment_counts_by_side": {},
+            "observed_endpoint_fallback_count": 0,
+            "red_fallback_segment_count": 0,
+            "skipped_internal_segment_ids": [],
+            "_rows": [],
+        }
+
+    try:
+        maximum = float(topology.get("maximum_coordinate_px", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        maximum = 0.0
+    if not math.isfinite(maximum) or maximum <= 0:
+        maximum = 0.0
+
+    point_records = {
+        str(item.get("id") or ""): item
+        for item in topology.get("points", [])
+        if isinstance(item, Mapping) and str(item.get("id") or "")
+    }
+    exact_overrides = endpoint_cp_overrides or {}
+    observed_overrides = observed_cp_points or {}
+    internal_rows: list[tuple[int, float, float, float, float]] = []
+    endpoint_points: list[tuple[float, float]] = []
+    skipped_ids: list[str] = []
+    observed_endpoint_fallback_count = 0
+    red_fallback_segment_count = 0
+
+    def endpoint_cp(
+        segment: Mapping[str, Any],
+        segment_id: str,
+        endpoint_name: str,
+    ) -> tuple[tuple[float, float] | None, bool]:
+        override = exact_overrides.get((segment_id, endpoint_name))
+        if override is not None:
+            try:
+                point = float(override[0]), float(override[1])
+            except (TypeError, ValueError, IndexError):
+                point = (math.nan, math.nan)
+            if all(math.isfinite(value) for value in point):
+                return point, False
+
+        current_id = str(segment.get(f"{endpoint_name}_point_id") or "")
+        observed_id = str(
+            segment.get(f"observed_{endpoint_name}_point_id") or current_id
+        )
+        for point_id in dict.fromkeys((observed_id, current_id)):
+            record = point_records.get(point_id)
+            if record is not None:
+                point = _pixel_point_to_cp(
+                    record.get("point"),
+                    maximum,
+                    record.get("boundary_sides"),
+                )
+                if point is not None:
+                    return point, True
+            point = observed_overrides.get(point_id)
+            if point is not None:
+                return point, True
+        return None, False
+
+    raw_segments = [
+        item for item in topology.get("segments", []) if isinstance(item, Mapping)
+    ]
+    for segment in raw_segments:
+        segment_id = str(segment.get("id") or "")
+        start_cp, start_observed = endpoint_cp(segment, segment_id, "start")
+        end_cp, end_observed = endpoint_cp(segment, segment_id, "end")
+        if start_cp is None or end_cp is None:
+            skipped_ids.append(segment_id)
+            continue
+
+        line_type, _, type_error = _segment_line_type(segment, assignments)
+        if type_error is not None or line_type not in {2, 3}:
+            line_type = 2
+            red_fallback_segment_count += 1
+        if start_cp == end_cp:
+            skipped_ids.append(segment_id)
+            continue
+        internal_rows.append((line_type, *start_cp, *end_cp))
+        endpoint_points.extend((start_cp, end_cp))
+        observed_endpoint_fallback_count += int(start_observed) + int(end_observed)
+
+    boundary_rows, boundary_counts = _draft_boundary_rows(endpoint_points)
+    rows = [*boundary_rows, *internal_rows]
+    cp = _serialize_cp(rows) if rows else None
+    return {
+        "cp": cp,
+        "cp_available": bool(cp),
+        "internal_segment_count": len(internal_rows),
+        "boundary_segment_count": len(boundary_rows),
+        "boundary_segment_counts_by_side": boundary_counts,
+        "observed_endpoint_fallback_count": observed_endpoint_fallback_count,
+        "red_fallback_segment_count": red_fallback_segment_count,
+        "skipped_internal_segment_ids": sorted(skipped_ids),
+        "_rows": rows,
+    }
+
+
+def build_raw_topology_draft_cp(
+    topology: Mapping[str, Any],
+    *,
+    segment_line_types: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a downloadable CP directly from the currently observed topology."""
+
+    draft = _build_topology_draft_cp(
+        topology,
+        segment_line_types if isinstance(segment_line_types, Mapping) else {},
+    )
+    return {key: value for key, value in draft.items() if key != "_rows"}
 
 
 def _boundary_rows(
@@ -433,6 +636,21 @@ def build_guided_cp_output_contract(
         and isinstance(endpoint_closure, Mapping)
         and endpoint_closure.get("enabled", False)
     )
+    trusted_boundary_override_point_ids = {
+        str(item.get("observed_point_id") or "")
+        for item in (
+            endpoint_closure.get("bindings", [])
+            if trusted_closed_topology and isinstance(endpoint_closure, Mapping)
+            else []
+        )
+        if (
+            isinstance(item, Mapping)
+            and item.get("target_kind") == "known_paper_boundary_intersection"
+            and item.get("source")
+            == "selected_exact_crease_known_paper_boundary_intersection"
+            and str(item.get("observed_point_id") or "")
+        )
+    }
     if (
         not (trusted_raw_topology or trusted_closed_topology)
         or not isinstance(topology_invariants, Mapping)
@@ -491,8 +709,24 @@ def build_guided_cp_output_contract(
     endpoint_degree: Counter[str] = Counter()
     candidate_segments: list[dict[str, Any]] = []
     accepted_line_type_assignments: dict[str, dict[str, Any]] = {}
+    default_line_type_count = 0
     internal_rows: list[tuple[int, float, float, float, float]] = []
     finite_segment_exact_points: list[ExactPoint] = []
+    endpoint_cp_overrides: dict[tuple[str, str], tuple[float, float]] = {}
+    observed_cp_points: dict[str, tuple[float, float]] = {}
+    for entity_id, entity in entities.items():
+        if entity.get("kind") != "point":
+            continue
+        observed = entity.get("observed_geometry")
+        if not isinstance(observed, Mapping):
+            continue
+        point = _pixel_point_to_cp(
+            observed.get("point_px"),
+            maximum,
+            observed.get("boundary_sides"),
+        )
+        if point is not None:
+            observed_cp_points[entity_id] = point
 
     for segment in raw_segments:
         segment_id = str(segment.get("id") or "")
@@ -530,6 +764,8 @@ def build_guided_cp_output_contract(
                 "line_type": line_type,
                 "source": line_type_source,
             }
+            if line_type_source == "source_image_default_mountain":
+                default_line_type_count += 1
 
         start_override_raw = segment.get("start_exact_project_coordinate")
         end_override_raw = segment.get("end_exact_project_coordinate")
@@ -562,6 +798,15 @@ def build_guided_cp_output_contract(
             start = exact_points_by_id.get(start_id)
         if end is None:
             end = exact_points_by_id.get(end_id)
+        if side_length is not None:
+            if start is not None:
+                endpoint_cp_overrides[(segment_id, "start")] = _project_to_cp(
+                    start, side_length
+                )
+            if end is not None:
+                endpoint_cp_overrides[(segment_id, "end")] = _project_to_cp(
+                    end, side_length
+                )
         if start is None:
             unresolved_endpoint_ids.add(start_id)
         if end is None:
@@ -597,7 +842,10 @@ def build_guided_cp_output_contract(
             except (TypeError, ValueError, ZeroDivisionError):
                 missing_endpoint_evidence_ids.add(point_id)
                 continue
-            if residual > max(0.0, float(max_endpoint_residual_px)) + 1e-9:
+            if (
+                residual > max(0.0, float(max_endpoint_residual_px)) + 1e-9
+                and point_id not in trusted_boundary_override_point_ids
+            ):
                 endpoint_residual_failures.append(
                     {
                         "id": point_id,
@@ -864,11 +1112,17 @@ def build_guided_cp_output_contract(
         for name, codes in gate_codes.items()
     }
     output_ready = bool(guided_report.get("enabled", False)) and not blockers
-    cp_rows = [*boundary_rows, *internal_rows]
-    cp = _serialize_cp(cp_rows) if output_ready else None
+    draft = _build_topology_draft_cp(
+        topology,
+        assignments,
+        endpoint_cp_overrides=endpoint_cp_overrides,
+        observed_cp_points=observed_cp_points,
+    )
+    cp_rows = draft["_rows"]
+    cp = draft["cp"]
 
     camv = None
-    if output_ready:
+    if cp_rows:
         camv = audit_camv_structure(
             [
                 GeometrySegment(line_type, (x1, y1), (x2, y2), row=index)
@@ -881,14 +1135,28 @@ def build_guided_cp_output_contract(
     return {
         "enabled": True,
         "mode": "guided_finite_cp_output_contract_v1",
-        "status": "ready" if output_ready else "blocked",
+        "status": "ready" if output_ready else "incomplete",
         "output_ready": output_ready,
+        "checks_passed": output_ready,
+        "cp_available": bool(cp),
         "cp": cp,
         "required_internal_segment_count": len(raw_segments),
         "candidate_internal_segment_count": len(candidate_segments),
         "typed_candidate_internal_segment_count": len(internal_rows),
-        "boundary_segment_count": len(boundary_rows),
-        "boundary_segment_counts_by_side": boundary_counts,
+        "draft_internal_segment_count": draft["internal_segment_count"],
+        "draft_observed_endpoint_fallback_count": draft[
+            "observed_endpoint_fallback_count"
+        ],
+        "draft_red_fallback_segment_count": draft["red_fallback_segment_count"],
+        "draft_skipped_internal_segment_ids": draft[
+            "skipped_internal_segment_ids"
+        ],
+        "boundary_segment_count": draft["boundary_segment_count"],
+        "boundary_segment_counts_by_side": draft[
+            "boundary_segment_counts_by_side"
+        ],
+        "checked_boundary_segment_count": len(boundary_rows),
+        "checked_boundary_segment_counts_by_side": boundary_counts,
         "unresolved_endpoint_point_ids": sorted(unresolved_endpoint_ids),
         "unassigned_segment_ids": sorted(missing_line_type_ids),
         "segment_line_type_assignments": dict(
@@ -907,7 +1175,7 @@ def build_guided_cp_output_contract(
             "old_cp_reused": False,
             "generated_internal_segment_count": 0,
             "generated_direction_count": 0,
-            "default_line_type_count": 0,
+            "default_line_type_count": default_line_type_count,
             "line_type_scope": "finite_segment_not_infinite_crease",
             "boundary_geometry_source": "known_square_paper",
             "finite_topology_mode": topology_mode,
@@ -917,4 +1185,4 @@ def build_guided_cp_output_contract(
     }
 
 
-__all__ = ["build_guided_cp_output_contract"]
+__all__ = ["build_guided_cp_output_contract", "build_raw_topology_draft_cp"]

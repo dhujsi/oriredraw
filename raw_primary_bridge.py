@@ -3,7 +3,8 @@
 This module deliberately stops before strict reconstruction.  It prepares the
 paper image, extracts only observed finite 22.5-degree crease entities, builds
 their finite topology, and lists boundary relations for a person to choose.
-No CP is emitted and no legacy construction search is called from this path.
+A draft CP of the currently observed topology is emitted immediately.  No
+legacy construction search is called from this path.
 """
 
 from __future__ import annotations
@@ -17,13 +18,14 @@ import cv2
 import numpy as np
 
 from guided_construction import build_boundary_relation_catalog_from_points
+from guided_cp_output import build_raw_topology_draft_cp
 from raw_crease_evidence import (
     classify_topology_segment_line_types,
     detect_raw_crease_entities_from_square,
 )
 from raw_crease_topology import (
-    apply_segment_line_type_evidence,
     build_raw_crease_topology_graph,
+    resolve_topology_segment_line_types,
 )
 from reconstructor import (
     Settings,
@@ -152,22 +154,22 @@ def analyze_raw_primary_from_square(
 
     report(58, "正在连接原图中确实相交的有限线段…")
     _, _, topology = build_raw_crease_topology_graph(raw_report)
-    line_type_evidence = classify_topology_segment_line_types(
+    source_line_type_evidence = classify_topology_segment_line_types(
         square,
         topology,
         mv_mode=effective_settings.mv_mode,
     )
-    raw_report["segment_line_type_evidence"] = line_type_evidence
-    applied_line_types = apply_segment_line_type_evidence(
-        topology.get("segments") or [],
-        line_type_evidence,
+    line_type_evidence = resolve_topology_segment_line_types(
+        topology,
+        source_line_type_evidence,
     )
+    raw_report["segment_line_type_evidence"] = line_type_evidence
     topology["segment_line_type_evidence"] = {
         key: value
         for key, value in line_type_evidence.items()
         if key != "segments"
     }
-    topology["segment_line_type_evidence"].update(applied_line_types)
+    draft_cp = build_raw_topology_draft_cp(topology)
     contacts = topology.get("boundary_contacts") if topology.get("enabled") else []
     contacts = contacts if isinstance(contacts, list) else []
     maximum = float(topology.get("maximum_coordinate_px", square.shape[0] - 1))
@@ -181,7 +183,7 @@ def analyze_raw_primary_from_square(
         fit_algebraic_geometry=True,
     )
 
-    report(90, "正在绘制原图折痕与有限拓扑…")
+    report(90, "正在绘制原图折痕…")
     overlay_uri, topology_uri = _render_raw_primary_previews(
         square,
         raw_report,
@@ -190,8 +192,8 @@ def analyze_raw_primary_from_square(
     )
     duration_ms = round((time.perf_counter() - started) * 1000.0, 3)
     warnings = [
-        "这里还不是最终 CP：目前只提取了原图中可见的有限折痕、交点和纸边接触。请先由人选择一个取线起点。",
-        "本流程不会枚举每个点的八个方向，也没有启动旧版严格重建；只有点击兼容按钮才会运行原来的长流程。",
+        "现在显示的是原图中的折痕和交点。可以下载当前 .cp，也可以点击绿色点继续取线。",
+        "红蓝线先按原图颜色；无法判断的线先按节点峰谷关系推断，仍无法确定的按红色输出。",
     ]
     if not candidates:
         warnings.append("当前没有形成稳定的边界等分候选；请检查纸边是否完整、线稿是否清晰。")
@@ -205,12 +207,24 @@ def analyze_raw_primary_from_square(
         "raw_finite_segment_count": int(raw_report.get("finite_segment_count", 0) or 0),
         "raw_topology_point_count": int(topology.get("point_count", 0) or 0),
         "raw_topology_segment_count": int(topology.get("segment_count", 0) or 0),
+        "current_cp_segment_count": int(
+            draft_cp.get("internal_segment_count", 0) or 0
+        ),
         "raw_boundary_contact_count": len(contacts),
         "raw_mv_assigned_segment_count": int(
             line_type_evidence.get("assigned_segment_count", 0) or 0
         ),
         "raw_mv_ambiguous_segment_count": int(
             line_type_evidence.get("ambiguous_segment_count", 0) or 0
+        ),
+        "raw_mv_default_mountain_segment_count": int(
+            line_type_evidence.get("default_mountain_segment_count", 0) or 0
+        ),
+        "raw_mv_inferred_segment_count": int(
+            line_type_evidence.get("maekawa_inferred_segment_count", 0) or 0
+        ),
+        "raw_mv_propagation_round_count": int(
+            line_type_evidence.get("propagation_round_count", 0) or 0
         ),
         "raw_mv_unavailable_segment_count": int(
             line_type_evidence.get("unavailable_segment_count", 0) or 0
@@ -226,7 +240,9 @@ def analyze_raw_primary_from_square(
         "mode": _MODE,
         "phase": "awaiting_boundary_relation",
         "output_ready": False,
-        "cp": None,
+        "cp_available": bool(draft_cp.get("cp_available", False)),
+        "cp": draft_cp.get("cp"),
+        "cp_draft": draft_cp,
         "overlay_data_uri": overlay_uri,
         "reconstruction_data_uri": topology_uri,
         "warnings": warnings,
@@ -249,7 +265,8 @@ def analyze_raw_primary_from_square(
             "legacy_search_executed": False,
             "generated_crease_count": 0,
             "generated_direction_count": 0,
-            "cp_emitted": False,
+            "cp_emitted": bool(draft_cp.get("cp_available", False)),
+            "cp_is_current_draft": True,
         },
     }
     report(100, "原图折痕已就绪，请选择取线起点")

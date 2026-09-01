@@ -233,6 +233,41 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             ["top-terminal"],
         )
 
+    def test_near_boundary_finite_endpoint_recovers_occluded_boundary_contact(self):
+        report = _report(
+            [
+                _point("top-terminal", None, (39, 3)),
+                _point("inside", (_q(3, 5), _q(6, 25)), (60, 24)),
+                _crease("diagonal", (_q(9, 25), Qsqrt2()), 2),
+            ],
+            [_segment("segment", "diagonal", "top-terminal", "inside", 2, 30)],
+        )
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["endpoint_closure"]["status"], "complete")
+        binding = closed["endpoint_closure"]["bindings"][0]
+        self.assertEqual(binding["target_kind"], "known_paper_boundary_intersection")
+        self.assertEqual(binding["boundary_side"], "top")
+        self.assertTrue(binding["boundary_side_inferred"])
+        self.assertAlmostEqual(binding["gap_px"], math.sqrt(18), places=6)
+        self.assertEqual(
+            closed["endpoint_closure"]["invariants"]["generated_point_count"],
+            0,
+        )
+        self.assertEqual(
+            closed["endpoint_closure"]["invariants"]["generated_crease_count"],
+            0,
+        )
+
+        report["finite_topology"] = closed
+        contract = build_guided_cp_output_contract(
+            report,
+            segment_line_types={"segment": 2},
+        )
+        blocker_codes = {item["code"] for item in contract["blockers"]}
+        self.assertNotIn("endpoint_residual_exceeds_tolerance", blocker_codes)
+
     def test_dangling_split_terminal_rebases_existing_crease_without_new_direction(self):
         p31_exact = (_q(12, 25), _q(49, 100))
         p32_exact = (_q(1, 2), _q(1, 2))

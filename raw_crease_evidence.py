@@ -25,59 +25,48 @@ from reconstructor import (
     _angle_admission_tolerance_deg,
     _boundary_hits,
     _closest_orientation,
-    _color_geometry_masks,
     _decode_image,
     _directional_projection_segments,
     _edge_mv_evidence,
     _has_diffuse_color_bleed,
     _refine_centerline_offset,
+    _thin_binary_mask,
     prepare_paper_square,
 )
 
 
-def _normalise_signal(signal: np.ndarray) -> np.ndarray:
-    values = np.asarray(signal, dtype=np.float32)
-    floor = float(np.percentile(values, 50.0))
-    high = float(np.percentile(values, 99.9))
-    if high <= floor + 1e-6:
-        return np.zeros(values.shape, dtype=np.float32)
-    return np.clip((values - floor) / (high - floor), 0.0, 1.0).astype(
-        np.float32
-    )
-
-
 def _geometry_channels(
-    square: np.ndarray,
+    _square: np.ndarray,
     ink: np.ndarray,
     confidence: np.ndarray,
+    _evidence_distance_px: float,
 ) -> list[dict[str, Any]]:
-    """Pair each geometry mask with its own continuous centerline signal."""
+    """Return colour-blind views of the same observed-ink geometry.
 
-    values = square.astype(np.float32)
-    blue, green, red = cv2.split(values)
-    red_signal = _normalise_signal(
-        np.maximum(red - np.maximum(blue, green), 0.0)
-    )
-    blue_signal = _normalise_signal(
-        np.maximum(blue - np.maximum(red, green), 0.0)
-    )
+    Red, blue, gray, and black pixels enter through one common ridge response.
+    The band view preserves short finite strokes; the thinned view removes
+    stroke-width duplication and recovers centerlines beside crossings.  No
+    colour measurement or M/V decision is made in this stage.
+    """
+
     ridge_signal = np.asarray(confidence, dtype=np.float32)
-
-    channels: list[dict[str, Any]] = []
-    for mask in _color_geometry_masks(square, ink):
-        selected = mask > 0
-        if not np.any(selected):
-            continue
-        red_score = float(np.mean(red_signal[selected]))
-        blue_score = float(np.mean(blue_signal[selected]))
-        if red_score >= 0.12 and red_score >= blue_score * 1.35:
-            label, signal = "red", red_signal
-        elif blue_score >= 0.12 and blue_score >= red_score * 1.35:
-            label, signal = "blue", blue_signal
-        else:
-            label, signal = "monochrome", ridge_signal
-        channels.append({"label": label, "mask": mask, "signal": signal})
-    return channels
+    geometry_mask = (
+        (np.asarray(ink) > 0) | (ridge_signal >= 0.12)
+    ).astype(np.uint8) * 255
+    if int(np.count_nonzero(geometry_mask)) < 20:
+        return []
+    return [
+        {
+            "label": "geometry_band",
+            "mask": geometry_mask,
+            "signal": ridge_signal,
+        },
+        {
+            "label": "geometry_centerline",
+            "mask": _thin_binary_mask(geometry_mask),
+            "signal": ridge_signal,
+        },
+    ]
 
 
 def _extract_finite_segments(
@@ -94,12 +83,22 @@ def _extract_finite_segments(
     center_shifts: list[float] = []
     raw: list[dict[str, Any]] = []
 
+    channels = _geometry_channels(
+        square,
+        ink,
+        confidence,
+        settings.evidence_distance_px,
+    )
     if diffuse_input:
-        projected = _directional_projection_segments(square, settings)
+        projected = _directional_projection_segments(
+            square,
+            settings,
+            geometry_signal=confidence,
+        )
         for item in projected:
             raw.append(
                 {
-                    "channel": "red" if int(item["mask"]) == 0 else "blue",
+                    "channel": "geometry_projection",
                     "orientation": int(item["orientation"]),
                     "offset": float(item["offset"]),
                     "measured_offset": float(item["offset"]),
@@ -110,12 +109,24 @@ def _extract_finite_segments(
                     "center_response": float(item.get("center_response", 0.0)),
                 }
             )
-        detector_kind = "exact_direction_projection"
-        channel_count = 2
+        lsd_channels = [
+            channel
+            for channel in channels
+            if channel["label"] == "geometry_centerline"
+        ]
+        detector_kind = (
+            "colour_blind_projection_with_centerline_lsd"
+            if lsd_channels
+            else "colour_blind_direction_projection"
+        )
     else:
-        channels = _geometry_channels(square, ink, confidence)
+        lsd_channels = channels
+        detector_kind = "colour_blind_finite_lsd_centerlines"
+
+    first_lsd_item = len(raw)
+    if lsd_channels:
         detector = cv2.createLineSegmentDetector(cv2.LSD_REFINE_ADV)
-        for channel in channels:
+        for channel in lsd_channels:
             detected = detector.detect(channel["mask"])[0]
             if detected is None:
                 continue
@@ -168,17 +179,17 @@ def _extract_finite_segments(
                     }
                 )
 
+    if lsd_channels:
         # On a native one-pixel drawing a tiny image-wide correction is mostly
         # staircase noise.  A real two-sided band yields a materially larger
         # common movement toward its center, as in the existing precision path.
         nonzero_shifts = [value for value in center_shifts if value > 1e-6]
         mean_shift = float(np.mean(nonzero_shifts)) if nonzero_shifts else 0.0
         if mean_shift < 1.4:
-            for item in raw:
+            for item in raw[first_lsd_item:]:
                 item["offset"] = item["measured_offset"]
             center_shifts = []
-        detector_kind = "finite_lsd_centerlines"
-        channel_count = len(channels)
+    channel_count = len(channels)
 
     size = int(square.shape[0])
     maximum = float(size - 1)
@@ -204,6 +215,9 @@ def _extract_finite_segments(
         "detector": detector_kind,
         "diffuse_input": bool(diffuse_input),
         "geometry_channel_count": channel_count,
+        "geometry_channels": [str(channel["label"]) for channel in channels],
+        "geometry_is_color_independent": True,
+        "color_geometry_channel_count": 0,
         "accepted_finite_segments": len(kept),
         "angle_rejected_segments": rejected_angle,
         "border_rejected_segments": rejected_border,
@@ -233,6 +247,48 @@ def _line_basis(orientation: int) -> tuple[np.ndarray, np.ndarray]:
     theta = ALLOWED_ANGLES[orientation]
     direction = np.array([math.cos(theta), math.sin(theta)], dtype=float)
     return direction, np.array([-direction[1], direction[0]], dtype=float)
+
+
+def _is_short_boundary_band_fragment(
+    visible_segments: list[dict[str, Any]],
+    *,
+    source_channels: set[str],
+    size: int,
+) -> bool:
+    """Reject tiny boundary-marker tangents without consulting their colour.
+
+    A filled/thick band can nominate a short diagonal tangent on a circular
+    boundary marker.  A real straight crease is also present in the thinned
+    centerline view; therefore this rejection is limited to band-only fragments
+    that remain entirely inside a shallow paper-edge strip.
+    """
+
+    if source_channels != {"geometry_band"} or not visible_segments:
+        return False
+    longest = max(
+        (float(segment.get("length_px", 0.0)) for segment in visible_segments),
+        default=0.0,
+    )
+    length_limit = max(10.0, float(size) * 0.02)
+    if longest > length_limit:
+        return False
+    maximum = float(size - 1)
+    edge_depth = max(8.0, float(size) * 0.02)
+
+    def boundary_depth(point: Any) -> float:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            return math.inf
+        x, y = float(point[0]), float(point[1])
+        return min(x, y, maximum - x, maximum - y)
+
+    for segment in visible_segments:
+        depths = (
+            boundary_depth(segment.get("start")),
+            boundary_depth(segment.get("end")),
+        )
+        if min(depths) > 1.5 or max(depths) > edge_depth:
+            return False
+    return True
 
 
 def _cluster_finite_segments(
@@ -399,12 +455,9 @@ def _cluster_finite_segments(
         existing["center_response_sum"] += item["center_response_sum"]
 
     output: list[dict[str, Any]] = []
-    for order, item in enumerate(
-        sorted(
-            merged_entities,
-            key=lambda value: (value["orientation"], value["offset"]),
-        ),
-        start=1,
+    for item in sorted(
+        merged_entities,
+        key=lambda value: (value["orientation"], value["offset"]),
     ):
         orientation = int(item["orientation"])
         direction, normal = _line_basis(orientation)
@@ -460,9 +513,15 @@ def _cluster_finite_segments(
         total_length = sum(
             segment["length_px"] for segment in visible_segments
         )
+        if _is_short_boundary_band_fragment(
+            visible_segments,
+            source_channels=set(item["channels"]),
+            size=size,
+        ):
+            continue
         output.append(
             {
-                "id": f"raw-crease:{orientation}:{order}",
+                "id": f"raw-crease:{orientation}:{len(output) + 1}",
                 "source": "raw_image_finite_line_evidence",
                 "geometry_role": "observed_crease_entity",
                 "orientation": orientation,
@@ -505,13 +564,22 @@ def _cluster_finite_segments(
 def _pixel_agreement(
     square: np.ndarray,
     ink: np.ndarray,
+    confidence: np.ndarray,
     entities: list[dict[str, Any]],
     evidence_distance_px: float,
 ) -> dict[str, Any]:
     size = int(square.shape[0])
     reference = np.zeros((size, size), dtype=np.uint8)
-    for mask in _color_geometry_masks(square, ink):
-        reference = np.maximum(reference, (mask > 0).astype(np.uint8))
+    for channel in _geometry_channels(
+        square,
+        ink,
+        confidence,
+        evidence_distance_px,
+    ):
+        reference = np.maximum(
+            reference,
+            (channel["mask"] > 0).astype(np.uint8),
+        )
     # The paper frame is not a crease entity.  Remove only a narrow tangent
     # band; genuine rays entering from a side remain represented immediately
     # after that band.
@@ -571,9 +639,11 @@ def classify_topology_segment_line_types(
     across a vertex on one supporting line instead of assigning one type to the
     whole infinite crease identity.
 
-    Only strong red/blue evidence becomes a trusted line type.  Monochrome,
-    missing, or ambiguous observations remain unassigned for later human
-    confirmation; no all-mountain or cAMV-derived default is introduced here.
+    Clear red/blue evidence keeps the source-image colour.  A visible segment
+    whose colour is black, neutral, or too ambiguous to trust remains unknown
+    here so the topology stage can first try to infer it from neighbouring
+    vertices.  Geometry detection and M/V colour assignment are separate:
+    lack of colour evidence never removes a crease.
     """
 
     image = np.asarray(square)
@@ -630,17 +700,27 @@ def classify_topology_segment_line_types(
         if float(evidence["coverage"]) >= 0.10 and total_color >= 40.0:
             color_evidence_count += 1
 
-        record: dict[str, Any] = {
-            "status": "ambiguous",
-            "line_type": None,
-            "source": None,
-            **evidence,
-        }
+        record: dict[str, Any] = {**evidence}
         if normalized_mode == "monochrome":
-            record["reason"] = "monochrome_mode_has_no_observed_mv"
+            record.update(
+                {
+                    "status": "ambiguous",
+                    "line_type": None,
+                    "source": None,
+                    "reason": "monochrome_mode_mv_unknown",
+                    "ambiguous": True,
+                }
+            )
             ambiguous_ids.append(segment_id)
         elif bool(evidence["ambiguous"]):
-            record["reason"] = "ambiguous_source_image_color_evidence"
+            record.update(
+                {
+                    "status": "ambiguous",
+                    "line_type": None,
+                    "source": None,
+                    "reason": "ambiguous_source_image_mv",
+                }
+            )
             ambiguous_ids.append(segment_id)
         else:
             line_type = 2 if float(evidence["red_probability"]) >= 0.5 else 3
@@ -661,7 +741,7 @@ def classify_topology_segment_line_types(
 
     return {
         "enabled": True,
-        "mode": "raw_topology_segment_mv_evidence_v1",
+        "mode": "raw_topology_segment_mv_evidence_v2",
         "source": "source_image_color_evidence",
         "mv_mode": normalized_mode,
         "segment_count": len(records),
@@ -670,10 +750,12 @@ def classify_topology_segment_line_types(
         "unavailable_segment_count": len(unavailable_ids),
         "mountain_segment_count": mountain_count,
         "valley_segment_count": valley_count,
+        "default_mountain_segment_count": 0,
         "color_evidence_segment_count": color_evidence_count,
         "detected_monochrome": bool(records) and color_evidence_count == 0,
         "assigned_segment_ids": assigned_ids,
         "ambiguous_segment_ids": ambiguous_ids,
+        "default_mountain_segment_ids": [],
         "unavailable_segment_ids": unavailable_ids,
         "segments": records,
     }
@@ -748,6 +830,7 @@ def detect_raw_crease_entities_from_square(
         "pixel_agreement": _pixel_agreement(
             image,
             ink,
+            confidence,
             entities,
             effective_settings.evidence_distance_px,
         ),
