@@ -2244,8 +2244,6 @@ def _refine_centerline_offset(
 def _directional_projection_segments(
     square: np.ndarray,
     settings: Settings,
-    *,
-    geometry_signal: np.ndarray | None = None,
 ) -> list[dict]:
     """Find center rays directly in the eight legal directions.
 
@@ -2253,24 +2251,16 @@ def _directional_projection_segments(
     detector sees two unstable sides. Each normal-position peak nominates an
     infinite ray. A separate one-dimensional scan records only its locally
     visible intervals; those raster interval ends remain evidence and are never
-    exported as CP nodes.  ``geometry_signal`` lets the raw-evidence path use
-    one colour-independent ridge response; the legacy reconstruction path keeps
-    its existing pair of colour-dominance signals when it is omitted.
+    exported as CP nodes.
     """
     size = square.shape[0]
     maximum = float(size - 1)
     values = square.astype(np.float32)
     blue, green, red = cv2.split(values)
-    if geometry_signal is None:
-        signals = (
-            np.maximum(red - np.maximum(blue, green), 0.0),
-            np.maximum(blue - np.maximum(red, green), 0.0),
-        )
-    else:
-        parsed_signal = np.asarray(geometry_signal, dtype=np.float32)
-        if parsed_signal.shape != square.shape[:2]:
-            raise ValueError("geometry signal must match the square image size")
-        signals = (parsed_signal,)
+    signals = (
+        np.maximum(red - np.maximum(blue, green), 0.0),
+        np.maximum(blue - np.maximum(red, green), 0.0),
+    )
     y_grid, x_grid = np.mgrid[0:size, 0:size]
     maximum_rho = math.sqrt(2.0) * maximum
     bin_width = 0.5

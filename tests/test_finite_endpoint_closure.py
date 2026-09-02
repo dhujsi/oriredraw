@@ -327,7 +327,13 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             report,
             segment_line_types={"a-segment": 2, "b-main": 3},
         )
-        self.assertTrue(contract["output_ready"])
+        self.assertFalse(contract["output_ready"])
+        self.assertFalse(contract["cp_available"])
+        self.assertIsNone(contract["cp"])
+        self.assertEqual(
+            contract["blocker_counts"]["camv_foldability_violations"],
+            1,
+        )
         self.assertEqual(contract["invariants"]["crease_placement_repair_count"], 1)
 
 

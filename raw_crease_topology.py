@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any, Hashable, Mapping
 
 import numpy as np
@@ -23,9 +23,6 @@ from reconstructor import ALLOWED_ANGLES, _boundary_hits
 
 _BOUNDARY_SIDE = {"上": "top", "右": "right", "下": "bottom", "左": "left"}
 _CANDIDATE_PRIORITY = {"line_intersection": 0, "boundary_contact": 1, "finite_endpoint": 2}
-_MV_SOURCE_COLOR = "source_image_color_evidence"
-_MV_SOURCE_MAEKAWA = "maekawa_single_unknown_propagation"
-_MV_SOURCE_DEFAULT = "source_image_default_mountain"
 
 
 def _line_basis(orientation: int) -> tuple[np.ndarray, np.ndarray]:
@@ -668,7 +665,7 @@ def apply_segment_line_type_evidence(
     segments: list[dict[str, Any]],
     evidence_report: Mapping[str, Any] | None,
 ) -> dict[str, int]:
-    """Attach trusted source, inferred, or final fallback types by segment id."""
+    """Attach trusted source colours or the explicit red fallback by segment id."""
 
     records = (
         evidence_report.get("segments")
@@ -677,7 +674,6 @@ def apply_segment_line_type_evidence(
     )
     records = records if isinstance(records, Mapping) else {}
     assigned = 0
-    inferred = 0
     default_mountain = 0
     ambiguous = 0
     unavailable = 0
@@ -699,27 +695,20 @@ def apply_segment_line_type_evidence(
         source = str(evidence.get("source") or "")
         trusted_color = (
             evidence.get("status") == "assigned"
-            and source == _MV_SOURCE_COLOR
+            and source == "source_image_color_evidence"
             and evidence.get("ambiguous") is False
-            and line_type in {2, 3}
-        )
-        trusted_inference = (
-            evidence.get("status") == "assigned"
-            and source == _MV_SOURCE_MAEKAWA
             and line_type in {2, 3}
         )
         trusted_default_mountain = (
             evidence.get("status") == "assigned"
-            and source == _MV_SOURCE_DEFAULT
+            and source == "source_image_default_mountain"
             and line_type == 2
         )
-        trusted = trusted_color or trusted_inference or trusted_default_mountain
+        trusted = trusted_color or trusted_default_mountain
         if trusted:
             segment["line_type"] = line_type
             segment["line_type_source"] = source
             assigned += 1
-            if trusted_inference:
-                inferred += 1
             if trusted_default_mountain:
                 default_mountain += 1
         elif evidence.get("status") == "ambiguous":
@@ -728,317 +717,10 @@ def apply_segment_line_type_evidence(
             unavailable += 1
     return {
         "assigned_segment_count": assigned,
-        "inferred_segment_count": inferred,
         "default_mountain_segment_count": default_mountain,
         "ambiguous_segment_count": ambiguous,
         "unavailable_segment_count": unavailable,
     }
-
-
-def resolve_topology_segment_line_types(
-    topology: Mapping[str, Any],
-    evidence_report: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Resolve unknown finite-segment M/V values before applying red fallback.
-
-    Source-image red/blue assignments are treated as fixed evidence.  At each
-    non-boundary node, an even-degree vertex with exactly one unknown incident
-    segment can determine that segment when only one M/V choice satisfies
-    Maekawa's ``abs(M - V) == 2`` rule.  Assignments are applied in batches and
-    repeated to a fixed point so results do not depend on point iteration order.
-    Any segment still unknown after propagation is then explicitly assigned
-    mountain/red for CP export.
-    """
-
-    raw_segments = topology.get("segments") if isinstance(topology, Mapping) else None
-    segments = [item for item in raw_segments or [] if isinstance(item, dict)]
-    segment_index = {
-        str(item.get("id")): item
-        for item in segments
-        if item.get("id") is not None and str(item.get("id"))
-    }
-    source_records = (
-        evidence_report.get("segments")
-        if isinstance(evidence_report, Mapping)
-        else None
-    )
-    source_records = source_records if isinstance(source_records, Mapping) else {}
-    records: dict[str, dict[str, Any]] = {}
-    for segment_id in sorted(segment_index):
-        raw = source_records.get(segment_id)
-        if isinstance(raw, Mapping):
-            records[segment_id] = dict(raw)
-        else:
-            records[segment_id] = {
-                "status": "unavailable",
-                "line_type": None,
-                "source": None,
-                "reason": "missing_source_image_mv_evidence",
-            }
-
-    source_image_assigned_count = sum(
-        record.get("status") == "assigned"
-        and record.get("source") == _MV_SOURCE_COLOR
-        and record.get("ambiguous") is False
-        and record.get("line_type") in {2, 3}
-        for record in records.values()
-    )
-    source_image_ambiguous_count = sum(
-        record.get("status") == "ambiguous" for record in records.values()
-    )
-    source_image_unavailable_count = sum(
-        record.get("status") == "unavailable" for record in records.values()
-    )
-
-    apply_segment_line_type_evidence(segments, {"segments": records})
-    line_types = {
-        segment_id: int(segment["line_type"])
-        for segment_id, segment in segment_index.items()
-        if segment.get("line_type") in {2, 3}
-    }
-
-    point_index = {
-        str(item.get("id")): item
-        for item in topology.get("points") or []
-        if isinstance(item, Mapping)
-        and item.get("id") is not None
-        and str(item.get("id"))
-    }
-    incident: defaultdict[str, set[str]] = defaultdict(set)
-    for segment_id, segment in segment_index.items():
-        for key in ("start_point_id", "end_point_id"):
-            point_id = str(segment.get(key) or "")
-            if point_id:
-                incident[point_id].add(segment_id)
-    boundary_point_ids = {
-        point_id
-        for point_id, point in point_index.items()
-        if point.get("boundary_sides")
-    }
-    internal_point_ids = sorted(
-        point_id
-        for point_id in point_index
-        if point_id not in boundary_point_ids and incident.get(point_id)
-    )
-
-    conflicts: list[dict[str, Any]] = []
-    conflict_keys: set[tuple[str, str, str]] = set()
-
-    def remember_conflict(record: dict[str, Any]) -> None:
-        key = (
-            str(record.get("reason") or ""),
-            str(record.get("point_id") or ""),
-            str(record.get("segment_id") or ""),
-        )
-        if key not in conflict_keys:
-            conflict_keys.add(key)
-            conflicts.append(record)
-
-    inference_records: list[dict[str, Any]] = []
-    propagation_round_count = 0
-    while True:
-        proposals: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
-        for point_id in internal_point_ids:
-            segment_ids = sorted(incident[point_id])
-            degree = len(segment_ids)
-            if degree == 0 or degree % 2 == 1:
-                continue
-            unknown_ids = [item for item in segment_ids if item not in line_types]
-            if len(unknown_ids) != 1:
-                continue
-            mountain_count = sum(line_types.get(item) == 2 for item in segment_ids)
-            valley_count = sum(line_types.get(item) == 3 for item in segment_ids)
-            candidates = [
-                line_type
-                for line_type in (2, 3)
-                if abs(
-                    mountain_count
-                    + (line_type == 2)
-                    - valley_count
-                    - (line_type == 3)
-                )
-                == 2
-            ]
-            if len(candidates) == 1:
-                proposals[unknown_ids[0]].append(
-                    {
-                        "point_id": point_id,
-                        "crease_degree": degree,
-                        "known_mountain_count": mountain_count,
-                        "known_valley_count": valley_count,
-                        "line_type": candidates[0],
-                    }
-                )
-            elif not candidates:
-                remember_conflict(
-                    {
-                        "reason": "single_unknown_has_no_maekawa_solution",
-                        "point_id": point_id,
-                        "segment_id": unknown_ids[0],
-                        "crease_degree": degree,
-                        "known_mountain_count": mountain_count,
-                        "known_valley_count": valley_count,
-                    }
-                )
-
-        pending: list[tuple[str, int, list[dict[str, Any]]]] = []
-        for segment_id in sorted(proposals):
-            proposal_records = proposals[segment_id]
-            proposed_types = {int(item["line_type"]) for item in proposal_records}
-            if len(proposed_types) == 1:
-                pending.append((segment_id, proposed_types.pop(), proposal_records))
-            else:
-                remember_conflict(
-                    {
-                        "reason": "opposite_maekawa_inferences_at_segment_ends",
-                        "point_id": ",".join(
-                            sorted(str(item["point_id"]) for item in proposal_records)
-                        ),
-                        "segment_id": segment_id,
-                        "proposed_line_types": sorted(proposed_types),
-                    }
-                )
-        if not pending:
-            break
-
-        propagation_round_count += 1
-        for segment_id, line_type, proposal_records in pending:
-            line_types[segment_id] = line_type
-            previous = dict(records.get(segment_id) or {})
-            if "source_image_evidence" not in previous:
-                previous["source_image_evidence"] = {
-                    key: value
-                    for key, value in previous.items()
-                    if key not in {"source_image_evidence", "inference"}
-                }
-            inference = {
-                "rule": "maekawa_abs_m_minus_v_equals_2",
-                "round": propagation_round_count,
-                "node_ids": sorted(
-                    str(item["point_id"]) for item in proposal_records
-                ),
-                "node_states": proposal_records,
-            }
-            previous.update(
-                {
-                    "status": "assigned",
-                    "line_type": line_type,
-                    "source": _MV_SOURCE_MAEKAWA,
-                    "reason": "only_mv_choice_satisfying_maekawa",
-                    "ambiguous": False,
-                    "inference": inference,
-                }
-            )
-            records[segment_id] = previous
-            inference_records.append(
-                {
-                    "segment_id": segment_id,
-                    "line_type": line_type,
-                    **inference,
-                }
-            )
-
-    for point_id in internal_point_ids:
-        segment_ids = sorted(incident[point_id])
-        degree = len(segment_ids)
-        if degree % 2 == 1:
-            remember_conflict(
-                {
-                    "reason": "odd_internal_crease_degree",
-                    "point_id": point_id,
-                    "crease_degree": degree,
-                }
-            )
-            continue
-        if segment_ids and all(item in line_types for item in segment_ids):
-            mountain_count = sum(line_types[item] == 2 for item in segment_ids)
-            valley_count = sum(line_types[item] == 3 for item in segment_ids)
-            if abs(mountain_count - valley_count) != 2:
-                remember_conflict(
-                    {
-                        "reason": "known_assignments_violate_maekawa",
-                        "point_id": point_id,
-                        "crease_degree": degree,
-                        "mountain_count": mountain_count,
-                        "valley_count": valley_count,
-                    }
-                )
-
-    unresolved_before_fallback = sorted(
-        segment_id for segment_id in segment_index if segment_id not in line_types
-    )
-    for segment_id in unresolved_before_fallback:
-        previous = dict(records.get(segment_id) or {})
-        if "source_image_evidence" not in previous:
-            previous["source_image_evidence"] = {
-                key: value
-                for key, value in previous.items()
-                if key not in {"source_image_evidence", "inference"}
-            }
-        previous.update(
-            {
-                "status": "assigned",
-                "line_type": 2,
-                "source": _MV_SOURCE_DEFAULT,
-                "reason": "unresolved_after_maekawa_propagation",
-                "ambiguous": False,
-            }
-        )
-        records[segment_id] = previous
-        line_types[segment_id] = 2
-
-    final_report = dict(evidence_report or {})
-    final_report.update(
-        {
-            "enabled": True,
-            "mode": "raw_topology_segment_mv_resolution_v1",
-            "source": "source_image_then_maekawa_then_red_fallback",
-            "segment_count": len(segment_index),
-            "source_image_assigned_segment_count": source_image_assigned_count,
-            "source_image_ambiguous_segment_count": source_image_ambiguous_count,
-            "source_image_unavailable_segment_count": source_image_unavailable_count,
-            "maekawa_inferred_segment_count": sum(
-                record.get("source") == _MV_SOURCE_MAEKAWA
-                for record in records.values()
-            ),
-            "propagation_round_count": propagation_round_count,
-            "default_mountain_segment_count": sum(
-                record.get("source") == _MV_SOURCE_DEFAULT
-                for record in records.values()
-            ),
-            "mountain_segment_count": sum(value == 2 for value in line_types.values()),
-            "valley_segment_count": sum(value == 3 for value in line_types.values()),
-            "assigned_segment_count": len(line_types),
-            "ambiguous_segment_count": 0,
-            "unavailable_segment_count": 0,
-            "assigned_segment_ids": sorted(line_types),
-            "ambiguous_segment_ids": [],
-            "unavailable_segment_ids": [],
-            "maekawa_inferred_segment_ids": sorted(
-                segment_id
-                for segment_id, record in records.items()
-                if record.get("source") == _MV_SOURCE_MAEKAWA
-            ),
-            "default_mountain_segment_ids": sorted(
-                segment_id
-                for segment_id, record in records.items()
-                if record.get("source") == _MV_SOURCE_DEFAULT
-            ),
-            "unresolved_before_fallback_segment_ids": unresolved_before_fallback,
-            "inference_records": inference_records,
-            "conflict_count": len(conflicts),
-            "conflicts": conflicts,
-            "internal_node_count": len(internal_point_ids),
-            "skipped_boundary_node_count": sum(
-                bool(incident.get(point_id)) for point_id in boundary_point_ids
-            ),
-            "segments": records,
-        }
-    )
-    final_report.update(
-        apply_segment_line_type_evidence(segments, final_report)
-    )
-    return final_report
 
 
 def build_raw_crease_topology_graph(
@@ -1294,5 +976,4 @@ __all__ = [
     "apply_segment_line_type_evidence",
     "build_raw_crease_topology_graph",
     "build_raw_crease_topology_report",
-    "resolve_topology_segment_line_types",
 ]

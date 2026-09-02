@@ -4,7 +4,6 @@ import unittest
 import cv2
 import numpy as np
 
-from cp_audit import parse_cp
 from raw_primary_bridge import analyze_raw_primary_from_square
 from reconstructor import Settings
 
@@ -20,7 +19,7 @@ def _boundary_trisection_square(size: int = 161) -> np.ndarray:
 
 
 class RawPrimaryBridgeTest(unittest.TestCase):
-    def test_fast_entry_emits_current_cp_before_human_selection(self):
+    def test_fast_entry_suppresses_unvalidated_cp_before_human_selection(self):
         square = _boundary_trisection_square()
         progress = []
 
@@ -35,14 +34,16 @@ class RawPrimaryBridgeTest(unittest.TestCase):
         self.assertEqual(payload["mode"], "guided_raw_primary_v1")
         self.assertEqual(payload["phase"], "awaiting_boundary_relation")
         self.assertFalse(payload["output_ready"])
-        self.assertTrue(payload["cp_available"])
-        self.assertIsInstance(payload["cp"], str)
+        self.assertFalse(payload["cp_available"])
+        self.assertIsNone(payload["cp"])
         self.assertFalse(payload["stats"]["strict_reconstruction_executed"])
         self.assertFalse(payload["stats"]["construction_search_executed"])
         self.assertEqual(payload["invariants"]["generated_crease_count"], 0)
         self.assertEqual(payload["invariants"]["generated_direction_count"], 0)
-        self.assertTrue(payload["invariants"]["cp_emitted"])
-        self.assertTrue(payload["invariants"]["cp_is_current_draft"])
+        self.assertFalse(payload["invariants"]["cp_emitted"])
+        self.assertFalse(payload["invariants"]["cp_is_current_draft"])
+        self.assertTrue(payload["invariants"]["unsafe_raw_draft_suppressed"])
+        self.assertNotIn("cp", payload["cp_draft"])
         self.assertTrue(payload["overlay_data_uri"].startswith("data:image/png;base64,"))
         self.assertTrue(
             payload["reconstruction_data_uri"].startswith("data:image/png;base64,")
@@ -72,13 +73,6 @@ class RawPrimaryBridgeTest(unittest.TestCase):
             shadow["boundary_relation_candidate_source"],
             "raw_image_finite_topology",
         )
-        cp_rows, cp_issues = parse_cp(payload["cp"])
-        self.assertEqual(cp_issues, [])
-        self.assertEqual(
-            sum(row.line_type in {2, 3} for row in cp_rows),
-            shadow["raw_crease_topology"]["segment_count"],
-        )
-        self.assertNotIn(0, {row.line_type for row in cp_rows})
         trisection = next(
             item
             for item in shadow["boundary_relation_candidates"]

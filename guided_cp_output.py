@@ -27,7 +27,6 @@ ExactPoint = tuple[Qsqrt2, Qsqrt2]
 _RAW_SEGMENT_SOURCE = "raw_image_finite_line_evidence"
 _TRUSTED_LINE_TYPE_SOURCES = {
     "explicit_segment_assignment",
-    "maekawa_single_unknown_propagation",
     "source_image_color_evidence",
     "source_image_default_mountain",
     "user_confirmed",
@@ -1050,6 +1049,34 @@ def build_guided_cp_output_contract(
                 point_entity_ids=dangling_ids,
             )
 
+    draft = _build_topology_draft_cp(
+        topology,
+        assignments,
+        endpoint_cp_overrides=endpoint_cp_overrides,
+        observed_cp_points=observed_cp_points,
+    )
+    cp_rows = draft["_rows"]
+    draft_cp = draft["cp"]
+
+    camv = None
+    if cp_rows:
+        camv = audit_camv_structure(
+            [
+                GeometrySegment(line_type, (x1, y1), (x2, y2), row=index)
+                for index, (line_type, x1, y1, x2, y2) in enumerate(cp_rows)
+            ],
+            folding_types={2, 3},
+            include_mv=True,
+        )
+        camv_violation_count = int(camv.get("violation_count", 0) or 0)
+        if camv_violation_count:
+            block(
+                "camv_foldability_violations",
+                count=camv_violation_count,
+                rule_counts=dict(camv.get("rule_counts") or {}),
+                violations=list(camv.get("violations") or []),
+            )
+
     gate_codes = {
         "exact_crease_closure": {
             "guided_report_disabled",
@@ -1096,6 +1123,9 @@ def build_guided_cp_output_contract(
             "unresolved_boundary_contacts",
             "incomplete_paper_boundary",
         },
+        "flat_foldability": {
+            "camv_foldability_violations",
+        },
     }
     blocker_counts: Counter[str] = Counter()
     for item in blockers:
@@ -1112,25 +1142,7 @@ def build_guided_cp_output_contract(
         for name, codes in gate_codes.items()
     }
     output_ready = bool(guided_report.get("enabled", False)) and not blockers
-    draft = _build_topology_draft_cp(
-        topology,
-        assignments,
-        endpoint_cp_overrides=endpoint_cp_overrides,
-        observed_cp_points=observed_cp_points,
-    )
-    cp_rows = draft["_rows"]
-    cp = draft["cp"]
-
-    camv = None
-    if cp_rows:
-        camv = audit_camv_structure(
-            [
-                GeometrySegment(line_type, (x1, y1), (x2, y2), row=index)
-                for index, (line_type, x1, y1, x2, y2) in enumerate(cp_rows)
-            ],
-            folding_types={2, 3},
-            include_mv=True,
-        )
+    cp = draft_cp if output_ready else None
 
     return {
         "enabled": True,
@@ -1138,7 +1150,7 @@ def build_guided_cp_output_contract(
         "status": "ready" if output_ready else "incomplete",
         "output_ready": output_ready,
         "checks_passed": output_ready,
-        "cp_available": bool(cp),
+        "cp_available": bool(output_ready and cp),
         "cp": cp,
         "required_internal_segment_count": len(raw_segments),
         "candidate_internal_segment_count": len(candidate_segments),
@@ -1169,7 +1181,7 @@ def build_guided_cp_output_contract(
         "blockers": blockers,
         "soft_diagnostics": {
             "camv": camv,
-            "camv_blocks_output": False,
+            "camv_blocks_output": True,
         },
         "invariants": {
             "old_cp_reused": False,

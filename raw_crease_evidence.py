@@ -25,48 +25,106 @@ from reconstructor import (
     _angle_admission_tolerance_deg,
     _boundary_hits,
     _closest_orientation,
+    _color_geometry_masks,
     _decode_image,
     _directional_projection_segments,
     _edge_mv_evidence,
     _has_diffuse_color_bleed,
     _refine_centerline_offset,
-    _thin_binary_mask,
     prepare_paper_square,
 )
 
 
+def _normalise_signal(signal: np.ndarray) -> np.ndarray:
+    values = np.asarray(signal, dtype=np.float32)
+    floor = float(np.percentile(values, 50.0))
+    high = float(np.percentile(values, 99.9))
+    if high <= floor + 1e-6:
+        return np.zeros(values.shape, dtype=np.float32)
+    return np.clip((values - floor) / (high - floor), 0.0, 1.0).astype(
+        np.float32
+    )
+
+
 def _geometry_channels(
-    _square: np.ndarray,
+    square: np.ndarray,
     ink: np.ndarray,
     confidence: np.ndarray,
-    _evidence_distance_px: float,
+    color_guard_radius_px: float,
 ) -> list[dict[str, Any]]:
-    """Return colour-blind views of the same observed-ink geometry.
+    """Pair color and neutral geometry masks with centerline signals.
 
-    Red, blue, gray, and black pixels enter through one common ridge response.
-    The band view preserves short finite strokes; the thinned view removes
-    stroke-width duplication and recovers centerlines beside crossings.  No
-    colour measurement or M/V decision is made in this stage.
+    Red/blue masks keep differently colored crossings separable.  They are not
+    allowed to become a geometry gate: a mixed CP can also contain ordinary
+    black or gray crease strokes.  The neutral mask therefore comes from the
+    general ink response after removing a small guard band around colored
+    strokes.  Gaps introduced at crossings are joined later as finite
+    intervals on the same geometric line.
     """
 
+    values = square.astype(np.float32)
+    blue, green, red = cv2.split(values)
+    red_signal = _normalise_signal(
+        np.maximum(red - np.maximum(blue, green), 0.0)
+    )
+    blue_signal = _normalise_signal(
+        np.maximum(blue - np.maximum(red, green), 0.0)
+    )
     ridge_signal = np.asarray(confidence, dtype=np.float32)
-    geometry_mask = (
-        (np.asarray(ink) > 0) | (ridge_signal >= 0.12)
-    ).astype(np.uint8) * 255
-    if int(np.count_nonzero(geometry_mask)) < 20:
-        return []
-    return [
-        {
-            "label": "geometry_band",
-            "mask": geometry_mask,
-            "signal": ridge_signal,
-        },
-        {
-            "label": "geometry_centerline",
-            "mask": _thin_binary_mask(geometry_mask),
-            "signal": ridge_signal,
-        },
-    ]
+
+    channels: list[dict[str, Any]] = []
+    color_masks: list[np.ndarray] = []
+    for mask in _color_geometry_masks(square, ink):
+        selected = mask > 0
+        if not np.any(selected):
+            continue
+        red_score = float(np.mean(red_signal[selected]))
+        blue_score = float(np.mean(blue_signal[selected]))
+        if red_score >= 0.12 and red_score >= blue_score * 1.35:
+            label, signal = "red", red_signal
+        elif blue_score >= 0.12 and blue_score >= red_score * 1.35:
+            label, signal = "blue", blue_signal
+        else:
+            label, signal = "monochrome", ridge_signal
+        channels.append({"label": label, "mask": mask, "signal": signal})
+        if label in {"red", "blue"}:
+            color_masks.append(mask)
+
+    if color_masks:
+        chroma = np.max(values, axis=2) - np.min(values, axis=2)
+        # Light neutral strokes can be weaker than the binary ink threshold
+        # when saturated red/blue lines set the image-wide contrast scale.
+        # Keep their continuous ridge response here; legal direction, minimum
+        # length, and paper-frame rejection still validate the observation.
+        neutral = (ridge_signal >= 0.12) & (chroma <= 24.0)
+        color_union = np.maximum.reduce(
+            [(mask > 0).astype(np.uint8) for mask in color_masks]
+        )
+        # Compression can leave alternating warm/cool flecks on an otherwise
+        # neutral gray stroke.  Those weak flecks may enter an adaptive color
+        # mask, but they must not grow a guard band that erases the gray line.
+        # Require the same material chroma used by input validation before a
+        # pixel is allowed to protect a genuinely colored stroke.
+        color_union &= (chroma >= 24.0).astype(np.uint8)
+        guard_radius = int(
+            np.clip(math.ceil(float(color_guard_radius_px) + 0.25), 1, 5)
+        )
+        guard_kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (guard_radius * 2 + 1, guard_radius * 2 + 1),
+        )
+        color_guard = cv2.dilate(color_union, guard_kernel)
+        neutral &= color_guard == 0
+        neutral_mask = neutral.astype(np.uint8) * 255
+        if int(np.count_nonzero(neutral_mask)) >= 20:
+            channels.append(
+                {
+                    "label": "monochrome",
+                    "mask": neutral_mask,
+                    "signal": ridge_signal,
+                }
+            )
+    return channels
 
 
 def _extract_finite_segments(
@@ -90,15 +148,11 @@ def _extract_finite_segments(
         settings.evidence_distance_px,
     )
     if diffuse_input:
-        projected = _directional_projection_segments(
-            square,
-            settings,
-            geometry_signal=confidence,
-        )
+        projected = _directional_projection_segments(square, settings)
         for item in projected:
             raw.append(
                 {
-                    "channel": "geometry_projection",
+                    "channel": "red" if int(item["mask"]) == 0 else "blue",
                     "orientation": int(item["orientation"]),
                     "offset": float(item["offset"]),
                     "measured_offset": float(item["offset"]),
@@ -110,18 +164,16 @@ def _extract_finite_segments(
                 }
             )
         lsd_channels = [
-            channel
-            for channel in channels
-            if channel["label"] == "geometry_centerline"
+            channel for channel in channels if channel["label"] == "monochrome"
         ]
         detector_kind = (
-            "colour_blind_projection_with_centerline_lsd"
+            "exact_direction_projection_with_neutral_lsd"
             if lsd_channels
-            else "colour_blind_direction_projection"
+            else "exact_direction_projection"
         )
     else:
         lsd_channels = channels
-        detector_kind = "colour_blind_finite_lsd_centerlines"
+        detector_kind = "finite_lsd_centerlines"
 
     first_lsd_item = len(raw)
     if lsd_channels:
@@ -215,9 +267,9 @@ def _extract_finite_segments(
         "detector": detector_kind,
         "diffuse_input": bool(diffuse_input),
         "geometry_channel_count": channel_count,
-        "geometry_channels": [str(channel["label"]) for channel in channels],
-        "geometry_is_color_independent": True,
-        "color_geometry_channel_count": 0,
+        "neutral_geometry_channel_count": sum(
+            channel["label"] == "monochrome" for channel in channels
+        ),
         "accepted_finite_segments": len(kept),
         "angle_rejected_segments": rejected_angle,
         "border_rejected_segments": rejected_border,
@@ -247,48 +299,6 @@ def _line_basis(orientation: int) -> tuple[np.ndarray, np.ndarray]:
     theta = ALLOWED_ANGLES[orientation]
     direction = np.array([math.cos(theta), math.sin(theta)], dtype=float)
     return direction, np.array([-direction[1], direction[0]], dtype=float)
-
-
-def _is_short_boundary_band_fragment(
-    visible_segments: list[dict[str, Any]],
-    *,
-    source_channels: set[str],
-    size: int,
-) -> bool:
-    """Reject tiny boundary-marker tangents without consulting their colour.
-
-    A filled/thick band can nominate a short diagonal tangent on a circular
-    boundary marker.  A real straight crease is also present in the thinned
-    centerline view; therefore this rejection is limited to band-only fragments
-    that remain entirely inside a shallow paper-edge strip.
-    """
-
-    if source_channels != {"geometry_band"} or not visible_segments:
-        return False
-    longest = max(
-        (float(segment.get("length_px", 0.0)) for segment in visible_segments),
-        default=0.0,
-    )
-    length_limit = max(10.0, float(size) * 0.02)
-    if longest > length_limit:
-        return False
-    maximum = float(size - 1)
-    edge_depth = max(8.0, float(size) * 0.02)
-
-    def boundary_depth(point: Any) -> float:
-        if not isinstance(point, (list, tuple)) or len(point) < 2:
-            return math.inf
-        x, y = float(point[0]), float(point[1])
-        return min(x, y, maximum - x, maximum - y)
-
-    for segment in visible_segments:
-        depths = (
-            boundary_depth(segment.get("start")),
-            boundary_depth(segment.get("end")),
-        )
-        if min(depths) > 1.5 or max(depths) > edge_depth:
-            return False
-    return True
 
 
 def _cluster_finite_segments(
@@ -455,9 +465,12 @@ def _cluster_finite_segments(
         existing["center_response_sum"] += item["center_response_sum"]
 
     output: list[dict[str, Any]] = []
-    for item in sorted(
-        merged_entities,
-        key=lambda value: (value["orientation"], value["offset"]),
+    for order, item in enumerate(
+        sorted(
+            merged_entities,
+            key=lambda value: (value["orientation"], value["offset"]),
+        ),
+        start=1,
     ):
         orientation = int(item["orientation"])
         direction, normal = _line_basis(orientation)
@@ -513,15 +526,9 @@ def _cluster_finite_segments(
         total_length = sum(
             segment["length_px"] for segment in visible_segments
         )
-        if _is_short_boundary_band_fragment(
-            visible_segments,
-            source_channels=set(item["channels"]),
-            size=size,
-        ):
-            continue
         output.append(
             {
-                "id": f"raw-crease:{orientation}:{len(output) + 1}",
+                "id": f"raw-crease:{orientation}:{order}",
                 "source": "raw_image_finite_line_evidence",
                 "geometry_role": "observed_crease_entity",
                 "orientation": orientation,
@@ -640,10 +647,11 @@ def classify_topology_segment_line_types(
     whole infinite crease identity.
 
     Clear red/blue evidence keeps the source-image colour.  A visible segment
-    whose colour is black, neutral, or too ambiguous to trust remains unknown
-    here so the topology stage can first try to infer it from neighbouring
-    vertices.  Geometry detection and M/V colour assignment are separate:
-    lack of colour evidence never removes a crease.
+    whose colour is black, neutral, or too ambiguous to trust is still an
+    observed crease, so it receives the explicit red/mountain fallback used by
+    the CP exporter.  Geometry detection and M/V colour assignment are thus
+    separate: lack of colour evidence never removes a crease or opens a manual
+    "gray line" workflow.
     """
 
     image = np.asarray(square)
@@ -672,7 +680,7 @@ def classify_topology_segment_line_types(
     records: dict[str, dict[str, Any]] = {}
     unavailable_ids: list[str] = []
     assigned_ids: list[str] = []
-    ambiguous_ids: list[str] = []
+    default_mountain_ids: list[str] = []
     mountain_count = 0
     valley_count = 0
     color_evidence_count = 0
@@ -704,24 +712,27 @@ def classify_topology_segment_line_types(
         if normalized_mode == "monochrome":
             record.update(
                 {
-                    "status": "ambiguous",
-                    "line_type": None,
-                    "source": None,
-                    "reason": "monochrome_mode_mv_unknown",
-                    "ambiguous": True,
+                    "status": "assigned",
+                    "line_type": 2,
+                    "source": "source_image_default_mountain",
+                    "reason": "monochrome_mode_default_mountain",
                 }
             )
-            ambiguous_ids.append(segment_id)
+            default_mountain_ids.append(segment_id)
+            assigned_ids.append(segment_id)
+            mountain_count += 1
         elif bool(evidence["ambiguous"]):
             record.update(
                 {
-                    "status": "ambiguous",
-                    "line_type": None,
-                    "source": None,
-                    "reason": "ambiguous_source_image_mv",
+                    "status": "assigned",
+                    "line_type": 2,
+                    "source": "source_image_default_mountain",
+                    "reason": "ambiguous_source_image_default_mountain",
                 }
             )
-            ambiguous_ids.append(segment_id)
+            default_mountain_ids.append(segment_id)
+            assigned_ids.append(segment_id)
+            mountain_count += 1
         else:
             line_type = 2 if float(evidence["red_probability"]) >= 0.5 else 3
             record.update(
@@ -741,21 +752,21 @@ def classify_topology_segment_line_types(
 
     return {
         "enabled": True,
-        "mode": "raw_topology_segment_mv_evidence_v2",
+        "mode": "raw_topology_segment_mv_evidence_v1",
         "source": "source_image_color_evidence",
         "mv_mode": normalized_mode,
         "segment_count": len(records),
         "assigned_segment_count": len(assigned_ids),
-        "ambiguous_segment_count": len(ambiguous_ids),
+        "ambiguous_segment_count": 0,
         "unavailable_segment_count": len(unavailable_ids),
         "mountain_segment_count": mountain_count,
         "valley_segment_count": valley_count,
-        "default_mountain_segment_count": 0,
+        "default_mountain_segment_count": len(default_mountain_ids),
         "color_evidence_segment_count": color_evidence_count,
         "detected_monochrome": bool(records) and color_evidence_count == 0,
         "assigned_segment_ids": assigned_ids,
-        "ambiguous_segment_ids": ambiguous_ids,
-        "default_mountain_segment_ids": [],
+        "ambiguous_segment_ids": [],
+        "default_mountain_segment_ids": default_mountain_ids,
         "unavailable_segment_ids": unavailable_ids,
         "segments": records,
     }

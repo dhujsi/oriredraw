@@ -21,21 +21,22 @@ def test_upload_uses_fast_raw_entry_without_exposing_the_legacy_flow():
     assert "analyze_raw_primary_json" in worker
 
 
-def test_current_cp_download_does_not_depend_on_output_checks():
+def test_current_cp_download_requires_all_output_checks():
     app = _source("web/app.js")
     project = _source("web/project-core.js")
     playback = _source("web/playback.js")
 
     assert "return data?.mode === 'guided_raw_primary_v1';" in app
     assert "syncGuidedOutputState(data, guided)" in app
-    assert "root.cp = typeof report.cp === 'string'" in app
+    assert "report.output_ready === true && report.checks_passed === true" in app
+    assert "root.cp = outputReady && typeof report.cp === 'string'" in app
     assert "currentVariant = cpAvailable ? root : null" in app
-    assert "buildDownloadableCurrentCp(root, report)" in app
-    assert "buildDownloadableCurrentCp(root, null)" in app
+    assert "buildDownloadableCurrentCp(root, report)" not in app
+    assert "buildDownloadableCurrentCp(root, null)" not in app
     assert "typeof currentVariant.cp !== 'string'" in app
     assert "setResultAvailability(cpAvailable)" in app
     assert "cpAvailable: Boolean(cpAvailable)" in app
-    assert "report?.output_ready\n    &&" not in app
+    assert "root.output_ready = outputReady" in app
     assert "oriredraw:result-state" in project
     assert "saveButton.disabled = !projectAvailable" in project
     assert "exportButton.disabled = !projectAvailable" in project
@@ -101,7 +102,6 @@ def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
     assert "guidedMvDisplaySegments" in app
     assert "observed_raw_topology" in app
     assert "const topology = report?.raw_topology;" in app
-    assert "maekawa_single_unknown_propagation" in app
     assert "source_image_default_mountain" in app
     assert "renderGuidedMvOverlay(root, guided);" in app
     assert 'id="mv-segment-layer"' in html
@@ -159,7 +159,6 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "这个点怎么开始？" in app
     assert "下面每个按钮是一种开始方式，选一个就行。" in app
     assert "已选起点" in app
-    assert "不需要再选点" in app
     assert "boundary-relation-coordinates" in app
     assert ".topology-point-marker.boundary-relation-point" in style
     assert "width: 15px; height: 15px" in style
@@ -178,13 +177,13 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     assert "下面是可选的补充方式，不选也可以" in app
     assert "红线：原图为红色，或无色线按红色输出" in html
     assert "灰线" not in html
-    assert "可以下载当前 .cp" in app
+    assert "通过全部检查后才能下载 .cp" in app
     assert "finite_segment_direction_mismatch" in app
     assert "有些线的方向和原图对不上" in app
     assert "internal_dangling_segment_endpoints" in app
     assert "有线在图内突然断开" in app
-    assert "条折痕已写入当前 .cp，可以下载" in app
-    assert "不能下载 .cp" not in app
-    assert "暂时不能下载" not in app
+    assert "条折痕已通过全部检查，可以下载当前 .cp" in app
+    assert "不能下载 .cp" in app
+    assert "当前不能下载 .cp" in app
     assert "blockerCodes.join('、')" not in app
     assert "window.scrollTo(0, previousScrollY)" in app

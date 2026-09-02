@@ -617,7 +617,7 @@ function renderRawPrimaryStats(data) {
 function rawPrimaryWarnings(data) {
   const warnings = [
     '现在显示的是原图。点一个绿色点，再在点旁边选择开始方式。',
-    '当前 .cp 可以直接下载；继续取线后，下载内容会随结果更新。',
+    '原图拟合结果只用于预览；完成精确构造并通过全部检查后才能下载 .cp。',
   ];
   const candidates = data?.shadow_search?.boundary_relation_candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) {
@@ -644,12 +644,14 @@ function updateRawPrimaryGuidedCopy(root, report) {
       .filter(Boolean))];
     resultEyebrow.textContent = '自动取线';
     resultTitle.textContent = '自动取线已结束';
-    const messages = [
-      '不需要再选点，可以下载当前 .cp。',
-      ...(blockerLabels.length
-        ? [`当前结果还有问题：${blockerLabels.join('；')}。`]
-        : []),
-    ];
+    const messages = report.output_ready
+      ? ['全部检查已通过，可以下载当前 .cp。']
+      : [
+          '当前结果没有通过检查，不能下载 .cp。',
+          ...(blockerLabels.length
+            ? [`需要处理：${blockerLabels.join('；')}。`]
+            : []),
+        ];
     warnings.innerHTML = messages.map(message => `<p>${escapeHtml(message)}</p>`).join('');
     return;
   }
@@ -658,7 +660,7 @@ function updateRawPrimaryGuidedCopy(root, report) {
   resultTitle.textContent = '已保留当前结果';
   warnings.innerHTML = [
     `程序已经根据起点处理原图，还有 ${unresolved} 条线无法确定。`,
-    '当前 .cp 可以下载；看不出补充点时不用硬选。',
+    '结果尚未完成全部检查，当前不能下载 .cp。',
   ].map(message => `<p>${escapeHtml(message)}</p>`).join('');
 }
 
@@ -838,7 +840,6 @@ function syncGuidedMvAssignments(root, report) {
         [2, 3].includes(Number(segment?.line_type))
         && [
           'explicit_segment_assignment',
-          'maekawa_single_unknown_propagation',
           'source_image_color_evidence',
           'source_image_default_mountain',
           'user_confirmed',
@@ -927,7 +928,6 @@ function guidedMvDisplaySegments(report) {
 
 const GUIDED_MV_TRUSTED_SOURCES = new Set([
   'explicit_segment_assignment',
-  'maekawa_single_unknown_propagation',
   'source_image_color_evidence',
   'source_image_default_mountain',
   'user_confirmed',
@@ -946,93 +946,19 @@ function guidedMvEffectiveAssignment(root, segment) {
   return null;
 }
 
-function buildDownloadableCurrentCp(root, report) {
-  const sourceReport = report || {
-    raw_topology: root?.shadow_search?.raw_crease_topology,
-  };
-  const segments = guidedMvDisplaySegments(sourceReport);
-  if (!segments.length) return null;
-
-  const sideValues = {
-    top: new Set([-200, 200]),
-    right: new Set([-200, 200]),
-    bottom: new Set([-200, 200]),
-    left: new Set([-200, 200]),
-  };
-  const rows = [];
-  const rememberBoundaryPoint = ([x, y]) => {
-    if (Math.abs(y + 200) <= 1e-7) sideValues.top.add(x);
-    if (Math.abs(x - 200) <= 1e-7) sideValues.right.add(y);
-    if (Math.abs(y - 200) <= 1e-7) sideValues.bottom.add(x);
-    if (Math.abs(x + 200) <= 1e-7) sideValues.left.add(y);
-  };
-
-  for (const segment of segments) {
-    const start = Array.isArray(segment?.start_cp)
-      ? segment.start_cp.slice(0, 2).map(Number)
-      : [];
-    const end = Array.isArray(segment?.end_cp)
-      ? segment.end_cp.slice(0, 2).map(Number)
-      : [];
-    if (
-      start.length !== 2
-      || end.length !== 2
-      || ![...start, ...end].every(Number.isFinite)
-      || (start[0] === end[0] && start[1] === end[1])
-    ) continue;
-    const candidateType = Number(segment?.line_type);
-    const lineType = [2, 3].includes(candidateType) ? candidateType : 2;
-    rows.push([lineType, ...start, ...end]);
-    rememberBoundaryPoint(start);
-    rememberBoundaryPoint(end);
-  }
-  if (!rows.length) return null;
-
-  for (const side of ['top', 'right', 'bottom', 'left']) {
-    const values = [...sideValues[side]].sort((first, second) => first - second);
-    if (side === 'bottom' || side === 'left') values.reverse();
-    for (let index = 0; index + 1 < values.length; index += 1) {
-      const first = values[index];
-      const second = values[index + 1];
-      if (side === 'top') rows.push([1, first, -200, second, -200]);
-      else if (side === 'right') rows.push([1, 200, first, 200, second]);
-      else if (side === 'bottom') rows.push([1, first, 200, second, 200]);
-      else rows.push([1, -200, first, -200, second]);
-    }
-  }
-
-  const cpValue = value => {
-    const normalized = Math.abs(value) < 5e-10
-      ? 0
-      : Math.abs(value - 200) < 5e-9
-      ? 200
-      : Math.abs(value + 200) < 5e-9
-      ? -200
-      : value;
-    return Number(normalized.toPrecision(12)).toString();
-  };
-  rows.sort((first, second) => (
-    first[0] - second[0]
-    || first[2] - second[2]
-    || first[1] - second[1]
-    || first[4] - second[4]
-    || first[3] - second[3]
-  ));
-  return `${rows.map(row => (
-    `${row[0]} ${row.slice(1).map(cpValue).join(' ')}`
-  )).join('\n')}\n`;
-}
-
 function syncGuidedOutputState(root, report) {
   if (!root) return;
   if (report) {
-    root.cp = typeof report.cp === 'string' && report.cp.length
+    const outputReady = report.output_ready === true && report.checks_passed === true;
+    root.cp = outputReady && typeof report.cp === 'string' && report.cp.length
       ? report.cp
-      : buildDownloadableCurrentCp(root, report);
-    root.output_ready = Boolean(report.output_ready);
-    root.checks_passed = Boolean(report.checks_passed ?? report.output_ready);
-  } else if (typeof root.cp !== 'string' || !root.cp.length) {
-    root.cp = buildDownloadableCurrentCp(root, null);
+      : null;
+    root.output_ready = outputReady;
+    root.checks_passed = outputReady;
+  } else {
+    root.cp = null;
+    root.output_ready = false;
+    root.checks_passed = false;
   }
   const cpAvailable = Boolean(typeof root.cp === 'string' && root.cp.length);
   root.cp_available = cpAvailable;
@@ -1070,6 +996,7 @@ function guidedBlockerLabel(code) {
     finite_segment_direction_mismatch: '有些线的方向和原图对不上',
     endpoint_residual_exceeds_tolerance: '有个线头的位置和原图偏差过大',
     internal_dangling_segment_endpoints: '有线在图内突然断开',
+    camv_foldability_violations: '局部平折检查没有通过',
   };
   return labels[code] || '还有一项检查没有通过';
 }
@@ -1505,25 +1432,27 @@ function boundaryRelationMessage(report, root) {
     const blockerLabels = [...new Set((report.cp_output_contract?.blockers || [])
       .map(item => guidedBlockerLabel(item?.code))
       .filter(Boolean))];
-    const message = `${segmentCount} 条折痕已写入当前 .cp，可以下载。`;
+    if (report.output_ready) {
+      return `${segmentCount} 条折痕已通过全部检查，可以下载当前 .cp。`;
+    }
     return blockerLabels.length
-      ? `${message} 当前结果还有问题：${blockerLabels.join('；')}。`
-      : message;
+      ? `当前结果不能下载：${blockerLabels.join('；')}。`
+      : '当前结果没有通过全部检查，不能下载 .cp。';
   }
   if (report.status === 'complete_propagation') {
     if (rawPrimary) {
-      return `已经补上 ${guided} 条线。当前 .cp 可以下载；也可以继续补充。`;
+      return `已经补上 ${guided} 条线，但还没有通过全部检查，当前不能下载 .cp。`;
     }
     return `已经补上 ${guided} 条线。原来的 .cp 没有改动。`;
   }
   if (report.status === 'partial_propagation') {
     if (nextCount > 0) {
-      return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上。当前 .cp 可以下载；下面的补充方式不选也可以。`;
+      return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，当前不能下载 .cp。`;
     }
     if (nextPointCount > 0) {
-      return '当前 .cp 可以下载。下面的黄色点只是可选补充，不确定就不要点。';
+      return '当前结果仍不完整，不能下载 .cp；下面还有待确认的黄色点。';
     }
-    return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上。当前 .cp 可以下载。`;
+    return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，当前不能下载 .cp。`;
   }
   if (report.status === 'no_matching_trace_rays' || report.status === 'no_matching_observed_creases') {
     return '这个方式没有补上原图里的线。请换一个点或方式。';
