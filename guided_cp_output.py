@@ -1,10 +1,8 @@
 """CP serialization and diagnostics for the user-guided finite crease graph.
 
-This module never extends a line or creates an internal segment. It validates
-the currently observed finite topology and emits CP only when every geometry,
-provenance, line-type, boundary, and cAMV gate passes. A separate transactional
-repair layer may promote a copied topology only after the same complete cAMV
-audit succeeds; unresolved drafts remain diagnostic and are never exported.
+This module never extends a line or creates an internal segment. It serializes
+the currently observed finite topology as a draft while independently checking
+geometry, construction proof, line-type, boundary, and cAMV verification gates.
 """
 
 from __future__ import annotations
@@ -13,6 +11,7 @@ from collections import Counter, defaultdict
 import math
 from typing import Any, Mapping
 
+from construction_proof_topology import build_construction_proof_topology
 from exact_qsqrt2 import Qsqrt2
 from foldability import GeometrySegment, audit_camv_structure
 from qsqrt2_coordinates import (
@@ -443,6 +442,31 @@ def build_guided_cp_output_contract(
     if not isinstance(topology, Mapping) or not topology.get("enabled", False):
         block("missing_raw_finite_topology")
         topology = {}
+
+    construction_proof = guided_report.get("construction_proof_topology")
+    if not isinstance(construction_proof, Mapping) or not construction_proof.get(
+        "enabled", False
+    ):
+        construction_proof = build_construction_proof_topology(graph, topology)
+    observed_only_segment_ids = sorted(
+        str(item)
+        for item in construction_proof.get("observed_only_segment_ids", [])
+        if str(item)
+    )
+    if not construction_proof.get("enabled", False):
+        block(
+            "missing_construction_proof_topology",
+            reason=construction_proof.get("reason"),
+        )
+    elif observed_only_segment_ids:
+        block(
+            "unproved_observed_segments",
+            count=len(observed_only_segment_ids),
+            segment_ids=observed_only_segment_ids,
+            reason_counts=dict(
+                construction_proof.get("unproved_segment_reason_counts") or {}
+            ),
+        )
 
     raw_side_length = guided_report.get("global_side_length")
     try:
@@ -1050,6 +1074,10 @@ def build_guided_cp_output_contract(
             "unresolved_existing_creases",
             "missing_exact_creases",
         },
+        "construction_proof": {
+            "missing_construction_proof_topology",
+            "unproved_observed_segments",
+        },
         "exact_endpoint_closure": {
             "unresolved_finite_segment_endpoints",
             "unresolved_boundary_contacts",
@@ -1145,6 +1173,7 @@ def build_guided_cp_output_contract(
             sorted(accepted_line_type_assignments.items())
         ),
         "candidate_segments": candidate_segments,
+        "construction_proof_topology": construction_proof,
         "gate_results": gate_results,
         "blocker_count": len(blockers),
         "blocker_counts": dict(sorted(blocker_counts.items())),
@@ -1164,6 +1193,7 @@ def build_guided_cp_output_contract(
             "finite_topology_mode": topology_mode,
             "collapsed_detector_linehead_count": len(collapsed_segment_ids),
             "crease_placement_repair_count": len(crease_exact_overrides),
+            "observation_and_construction_topology_separated": True,
         },
     }
 

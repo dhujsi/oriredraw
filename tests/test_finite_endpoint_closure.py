@@ -23,6 +23,7 @@ def _point(
     exact_geometry = {}
     if exact_xy is not None:
         exact_geometry = {
+            "source_relation_id": "fixture-relation",
             "project_coordinate": [
                 qsqrt2_to_mapping(exact_xy[0]),
                 qsqrt2_to_mapping(exact_xy[1]),
@@ -48,6 +49,7 @@ def _crease(entity_id, through_xy, direction):
         "kind": "crease",
         "observed_geometry": {"direction_index": direction},
         "exact_geometry": {
+            "source_relation_id": "fixture-relation",
             "through_point_project": [
                 qsqrt2_to_mapping(through_xy[0]),
                 qsqrt2_to_mapping(through_xy[1]),
@@ -383,6 +385,38 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             closed["endpoint_closure"]["unresolved_endpoint_occurrences"][0][
                 "reason"
             ],
+            "no_existing_exact_node_within_gap_limit",
+        )
+
+    def test_raster_fitted_point_is_not_an_endpoint_closure_target(self):
+        report = _report(
+            [
+                _point("left", (_q(1, 5), _q(1, 2)), (20, 50)),
+                _point("terminal", None, (75, 50)),
+                _point(
+                    "fit-only-target",
+                    (_q(4, 5), _q(1, 2)),
+                    (80, 50),
+                    incident_ids=("horizontal",),
+                ),
+                _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+            ],
+            [_segment("segment", "horizontal", "left", "terminal", 0, 55)],
+        )
+        target = next(
+            item
+            for item in report["geometry_graph"]["entities"]
+            if item["id"] == "fit-only-target"
+        )
+        target["exact_geometry"].pop("source_relation_id")
+        target["exact_geometry"]["source"] = "guided_automatic_topology_point"
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["segments"][0]["end_point_id"], "terminal")
+        self.assertEqual(closed["endpoint_closure"]["binding_count"], 0)
+        self.assertEqual(
+            closed["endpoint_closure"]["unresolved_endpoint_occurrences"][0]["reason"],
             "no_existing_exact_node_within_gap_limit",
         )
 

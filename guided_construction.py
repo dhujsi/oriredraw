@@ -18,6 +18,7 @@ from typing import Any, Hashable, Iterable, Mapping
 
 from boundary_relations import detect_boundary_ratio_relations
 from constrained_angle_candidates import build_constrained_angle_candidates
+from construction_proof_topology import build_construction_proof_topology
 from construction_search import (
     ConstructionGraph,
     ConstructionOperation,
@@ -2490,6 +2491,10 @@ def build_guided_boundary_report(
         "invented_direction_count": len(direction_mismatches),
         "direction_mismatch_entity_ids": direction_mismatches,
     }
+    construction_proof_topology = build_construction_proof_topology(
+        geometry_snapshot,
+        topology_report,
+    )
     output_note = (
         "本阶段只解释原图已有有限折痕，尚未生成 CP；不会把缺少的三等分点或折痕自动补造出来。"
         if raw_available
@@ -2586,8 +2591,35 @@ def build_guided_boundary_report(
         "automatic_guided_point_operations": automatic_point_summaries,
         "geometry_propagation": geometry_propagation,
         "geometry_graph": geometry_snapshot,
+        "construction_proof_topology": construction_proof_topology,
+        "topology_layers": {
+            "observation": {
+                "mode": topology_report.get("mode") if topology_report else None,
+                "source": topology_report.get("source") if topology_report else None,
+                "segment_count": int(
+                    topology_report.get("segment_count", 0) if topology_report else 0
+                ),
+                "immutable": True,
+            },
+            "construction_proof": {
+                "mode": construction_proof_topology.get("mode"),
+                "status": construction_proof_topology.get("status"),
+                "proof_complete": bool(
+                    construction_proof_topology.get("proof_complete", False)
+                ),
+                "proved_segment_count": int(
+                    construction_proof_topology.get("proved_segment_count", 0) or 0
+                ),
+                "observed_only_segment_count": int(
+                    construction_proof_topology.get(
+                        "observed_only_segment_count", 0
+                    )
+                    or 0
+                ),
+            },
+        },
         "notes": [
-            "观测点、观测折痕及其精确几何现在位于同一张点—折痕关联图；精确化不会复制另一套图。",
+            "观测点与计算用精确几何仍共享点—折痕关联图；另有只读构造证明层，像素拟合本身不会被提升为证明事实。",
             "旧 beam/组合搜索不再执行；旧操作只作为来源记录保留。",
             "全部人工选择按边界关系或内部拓扑点组成一条有序步骤链；撤销后以缩短的步骤列表确定性重算，不保存平行结果。",
             "系统先列出仍能减少未解释折痕的同尺度边界关系；只有边界续选耗尽后，才显示连接未解释折痕的既有内部拓扑点。",
@@ -2610,6 +2642,28 @@ def build_guided_boundary_report(
         report["finite_topology"] = finite_topology
         report["finite_endpoint_closure"] = finite_topology.get(
             "endpoint_closure", {}
+        )
+        construction_proof_topology = build_construction_proof_topology(
+            geometry_snapshot,
+            finite_topology,
+        )
+        report["construction_proof_topology"] = construction_proof_topology
+        report["topology_layers"]["construction_proof"].update(
+            {
+                "status": construction_proof_topology.get("status"),
+                "proof_complete": bool(
+                    construction_proof_topology.get("proof_complete", False)
+                ),
+                "proved_segment_count": int(
+                    construction_proof_topology.get("proved_segment_count", 0) or 0
+                ),
+                "observed_only_segment_count": int(
+                    construction_proof_topology.get(
+                        "observed_only_segment_count", 0
+                    )
+                    or 0
+                ),
+            }
         )
     else:
         report["finite_endpoint_closure"] = finite_topology

@@ -15,6 +15,7 @@ import math
 from collections import defaultdict
 from typing import Any, Mapping
 
+from construction_proof_topology import build_construction_proof_topology
 from exact_qsqrt2 import Qsqrt2
 from qsqrt2_coordinates import (
     qsqrt2_canonical_coefficients,
@@ -260,6 +261,11 @@ def build_finite_endpoint_closed_topology(
         for item in graph.get("entities", [])
         if isinstance(item, Mapping) and item.get("id") is not None
     }
+    proof = guided_report.get("construction_proof_topology")
+    if not isinstance(proof, Mapping) or not proof.get("enabled", False):
+        proof = build_construction_proof_topology(graph, topology)
+    proved_point_ids = {str(item) for item in proof.get("proved_point_ids", [])}
+    proved_crease_ids = {str(item) for item in proof.get("proved_crease_ids", [])}
     exact_points: dict[str, ExactPoint] = {}
     projected_points: dict[str, tuple[float, float]] = {}
     observed_points: dict[str, tuple[float, float]] = {}
@@ -273,6 +279,8 @@ def build_finite_endpoint_closed_topology(
         )
         observed = _observed_point(entity)
         if point is None or observed is None:
+            continue
+        if entity_id not in proved_point_ids:
             continue
         if _RAW_SEGMENT_SOURCE not in set(entity.get("evidence_sources") or []):
             continue
@@ -289,6 +297,8 @@ def build_finite_endpoint_closed_topology(
     exact_lines: dict[str, tuple[ExactPoint, int]] = {}
     for entity_id, entity in entities.items():
         if entity.get("kind") != "crease":
+            continue
+        if entity_id not in proved_crease_ids:
             continue
         exact = entity.get("exact_geometry")
         if not isinstance(exact, Mapping):
@@ -673,6 +683,8 @@ def build_finite_endpoint_closed_topology(
             "target_requires_direct_observed_crease_incidence": True,
             "boundary_target_requires_explicit_observed_side": True,
             "crease_placement_repair_allowed": False,
+            "endpoint_targets_require_construction_proof": True,
+            "crease_lines_require_construction_proof": True,
         },
     }
 

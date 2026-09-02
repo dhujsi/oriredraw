@@ -18,6 +18,7 @@ def _point_entity(entity_id, coordinate, observed, boundary_sides=()):
             "match_tolerance_px": 1.0,
         },
         "exact_geometry": {
+            "source_relation_id": "fixture-relation",
             "project_coordinate": [
                 qsqrt2_to_mapping(coordinate[0]),
                 qsqrt2_to_mapping(coordinate[1]),
@@ -45,6 +46,7 @@ def _complete_report():
             "match_tolerance_px": 1.0,
         },
         "exact_geometry": {
+            "source_relation_id": "fixture-relation",
             "direction_index": 0,
             "through_point_project": [
                 qsqrt2_to_mapping(Qsqrt2()),
@@ -187,6 +189,25 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         self.assertFalse(contract["gate_results"]["flat_foldability"]["passed"])
         self.assertFalse(contract["soft_diagnostics"]["camv_blocks_output"])
         self.assertTrue(contract["soft_diagnostics"]["camv_blocks_verification"])
+
+    def test_raster_fitted_exact_point_cannot_make_draft_verified(self):
+        report = _complete_report()
+        middle = next(
+            item for item in report["geometry_graph"]["entities"] if item["id"] == "middle"
+        )
+        middle["exact_geometry"].pop("source_relation_id")
+        middle["exact_geometry"]["source"] = "guided_automatic_topology_point"
+
+        contract = build_guided_cp_output_contract(report)
+
+        self.assertFalse(contract["checks_passed"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIn("unproved_observed_segments", contract["blocker_counts"])
+        self.assertFalse(contract["gate_results"]["construction_proof"]["passed"])
+        self.assertEqual(
+            contract["construction_proof_topology"]["observed_only_segment_ids"],
+            ["left-half", "right-half"],
+        )
 
     def test_missing_exact_endpoint_uses_observed_endpoint_in_downloadable_draft(self):
         report = _complete_report()
