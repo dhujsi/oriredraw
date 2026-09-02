@@ -353,8 +353,9 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             segment_line_types={"a-segment": 2, "b-main": 3},
         )
         self.assertFalse(contract["output_ready"])
-        self.assertFalse(contract["cp_available"])
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsNotNone(contract["cp"])
+        self.assertEqual(contract["status"], "unverified")
         self.assertIn("internal_dangling_segment_endpoints", contract["blocker_counts"])
         self.assertEqual(contract["invariants"]["crease_placement_repair_count"], 0)
 

@@ -1106,16 +1106,21 @@ def build_guided_cp_output_contract(
         }
         for name, codes in gate_codes.items()
     }
-    output_ready = bool(guided_report.get("enabled", False)) and not blockers
-    cp = draft_cp if output_ready else None
+    checks_passed = bool(guided_report.get("enabled", False)) and not blockers
+    # Validation and availability are intentionally separate.  A representable
+    # draft remains useful for inspection in Oriedita even when endpoint or
+    # cAMV diagnostics have not passed; callers must keep it visibly marked as
+    # unverified instead of suppressing the serialized CP.
+    cp = draft_cp
+    cp_available = bool(cp)
 
     return {
         "enabled": True,
         "mode": "guided_finite_cp_output_contract_v1",
-        "status": "ready" if output_ready else "incomplete",
-        "output_ready": output_ready,
-        "checks_passed": output_ready,
-        "cp_available": bool(output_ready and cp),
+        "status": "ready" if checks_passed else "unverified",
+        "output_ready": checks_passed,
+        "checks_passed": checks_passed,
+        "cp_available": cp_available,
         "cp": cp,
         "required_internal_segment_count": len(raw_segments),
         "candidate_internal_segment_count": len(candidate_segments),
@@ -1146,7 +1151,8 @@ def build_guided_cp_output_contract(
         "blockers": blockers,
         "soft_diagnostics": {
             "camv": camv,
-            "camv_blocks_output": True,
+            "camv_blocks_output": False,
+            "camv_blocks_verification": True,
         },
         "invariants": {
             "old_cp_reused": False,

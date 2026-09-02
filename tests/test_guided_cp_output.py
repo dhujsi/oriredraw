@@ -160,7 +160,7 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         self.assertEqual(sum(row.line_type == 3 for row in rows), 0)
         self.assertNotEqual(contract["cp"], report["cp"])
 
-    def test_camv_violation_blocks_cp_export(self):
+    def test_camv_violation_keeps_unverified_draft_downloadable(self):
         contract = build_guided_cp_output_contract(
             _complete_report(),
             segment_line_types={
@@ -177,14 +177,16 @@ class GuidedCpOutputContractTest(unittest.TestCase):
 
         self.assertFalse(contract["output_ready"])
         self.assertFalse(contract["checks_passed"])
-        self.assertFalse(contract["cp_available"])
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsNotNone(contract["cp"])
+        self.assertEqual(contract["status"], "unverified")
         self.assertEqual(
             contract["blocker_counts"]["camv_foldability_violations"],
             1,
         )
         self.assertFalse(contract["gate_results"]["flat_foldability"]["passed"])
-        self.assertTrue(contract["soft_diagnostics"]["camv_blocks_output"])
+        self.assertFalse(contract["soft_diagnostics"]["camv_blocks_output"])
+        self.assertTrue(contract["soft_diagnostics"]["camv_blocks_verification"])
 
     def test_missing_exact_endpoint_uses_observed_endpoint_in_downloadable_draft(self):
         report = _complete_report()
@@ -199,9 +201,9 @@ class GuidedCpOutputContractTest(unittest.TestCase):
 
         self.assertFalse(contract["output_ready"])
         self.assertFalse(contract["checks_passed"])
-        self.assertFalse(contract["cp_available"])
-        self.assertEqual(contract["status"], "incomplete")
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["cp_available"])
+        self.assertEqual(contract["status"], "unverified")
+        self.assertIsNotNone(contract["cp"])
         self.assertEqual(contract["draft_internal_segment_count"], 2)
         self.assertEqual(contract["draft_observed_endpoint_fallback_count"], 1)
         self.assertEqual(contract["draft_skipped_internal_segment_ids"], [])
@@ -256,8 +258,8 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
 
         self.assertFalse(contract["output_ready"])
-        self.assertFalse(contract["cp_available"])
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsNotNone(contract["cp"])
         self.assertIn("untrusted_segment_line_type_provenance", contract["blocker_counts"])
         self.assertNotIn("left-half", contract["segment_line_type_assignments"])
         self.assertEqual(
@@ -278,8 +280,8 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         )
 
         self.assertFalse(contract["output_ready"])
-        self.assertFalse(contract["cp_available"])
-        self.assertIsNone(contract["cp"])
+        self.assertTrue(contract["cp_available"])
+        self.assertIsNotNone(contract["cp"])
         self.assertEqual(
             contract["blocker_counts"]["unknown_segment_line_type_assignments"],
             1,

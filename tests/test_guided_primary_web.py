@@ -21,7 +21,7 @@ def test_upload_uses_fast_raw_entry_without_exposing_the_legacy_flow():
     assert "analyze_raw_primary_json" in worker
 
 
-def test_current_cp_download_requires_all_output_checks():
+def test_current_cp_download_keeps_verification_separate_from_availability():
     app = _source("web/app.js")
     project = _source("web/project-core.js")
     playback = _source("web/playback.js")
@@ -29,14 +29,16 @@ def test_current_cp_download_requires_all_output_checks():
     assert "return data?.mode === 'guided_raw_primary_v1';" in app
     assert "syncGuidedOutputState(data, guided)" in app
     assert "report.output_ready === true && report.checks_passed === true" in app
-    assert "root.cp = outputReady && typeof report.cp === 'string'" in app
+    assert "report.cp_available === true" in app
+    assert "root.cp = cpAvailable" in app
     assert "currentVariant = cpAvailable ? root : null" in app
     assert "buildDownloadableCurrentCp(root, report)" not in app
     assert "buildDownloadableCurrentCp(root, null)" not in app
     assert "typeof currentVariant.cp !== 'string'" in app
     assert "setResultAvailability(cpAvailable)" in app
     assert "cpAvailable: Boolean(cpAvailable)" in app
-    assert "root.output_ready = outputReady" in app
+    assert "root.output_ready = checksPassed" in app
+    assert "'-unverified'" in app
     assert "oriredraw:result-state" in project
     assert "saveButton.disabled = !projectAvailable" in project
     assert "exportButton.disabled = !projectAvailable" in project
@@ -177,13 +179,14 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     assert "下面是可选的补充方式，不选也可以" in app
     assert "红线：原图为红色，或无色线按红色输出" in html
     assert "灰线" not in html
-    assert "通过全部检查后才能下载 .cp" in app
+    assert "选择开始方式后即可下载当前 .cp 草稿" in app
     assert "finite_segment_direction_mismatch" in app
     assert "有些线的方向和原图对不上" in app
     assert "internal_dangling_segment_endpoints" in app
     assert "有线在图内突然断开" in app
     assert "条折痕已通过全部检查，可以下载当前 .cp" in app
-    assert "不能下载 .cp" in app
-    assert "当前不能下载 .cp" in app
+    assert "仍可下载未验证的 .cp 草稿" in app
+    assert "不能下载 .cp" not in app
+    assert "当前不能下载 .cp" not in app
     assert "blockerCodes.join('、')" not in app
     assert "window.scrollTo(0, previousScrollY)" in app

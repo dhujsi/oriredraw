@@ -776,7 +776,8 @@ def _effective_contract(
             "blockers": [],
             "soft_diagnostics": {
                 "camv": copy.deepcopy(dict(final_audit)),
-                "camv_blocks_output": True,
+                "camv_blocks_output": False,
+                "camv_blocks_verification": True,
             },
             "transactional_angle_repair": {
                 "applied": True,

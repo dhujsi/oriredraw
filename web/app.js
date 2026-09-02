@@ -617,7 +617,7 @@ function renderRawPrimaryStats(data) {
 function rawPrimaryWarnings(data) {
   const warnings = [
     '现在显示的是原图。点一个绿色点，再在点旁边选择开始方式。',
-    '原图拟合结果只用于预览；完成精确构造并通过全部检查后才能下载 .cp。',
+    '选择开始方式后即可下载当前 .cp 草稿；通过全部检查后会标记为已验证。',
   ];
   const candidates = data?.shadow_search?.boundary_relation_candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) {
@@ -644,10 +644,10 @@ function updateRawPrimaryGuidedCopy(root, report) {
       .filter(Boolean))];
     resultEyebrow.textContent = '自动取线';
     resultTitle.textContent = '自动取线已结束';
-    const messages = report.output_ready
+    const messages = report.checks_passed
       ? ['全部检查已通过，可以下载当前 .cp。']
       : [
-          '当前结果没有通过检查，不能下载 .cp。',
+          '当前结果没有通过检查；仍可下载未验证的 .cp 草稿。',
           ...(blockerLabels.length
             ? [`需要处理：${blockerLabels.join('；')}。`]
             : []),
@@ -660,7 +660,7 @@ function updateRawPrimaryGuidedCopy(root, report) {
   resultTitle.textContent = '已保留当前结果';
   warnings.innerHTML = [
     `程序已经根据起点处理原图，还有 ${unresolved} 条线无法确定。`,
-    '结果尚未完成全部检查，当前不能下载 .cp。',
+    '结果尚未完成全部检查；仍可下载未验证的 .cp 草稿。',
   ].map(message => `<p>${escapeHtml(message)}</p>`).join('');
 }
 
@@ -951,12 +951,15 @@ function guidedMvEffectiveAssignment(root, segment) {
 function syncGuidedOutputState(root, report) {
   if (!root) return;
   if (report) {
-    const outputReady = report.output_ready === true && report.checks_passed === true;
-    root.cp = outputReady && typeof report.cp === 'string' && report.cp.length
+    const checksPassed = report.output_ready === true && report.checks_passed === true;
+    const cpAvailable = report.cp_available === true
+      && typeof report.cp === 'string'
+      && report.cp.length > 0;
+    root.cp = cpAvailable
       ? report.cp
       : null;
-    root.output_ready = outputReady;
-    root.checks_passed = outputReady;
+    root.output_ready = checksPassed;
+    root.checks_passed = checksPassed;
   } else {
     root.cp = null;
     root.output_ready = false;
@@ -1434,27 +1437,27 @@ function boundaryRelationMessage(report, root) {
     const blockerLabels = [...new Set((report.cp_output_contract?.blockers || [])
       .map(item => guidedBlockerLabel(item?.code))
       .filter(Boolean))];
-    if (report.output_ready) {
+    if (report.checks_passed) {
       return `${segmentCount} 条折痕已通过全部检查，可以下载当前 .cp。`;
     }
     return blockerLabels.length
-      ? `当前结果不能下载：${blockerLabels.join('；')}。`
-      : '当前结果没有通过全部检查，不能下载 .cp。';
+      ? `可下载未验证的 .cp 草稿；仍需处理：${blockerLabels.join('；')}。`
+      : '当前结果没有通过全部检查；可下载未验证的 .cp 草稿。';
   }
   if (report.status === 'complete_propagation') {
     if (rawPrimary) {
-      return `已经补上 ${guided} 条线，但还没有通过全部检查，当前不能下载 .cp。`;
+      return `已经补上 ${guided} 条线；可下载未验证的 .cp 草稿。`;
     }
     return `已经补上 ${guided} 条线。原来的 .cp 没有改动。`;
   }
   if (report.status === 'partial_propagation') {
     if (nextCount > 0) {
-      return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，当前不能下载 .cp。`;
+      return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，可下载未验证草稿。`;
     }
     if (nextPointCount > 0) {
-      return '当前结果仍不完整，不能下载 .cp；下面还有待确认的黄色点。';
+      return '当前结果仍不完整；可下载未验证草稿，下面还有待确认的黄色点。';
     }
-    return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，当前不能下载 .cp。`;
+    return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，可下载未验证草稿。`;
   }
   if (report.status === 'no_matching_trace_rays' || report.status === 'no_matching_observed_creases') {
     return '这个方式没有补上原图里的线。请换一个点或方式。';
@@ -1788,7 +1791,8 @@ downloadButton.addEventListener('click', () => {
   const link = document.createElement('a');
   link.href = url;
   const suffix = currentVariant.id && currentVariant.id !== 'strict' ? `-${currentVariant.id}` : '';
-  link.download = `${sourceName}${suffix}.cp`;
+  const verificationSuffix = currentVariant.checks_passed === true ? '' : '-unverified';
+  link.download = `${sourceName}${suffix}${verificationSuffix}.cp`;
   link.click();
   URL.revokeObjectURL(url);
 });
