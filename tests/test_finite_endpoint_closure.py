@@ -12,7 +12,14 @@ def _q(numerator, denominator=1):
     return Qsqrt2(Fraction(numerator, denominator))
 
 
-def _point(entity_id, exact_xy, observed_xy, *, boundary_sides=()):
+def _point(
+    entity_id,
+    exact_xy,
+    observed_xy,
+    *,
+    boundary_sides=(),
+    incident_ids=(),
+):
     exact_geometry = {}
     if exact_xy is not None:
         exact_geometry = {
@@ -31,6 +38,7 @@ def _point(entity_id, exact_xy, observed_xy, *, boundary_sides=()):
         },
         "exact_geometry": exact_geometry,
         "evidence_sources": ["raw_image_finite_line_evidence"],
+        "incident_ids": list(incident_ids),
     }
 
 
@@ -91,7 +99,12 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             [
                 _point("left", (_q(1, 5), _q(1, 2)), (20, 50)),
                 _point("terminal", None, (75, 50)),
-                _point("target", (_q(4, 5), _q(1, 2)), (80, 50)),
+                _point(
+                    "target",
+                    (_q(4, 5), _q(1, 2)),
+                    (80, 50),
+                    incident_ids=("horizontal",),
+                ),
                 _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
             ],
             [_segment("segment", "horizontal", "left", "terminal", 0, 55)],
@@ -142,8 +155,18 @@ class FiniteEndpointClosureTest(unittest.TestCase):
                 _point("fuzzy", None, (50, 50)),
                 _point("left", (_q(1, 5), half), (20, 50)),
                 _point("top", (half, _q(1, 5)), (50, 20)),
-                _point("horizontal-target", (_q(11, 20), half), (55, 50)),
-                _point("vertical-target", (half, _q(11, 20)), (50, 55)),
+                _point(
+                    "horizontal-target",
+                    (_q(11, 20), half),
+                    (55, 50),
+                    incident_ids=("horizontal",),
+                ),
+                _point(
+                    "vertical-target",
+                    (half, _q(11, 20)),
+                    (50, 55),
+                    incident_ids=("vertical",),
+                ),
                 _crease("horizontal", (Qsqrt2(), half), 0),
                 _crease("vertical", (half, Qsqrt2()), 4),
             ],
@@ -195,7 +218,12 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             [
                 _point("left", (_q(1, 5), half), (20, 50)),
                 _point("wrong", (_q(3, 4), _q(51, 100)), (75, 50)),
-                _point("target", (_q(4, 5), half), (80, 50)),
+                _point(
+                    "target",
+                    (_q(4, 5), half),
+                    (80, 50),
+                    incident_ids=("horizontal",),
+                ),
                 _crease("horizontal", (Qsqrt2(), half), 0),
             ],
             [_segment("segment", "horizontal", "left", "wrong", 0, 55)],
@@ -233,7 +261,7 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             ["top-terminal"],
         )
 
-    def test_near_boundary_finite_endpoint_recovers_occluded_boundary_contact(self):
+    def test_near_boundary_endpoint_without_observed_side_is_not_extended(self):
         report = _report(
             [
                 _point("top-terminal", None, (39, 3)),
@@ -245,12 +273,14 @@ class FiniteEndpointClosureTest(unittest.TestCase):
 
         closed = build_finite_endpoint_closed_topology(report)
 
-        self.assertEqual(closed["endpoint_closure"]["status"], "complete")
-        binding = closed["endpoint_closure"]["bindings"][0]
-        self.assertEqual(binding["target_kind"], "known_paper_boundary_intersection")
-        self.assertEqual(binding["boundary_side"], "top")
-        self.assertTrue(binding["boundary_side_inferred"])
-        self.assertAlmostEqual(binding["gap_px"], math.sqrt(18), places=6)
+        self.assertEqual(closed["endpoint_closure"]["status"], "partial")
+        self.assertEqual(closed["endpoint_closure"]["bindings"], [])
+        unresolved = closed["endpoint_closure"]["unresolved_endpoint_occurrences"]
+        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(
+            unresolved[0]["reason"],
+            "no_existing_exact_node_within_gap_limit",
+        )
         self.assertEqual(
             closed["endpoint_closure"]["invariants"]["generated_point_count"],
             0,
@@ -266,9 +296,9 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             segment_line_types={"segment": 2},
         )
         blocker_codes = {item["code"] for item in contract["blockers"]}
-        self.assertNotIn("endpoint_residual_exceeds_tolerance", blocker_codes)
+        self.assertIn("unresolved_finite_segment_endpoints", blocker_codes)
 
-    def test_dangling_split_terminal_rebases_existing_crease_without_new_direction(self):
+    def test_dangling_split_terminal_does_not_move_existing_crease(self):
         p31_exact = (_q(12, 25), _q(49, 100))
         p32_exact = (_q(1, 2), _q(1, 2))
         direction_one = (Qsqrt2(1, 1), Qsqrt2(1))
@@ -296,7 +326,7 @@ class FiniteEndpointClosureTest(unittest.TestCase):
                 _point("a-left", (Qsqrt2(), old_left_y), (0, old_left_px), boundary_sides=("left",)),
                 _point("b-left", (Qsqrt2(), _q(1, 2)), (0, 50), boundary_sides=("left",)),
                 _point("split", p31_exact, (48, 50)),
-                _point("node", p32_exact, (50, 50)),
+                _point("node", p32_exact, (50, 50), incident_ids=("b",)),
                 crease_a,
                 crease_b,
             ],
@@ -310,17 +340,12 @@ class FiniteEndpointClosureTest(unittest.TestCase):
         closed = build_finite_endpoint_closed_topology(report)
 
         closure = closed["endpoint_closure"]
-        self.assertEqual(closure["crease_placement_repair_count"], 1)
-        self.assertEqual(closure["internal_dangling_endpoint_count"], 0)
-        repair = closure["crease_placement_repairs"][0]
-        self.assertEqual(repair["crease_entity_id"], "a")
-        self.assertEqual(repair["resolved_point_id"], "node")
-        self.assertEqual(repair["direction_index"], 1)
-        self.assertEqual(repair["generated_crease_count"], 0)
-        self.assertEqual(repair["generated_direction_count"], 0)
+        self.assertEqual(closure["crease_placement_repair_count"], 0)
+        self.assertEqual(closure["crease_placement_repairs"], [])
+        self.assertEqual(closure["internal_dangling_endpoint_count"], 2)
         by_id = {item["id"]: item for item in closed["segments"]}
-        self.assertEqual(by_id["a-segment"]["end_point_id"], "node")
-        self.assertIn("start_exact_project_coordinate", by_id["a-segment"])
+        self.assertEqual(by_id["a-segment"]["end_point_id"], "split")
+        self.assertNotIn("crease_exact_overrides", closed)
 
         report["finite_topology"] = closed
         contract = build_guided_cp_output_contract(
@@ -330,11 +355,35 @@ class FiniteEndpointClosureTest(unittest.TestCase):
         self.assertFalse(contract["output_ready"])
         self.assertFalse(contract["cp_available"])
         self.assertIsNone(contract["cp"])
-        self.assertEqual(
-            contract["blocker_counts"]["camv_foldability_violations"],
-            1,
+        self.assertIn("internal_dangling_segment_endpoints", contract["blocker_counts"])
+        self.assertEqual(contract["invariants"]["crease_placement_repair_count"], 0)
+
+    def test_nearby_exact_node_without_same_crease_incidence_is_not_selected(self):
+        report = _report(
+            [
+                _point("left", (_q(1, 5), _q(1, 2)), (20, 50)),
+                _point("terminal", None, (75, 50)),
+                _point(
+                    "nearby-other-line-node",
+                    (_q(4, 5), _q(1, 2)),
+                    (80, 50),
+                    incident_ids=("other",),
+                ),
+                _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+            ],
+            [_segment("segment", "horizontal", "left", "terminal", 0, 55)],
         )
-        self.assertEqual(contract["invariants"]["crease_placement_repair_count"], 1)
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["segments"][0]["end_point_id"], "terminal")
+        self.assertEqual(closed["endpoint_closure"]["binding_count"], 0)
+        self.assertEqual(
+            closed["endpoint_closure"]["unresolved_endpoint_occurrences"][0][
+                "reason"
+            ],
+            "no_existing_exact_node_within_gap_limit",
+        )
 
 
 if __name__ == "__main__":

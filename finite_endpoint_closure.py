@@ -4,7 +4,8 @@ The raw topology intentionally records where the line detector stopped.  A
 detector terminal can sit a few pixels before an already evidenced exact
 intersection or paper-boundary contact.  This module resolves that discrepancy
 per finite segment endpoint; it never merges the observed point globally,
-creates a point, creates a crease, or chooses a direction.
+creates a point, creates or moves a crease, chooses a direction, or infers a
+paper-boundary contact that was not observed.
 """
 
 from __future__ import annotations
@@ -195,18 +196,14 @@ def build_finite_endpoint_closed_topology(
     guided_report: Mapping[str, Any],
     *,
     max_target_residual_px: float = 3.2,
-    _crease_exact_overrides: Mapping[str, Mapping[str, Any]] | None = None,
-    _allow_crease_repair: bool = True,
 ) -> dict[str, Any]:
     """Rebind each finite segment endpoint to an existing exact graph point.
 
-    A target is eligible only when it is an existing raw-evidence exact point,
-    or the intersection of this exact crease with a nearby paper boundary.
-    Boundary contact may be explicit in the raw topology or conservatively
-    inferred when a finite endpoint stops within two line-width tolerances of
-    the paper edge.  Its projected location must remain within both the
-    paper-scale and local segment-evidence limits.  Near ties are rejected
-    instead of guessed.
+    A non-boundary target is eligible only when it is an existing raw-evidence
+    exact point with direct observed incidence to this same finite crease. A
+    boundary target additionally requires an explicit observed boundary side.
+    Its projected location must remain within both the paper-scale and local
+    segment-evidence limits. Near ties are rejected instead of guessed.
     """
 
     graph = guided_report.get("geometry_graph")
@@ -266,6 +263,7 @@ def build_finite_endpoint_closed_topology(
     exact_points: dict[str, ExactPoint] = {}
     projected_points: dict[str, tuple[float, float]] = {}
     observed_points: dict[str, tuple[float, float]] = {}
+    point_incident_creases: dict[str, set[str]] = {}
     for entity_id, entity in entities.items():
         if entity.get("kind") != "point":
             continue
@@ -284,6 +282,9 @@ def build_finite_endpoint_closed_topology(
         exact_points[entity_id] = point
         projected_points[entity_id] = projected
         observed_points[entity_id] = observed
+        point_incident_creases[entity_id] = {
+            str(item) for item in entity.get("incident_ids", [])
+        }
 
     exact_lines: dict[str, tuple[ExactPoint, int]] = {}
     for entity_id, entity in entities.items():
@@ -299,20 +300,6 @@ def build_finite_endpoint_closed_topology(
             continue
         if through is not None and 0 <= direction < 8:
             exact_lines[entity_id] = through, direction
-    crease_exact_overrides = {
-        str(crease_id): copy.deepcopy(dict(override))
-        for crease_id, override in (_crease_exact_overrides or {}).items()
-        if isinstance(override, Mapping)
-    }
-    for crease_id, override in crease_exact_overrides.items():
-        through = _exact_point(override.get("through_point_project"))
-        try:
-            direction = int(override.get("direction_index"))
-        except (TypeError, ValueError):
-            continue
-        if through is not None and 0 <= direction < 8:
-            exact_lines[crease_id] = through, direction
-
     tolerances = topology.get("tolerances")
     incidence_margin = _positive_number(
         tolerances.get("incidence_margin_px") if isinstance(tolerances, Mapping) else None,
@@ -330,6 +317,14 @@ def build_finite_endpoint_closed_topology(
     source_segments = [
         item for item in topology.get("segments", []) if isinstance(item, Mapping)
     ]
+    for source_segment in source_segments:
+        crease_id = str(source_segment.get("crease_entity_id") or "")
+        if not crease_id:
+            continue
+        for endpoint_name in ("start", "end"):
+            point_id = str(source_segment.get(f"{endpoint_name}_point_id") or "")
+            if point_id:
+                point_incident_creases.setdefault(point_id, set()).add(crease_id)
     retained_segments: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     collapsed_segments: list[dict[str, Any]] = []
@@ -391,6 +386,8 @@ def build_finite_endpoint_closed_topology(
                 tuple[tuple[int, int, int], ...], dict[str, Any]
             ] = {}
             for target_id, target_point in exact_points.items():
+                if crease_id not in point_incident_creases.get(target_id, set()):
+                    continue
                 if not _on_exact_line(target_point, through, direction):
                     continue
                 target_px = projected_points[target_id]
@@ -433,21 +430,7 @@ def build_finite_endpoint_closed_topology(
                 else None
             )
             explicit_boundary_sides = [str(side) for side in boundary_sides or []]
-            inferred_boundary_limit = min(
-                gap_limit,
-                max(
-                    max(0.0, max_target_residual_px),
-                    2.0 * line_residual_tolerance,
-                ),
-            )
-            boundary_candidates = [
-                (side, False) for side in explicit_boundary_sides
-            ]
-            if not boundary_candidates and inferred_boundary_limit > 0:
-                boundary_candidates = [
-                    (side, True) for side in ("top", "right", "bottom", "left")
-                ]
-            for side, inferred_boundary_side in boundary_candidates:
+            for side in explicit_boundary_sides:
                 boundary_point = _line_boundary_intersection(
                     line,
                     side,
@@ -457,10 +440,9 @@ def build_finite_endpoint_closed_topology(
                     continue
                 target_px = _project_to_pixel(boundary_point, side_length, maximum)
                 gap = math.dist(endpoint_px, target_px)
-                boundary_gap_limit = (
-                    inferred_boundary_limit
-                    if inferred_boundary_side
-                    else min(gap_limit, max(0.0, max_target_residual_px))
+                boundary_gap_limit = min(
+                    gap_limit,
+                    max(0.0, max_target_residual_px),
                 )
                 if gap > boundary_gap_limit + 1e-9:
                     continue
@@ -476,7 +458,7 @@ def build_finite_endpoint_closed_topology(
                     "target_point_id": observed_id,
                     "target_kind": "known_paper_boundary_intersection",
                     "boundary_side": side,
-                    "boundary_side_inferred": inferred_boundary_side,
+                    "boundary_side_inferred": False,
                     "target_projected_point_px": [round(value, 6) for value in target_px],
                     "target_project_coordinate": [
                         qsqrt2_to_mapping(boundary_point[0]),
@@ -666,8 +648,8 @@ def build_finite_endpoint_closed_topology(
         "bindings": bindings,
         "collapsed_segments": collapsed_segments,
         "unresolved_endpoint_occurrences": unresolved_occurrences,
-        "crease_placement_repair_count": len(crease_exact_overrides),
-        "crease_placement_repairs": list(crease_exact_overrides.values()),
+        "crease_placement_repair_count": 0,
+        "crease_placement_repairs": [],
         "tolerances": {
             "paper_scale_gap_fraction": 0.05,
             "local_segment_length_fraction": 0.75,
@@ -677,7 +659,6 @@ def build_finite_endpoint_closed_topology(
             "maximum_target_observation_residual_px": round(
                 max(0.0, max_target_residual_px), 6
             ),
-            "inferred_boundary_gap_multiplier": 2.0,
         },
         "invariants": {
             "global_observed_point_merges": 0,
@@ -689,7 +670,9 @@ def build_finite_endpoint_closed_topology(
             "boundary_targets_are_exact_crease_boundary_intersections": True,
             "targets_lie_on_selected_exact_crease": True,
             "closure_is_per_segment_endpoint": True,
-            "crease_repair_keeps_observed_direction": True,
+            "target_requires_direct_observed_crease_incidence": True,
+            "boundary_target_requires_explicit_observed_side": True,
+            "crease_placement_repair_allowed": False,
         },
     }
 
@@ -703,122 +686,12 @@ def build_finite_endpoint_closed_topology(
             "segment_count": len(retained_segments),
             "segments": retained_segments,
             "endpoint_closure": closure,
-            "crease_exact_overrides": crease_exact_overrides,
         }
     )
     invariants = dict(closed.get("invariants") or {})
     invariants.update(closure["invariants"])
     closed["invariants"] = invariants
 
-    if _allow_crease_repair and dangling_occurrences:
-        replacement_targets: dict[str, set[str]] = defaultdict(set)
-        for binding in bindings:
-            if binding.get("target_kind") != "existing_exact_graph_point":
-                continue
-            observed_id = str(binding.get("observed_point_id") or "")
-            target_id = str(binding.get("resolved_point_id") or "")
-            if observed_id and target_id and observed_id != target_id:
-                replacement_targets[observed_id].add(target_id)
-
-        proposed_repairs: dict[str, dict[str, Any]] = {}
-        segment_index = {
-            str(segment.get("id") or ""): segment for segment in retained_segments
-        }
-        for occurrence in dangling_occurrences:
-            observed_id = str(occurrence["point_id"])
-            crease_id = str(occurrence["crease_entity_id"])
-            if crease_id in proposed_repairs or crease_id not in exact_lines:
-                continue
-            segment = segment_index.get(str(occurrence["segment_id"]))
-            endpoint_px = _observed_point(entities.get(observed_id, {}))
-            crease_entity = entities.get(crease_id, {})
-            observed_crease = crease_entity.get("observed_geometry")
-            if (
-                segment is None
-                or endpoint_px is None
-                or not isinstance(observed_crease, Mapping)
-            ):
-                continue
-            try:
-                angle = math.radians(float(observed_crease.get("angle_deg")))
-                offset = float(observed_crease.get("line_offset_px"))
-                match_tolerance = min(
-                    3.2,
-                    max(0.0, float(observed_crease.get("match_tolerance_px", 0.85))),
-                )
-            except (TypeError, ValueError):
-                continue
-            _, direction = exact_lines[crease_id]
-            gap_limit = _endpoint_gap_limit(
-                segment,
-                maximum=maximum,
-                incidence_margin=incidence_margin,
-                line_residual_tolerance=line_residual_tolerance,
-            )
-            candidates: list[tuple[tuple[float, float, str], dict[str, Any]]] = []
-            for target_id in sorted(replacement_targets.get(observed_id, ())):
-                target = exact_points.get(target_id)
-                target_px = projected_points.get(target_id)
-                if target is None or target_px is None:
-                    continue
-                gap = math.dist(endpoint_px, target_px)
-                if gap > gap_limit + 1e-9:
-                    continue
-                residual = abs(
-                    -math.sin(angle) * target_px[0]
-                    + math.cos(angle) * target_px[1]
-                    - offset
-                )
-                if residual > match_tolerance + 1e-9:
-                    continue
-                original_through = exact_lines[crease_id][0]
-                if _on_exact_line(target, original_through, direction):
-                    continue
-                repair = {
-                    "crease_entity_id": crease_id,
-                    "source": "dangling_endpoint_existing_node_incidence_repair",
-                    "trigger_observed_point_id": observed_id,
-                    "resolved_point_id": target_id,
-                    "through_point_project": [
-                        qsqrt2_to_mapping(target[0]),
-                        qsqrt2_to_mapping(target[1]),
-                    ],
-                    "direction_index": direction,
-                    "original_through_point_project": [
-                        qsqrt2_to_mapping(original_through[0]),
-                        qsqrt2_to_mapping(original_through[1]),
-                    ],
-                    "endpoint_gap_px": round(gap, 6),
-                    "observed_line_residual_px": round(residual, 6),
-                    "match_tolerance_px": round(match_tolerance, 6),
-                    "generated_crease_count": 0,
-                    "generated_direction_count": 0,
-                }
-                candidates.append(((residual, gap, target_id), repair))
-            if candidates:
-                candidates.sort(key=lambda item: item[0])
-                proposed_repairs[crease_id] = candidates[0][1]
-
-        if proposed_repairs:
-            repaired = build_finite_endpoint_closed_topology(
-                guided_report,
-                max_target_residual_px=max_target_residual_px,
-                _crease_exact_overrides=proposed_repairs,
-                _allow_crease_repair=False,
-            )
-            repaired_closure = repaired.get("endpoint_closure")
-            if isinstance(repaired_closure, Mapping):
-                repaired_unresolved = int(
-                    repaired_closure.get("unresolved_endpoint_occurrence_count", 0) or 0
-                )
-                repaired_dangling = int(
-                    repaired_closure.get("internal_dangling_endpoint_count", 0) or 0
-                )
-                if (
-                    repaired_unresolved <= len(unresolved_occurrences)
-                    and repaired_dangling < len(dangling_occurrences)
-                ):
-                    return repaired
     return closed
 
 

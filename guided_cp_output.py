@@ -502,9 +502,6 @@ def build_guided_cp_output_contract(
         entity_id: str,
         entity: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        override = crease_exact_overrides.get(entity_id)
-        if isinstance(override, Mapping):
-            return override
         exact = entity.get("exact_geometry")
         return exact if isinstance(exact, Mapping) else {}
 
@@ -512,41 +509,7 @@ def build_guided_cp_output_contract(
     invented_crease_ids: set[str] = set()
     direction_mismatch_ids: set[str] = set()
     crease_residual_failures: list[dict[str, Any]] = []
-    invalid_crease_override_ids: set[str] = set()
-    for raw_crease_id, override in crease_exact_overrides.items():
-        crease_id = str(raw_crease_id)
-        if not isinstance(override, Mapping):
-            invalid_crease_override_ids.add(crease_id)
-            continue
-        entity = entities.get(crease_id, {})
-        target_id = str(override.get("resolved_point_id") or "")
-        through = _exact_point(override.get("through_point_project"))
-        target = exact_points_by_id.get(target_id)
-        observed = entity.get("observed_geometry")
-        try:
-            override_direction = int(override.get("direction_index"))
-            observed_direction = int(
-                observed.get("direction_index")
-                if isinstance(observed, Mapping)
-                else -1
-            )
-            generated_creases = int(override.get("generated_crease_count", -1))
-            generated_directions = int(override.get("generated_direction_count", -1))
-        except (TypeError, ValueError):
-            override_direction = observed_direction = -1
-            generated_creases = generated_directions = -1
-        if (
-            entity.get("kind") != "crease"
-            or override.get("source")
-            != "dangling_endpoint_existing_node_incidence_repair"
-            or through is None
-            or target is None
-            or through != target
-            or override_direction != observed_direction
-            or generated_creases != 0
-            or generated_directions != 0
-        ):
-            invalid_crease_override_ids.add(crease_id)
+    invalid_crease_override_ids = {str(item) for item in crease_exact_overrides}
     maximum = float(topology.get("maximum_coordinate_px", 0.0) or 0.0)
     for entity in crease_entities:
         entity_id = str(entity.get("id"))
@@ -741,10 +704,13 @@ def build_guided_cp_output_contract(
         try:
             coverage = float(segment.get("visible_coverage"))
             unsupported = float(segment.get("unsupported_length_px"))
-            incidence_margin = float(
-                topology.get("tolerances", {}).get("incidence_margin_px", 0.0)
+            maximum_unsupported = float(
+                topology.get("invariants", {}).get(
+                    "maximum_segment_unsupported_length_px",
+                    0.0,
+                )
             )
-            if coverage < 0.5 or unsupported > incidence_margin * 2.0 + 1e-9:
+            if coverage < 0.8 or unsupported > maximum_unsupported + 1e-9:
                 untrusted_segment_ids.add(segment_id)
         except (TypeError, ValueError, AttributeError):
             untrusted_segment_ids.add(segment_id)

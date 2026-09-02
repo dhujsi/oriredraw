@@ -313,6 +313,30 @@ def _fit_cluster_point(
     return np.clip(point, 0.0, maximum)
 
 
+def _clusters_share_direct_line_evidence(
+    first_candidates: list[dict[str, Any]],
+    second_candidates: list[dict[str, Any]],
+) -> bool:
+    """Require a common observed finite line before two point records can merge."""
+
+    if any(
+        item.get("kind") == "finite_endpoint"
+        for item in (*first_candidates, *second_candidates)
+    ):
+        return False
+    first_line_ids = {
+        int(line_id)
+        for item in first_candidates
+        for line_id in item.get("line_ids", ())
+    }
+    second_line_ids = {
+        int(line_id)
+        for item in second_candidates
+        for line_id in item.get("line_ids", ())
+    }
+    return bool(first_line_ids & second_line_ids)
+
+
 def _cluster_candidates(
     candidates: list[dict[str, Any]],
     lines: list[dict[str, Any]],
@@ -340,6 +364,9 @@ def _cluster_candidates(
                 (float(np.linalg.norm(candidate["point"] - cluster["point"])), index)
                 for index, cluster in enumerate(clusters)
                 if float(np.linalg.norm(candidate["point"] - cluster["point"])) <= merge_radius
+                and _clusters_share_direct_line_evidence(
+                    cluster["candidates"], [candidate]
+                )
             )
         )
         assigned = False
@@ -396,6 +423,10 @@ def _cluster_candidates(
             for second_index in range(first_index + 1, len(clusters)):
                 second = clusters[second_index]
                 if float(np.linalg.norm(first["point"] - second["point"])) > merge_radius:
+                    continue
+                if not _clusters_share_direct_line_evidence(
+                    first["candidates"], second["candidates"]
+                ):
                     continue
                 proposed = first["candidates"] + second["candidates"]
                 fitted = _fit_cluster_point(proposed, line_index, maximum)
@@ -456,22 +487,17 @@ def _point_records(
         incident_ids: list[int] = []
         incidence_gaps: dict[int, float] = {}
         incidence_residuals: dict[int, float] = {}
-        for target_id, line in line_index.items():
+        for target_id in sorted(candidate_supported_ids):
+            line = line_index[target_id]
             residual = abs(float(line["normal"] @ point) - float(line["offset"]))
             if residual > line_residual_tolerance:
                 continue
             value = float(line["direction"] @ point)
             gap = _interval_distance(line["intervals"], value)
             # Joint fitting can move a high-degree node slightly beyond one
-            # stroke's original endpoint.  Preserve a line that independently
-            # participated in an accepted finite-evidence candidate, but do
-            # not grant the same extension to unrelated lines merely passing
-            # near the fitted point.
-            allowed_gap = (
-                incidence_margin + min(2.0, line_residual_tolerance)
-                if target_id in candidate_supported_ids
-                else incidence_margin
-            )
+            # stroke's original endpoint. Only a line that participated in an
+            # accepted finite-evidence candidate may be incident here.
+            allowed_gap = incidence_margin + min(2.0, line_residual_tolerance)
             if gap > allowed_gap:
                 continue
             incident_ids.append(target_id)
@@ -533,63 +559,6 @@ def _point_records(
     )
 
 
-def _absorb_nearby_terminals(
-    records: list[dict[str, Any]],
-    *,
-    radius: float,
-) -> tuple[list[dict[str, Any]], int]:
-    """Fold detector endpoints back into an already-supported real node.
-
-    LSD commonly stops a few pixels before a many-line focus.  If that focus
-    already admits every crease of the terminal record from independent finite
-    evidence, retaining the detector endpoint would split one physical vertex
-    into a real node plus a tiny artificial linehead.
-    """
-
-    retained: list[dict[str, Any]] = []
-    absorbed = 0
-    nonterminals = [
-        record for record in records if record["point_kind"] != "finite_endpoint"
-    ]
-    for record in records:
-        if record["point_kind"] != "finite_endpoint":
-            retained.append(record)
-            continue
-        line_ids = set(record["line_ids"])
-        matches = sorted(
-            (
-                (float(np.linalg.norm(record["point"] - target["point"])), target)
-                for target in nonterminals
-                if line_ids
-                and line_ids.issubset(set(target["line_ids"]))
-                and float(np.linalg.norm(record["point"] - target["point"])) <= radius
-            ),
-            key=lambda item: (
-                item[0],
-                round(float(item[1]["point"][1]), 6),
-                round(float(item[1]["point"][0]), 6),
-            ),
-        )
-        if not matches:
-            retained.append(record)
-            continue
-        target = matches[0][1]
-        target["observations"].extend(record["observations"])
-        target["candidate_kinds"] = sorted(
-            set(target["candidate_kinds"]) | set(record["candidate_kinds"])
-        )
-        target["candidate_count"] += int(record["candidate_count"])
-        absorbed += 1
-    return sorted(
-        retained,
-        key=lambda item: (
-            round(float(item["point"][1]), 6),
-            round(float(item["point"][0]), 6),
-            item["point_kind"],
-        ),
-    ), absorbed
-
-
 def _segments_for_graph(
     graph: ConstructionGraph,
     lines: list[dict[str, Any]],
@@ -597,6 +566,7 @@ def _segments_for_graph(
     point_ids: list[Hashable],
     *,
     incidence_margin: float,
+    line_residual_tolerance: float,
     line_type_evidence: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     by_line: dict[int, list[tuple[float, Hashable]]] = {
@@ -627,7 +597,7 @@ def _segments_for_graph(
             overlap = _interval_overlap(line["intervals"], first_t, second_t)
             coverage = min(1.0, overlap / length)
             unsupported = max(0.0, length - overlap)
-            if coverage < 0.50 or unsupported > incidence_margin * 2.0:
+            if coverage < 0.80 or unsupported > line_residual_tolerance:
                 continue
             segment_id = f"raw-segment:{target_id}:{segment_index}"
             line_segment_ids.append(segment_id)
@@ -772,10 +742,7 @@ def build_raw_crease_topology_graph(
         incidence_margin=incidence_margin,
         line_residual_tolerance=line_residual_tolerance,
     )
-    point_records, absorbed_terminal_count = _absorb_nearby_terminals(
-        point_records,
-        radius=incidence_margin + 2.0,
-    )
+    absorbed_terminal_count = 0
 
     anchors: dict[int, dict[str, Any]] = {}
     for line in lines:
@@ -845,6 +812,7 @@ def build_raw_crease_topology_graph(
         point_records,
         point_ids,
         incidence_margin=incidence_margin,
+        line_residual_tolerance=line_residual_tolerance,
         line_type_evidence=raw_report.get("segment_line_type_evidence"),
     )
 
@@ -956,6 +924,13 @@ def build_raw_crease_topology_graph(
             "intersection_requires_two_finite_evidence_intervals": True,
             "boundary_contact_requires_finite_evidence_interval": True,
             "segments_join_consecutive_incident_points_only": True,
+            "point_cluster_merge_requires_shared_raw_line": True,
+            "point_incidence_requires_candidate_line_evidence": True,
+            "detector_terminals_are_not_absorbed_by_proximity": True,
+            "minimum_segment_visible_coverage_required": 0.8,
+            "maximum_segment_unsupported_length_px": round(
+                line_residual_tolerance, 6
+            ),
             "minimum_retained_segment_visible_coverage": round(
                 minimum_segment_coverage, 6
             ),

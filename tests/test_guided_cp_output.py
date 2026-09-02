@@ -314,7 +314,8 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         right_segment = next(
             item for item in contract["candidate_segments"] if item["id"] == "right-half"
         )
-        self.assertEqual(right_segment["end_point_id"], "right-target")
+        self.assertEqual(right_segment["end_point_id"], "right")
+        self.assertEqual(right_segment["end_cp"], [200.0, 0.0])
 
 
 if __name__ == "__main__":

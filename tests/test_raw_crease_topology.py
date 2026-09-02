@@ -176,6 +176,71 @@ class RawCreaseTopologyTest(unittest.TestCase):
             ]
         )
 
+    def test_nearby_parallel_detector_endpoints_remain_distinct(self):
+        graph, _, topology = build_raw_crease_topology_graph(
+            _report(
+                [
+                    _line("upper", 0, 50.0, [[10.0, 50.0]]),
+                    _line("lower", 0, 52.0, [[50.0, 90.0]]),
+                ]
+            )
+        )
+
+        points = [
+            entity
+            for entity in graph.geometry_entities.values()
+            if entity.kind == "point"
+        ]
+        self.assertEqual(len(points), 4)
+        self.assertTrue(
+            all(len(graph.incident_entities(point.id)) == 1 for point in points)
+        )
+        self.assertEqual(topology["absorbed_detector_terminal_count"], 0)
+        self.assertTrue(
+            topology["invariants"][
+                "point_cluster_merge_requires_shared_raw_line"
+            ]
+        )
+        self.assertTrue(
+            topology["invariants"][
+                "detector_terminals_are_not_absorbed_by_proximity"
+            ]
+        )
+
+    def test_nearby_intersections_do_not_replace_finite_line_endpoints(self):
+        graph, _, topology = build_raw_crease_topology_graph(
+            _report(
+                [
+                    _line("horizontal", 0, 50.0, [[10.0, 90.0]]),
+                    _line("left-vertical", 4, -7.0, [[45.0, 55.0]]),
+                    _line("right-vertical", 4, -93.0, [[45.0, 55.0]]),
+                ]
+            )
+        )
+
+        horizontal = next(
+            entity
+            for entity in graph.geometry_entities.values()
+            if entity.kind == "crease"
+            and entity.observed_geometry["raw_line_id"] == "horizontal"
+        )
+        horizontal_points = sorted(
+            [
+                entity.observed_geometry["point_px"][0]
+                for entity in graph.incident_entities(horizontal.id)
+                if entity.kind == "point"
+            ]
+        )
+        self.assertEqual(horizontal_points, [7.0, 10.0, 90.0, 93.0])
+        horizontal_segments = [
+            segment
+            for segment in topology["segments"]
+            if segment["raw_line_id"] == "horizontal"
+        ]
+        self.assertEqual(len(horizontal_segments), 1)
+        self.assertAlmostEqual(horizontal_segments[0]["length_px"], 80.0)
+        self.assertEqual(horizontal_segments[0]["visible_coverage"], 1.0)
+
     def test_boundary_contact_requires_the_visible_interval_to_reach_the_side(self):
         graph, _, topology = build_raw_crease_topology_graph(
             _report(
