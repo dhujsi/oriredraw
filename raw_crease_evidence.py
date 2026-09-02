@@ -132,14 +132,16 @@ def _extract_finite_segments(
     ink: np.ndarray,
     confidence: np.ndarray,
     settings: Settings,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Return finite source observations before line clustering."""
 
     diffuse_input = _has_diffuse_color_bleed(square)
     rejected_angle = 0
     rejected_border = 0
+    rejected_short = 0
     center_shifts: list[float] = []
     raw: list[dict[str, Any]] = []
+    noncanonical_observations: list[dict[str, Any]] = []
 
     channels = _geometry_channels(
         square,
@@ -191,12 +193,35 @@ def _extract_finite_segments(
                     math.atan2(float(delta[1]), float(delta[0]))
                 )
                 angle_error_deg = math.degrees(angle_error)
-                if (
-                    length < 3.0
-                    or angle_error_deg
-                    > _angle_admission_tolerance_deg(length, settings)
-                ):
+                if length < 3.0:
+                    rejected_short += 1
+                    continue
+                admission_tolerance = _angle_admission_tolerance_deg(
+                    length,
+                    settings,
+                )
+                if angle_error_deg > admission_tolerance:
                     rejected_angle += 1
+                    measured_angle = math.degrees(
+                        math.atan2(float(delta[1]), float(delta[0]))
+                    ) % 180.0
+                    noncanonical_observations.append(
+                        {
+                            "source": "raw_image_noncanonical_finite_stroke_observation",
+                            "channel": str(channel["label"]),
+                            "start_px": [round(float(value), 6) for value in start],
+                            "end_px": [round(float(value), 6) for value in end],
+                            "length_px": round(length, 6),
+                            "observed_angle_deg": round(measured_angle, 6),
+                            "nearest_22_5_direction_index": int(orientation),
+                            "nearest_22_5_angle_deg": round(orientation * 22.5, 6),
+                            "angle_residual_deg": round(angle_error_deg, 6),
+                            "angle_admission_tolerance_deg": round(
+                                admission_tolerance,
+                                6,
+                            ),
+                        }
+                    )
                     continue
                 theta = ALLOWED_ANGLES[orientation]
                 direction = np.array(
@@ -263,7 +288,20 @@ def _extract_finite_segments(
             continue
         kept.append(item)
 
-    return kept, {
+    ordered_noncanonical = sorted(
+        noncanonical_observations,
+        key=lambda item: (
+            -float(item["length_px"]),
+            float(item["observed_angle_deg"]),
+            item["start_px"],
+            item["end_px"],
+            item["channel"],
+        ),
+    )[:512]
+    for index, item in enumerate(ordered_noncanonical, start=1):
+        item["id"] = f"noncanonical-stroke:{index}"
+
+    return kept, ordered_noncanonical, {
         "detector": detector_kind,
         "diffuse_input": bool(diffuse_input),
         "geometry_channel_count": channel_count,
@@ -272,6 +310,9 @@ def _extract_finite_segments(
         ),
         "accepted_finite_segments": len(kept),
         "angle_rejected_segments": rejected_angle,
+        "short_rejected_segments": rejected_short,
+        "retained_noncanonical_observation_count": len(ordered_noncanonical),
+        "noncanonical_observation_limit": 512,
         "border_rejected_segments": rejected_border,
         "centered_segment_count": len(center_shifts),
         "mean_center_shift_px": round(
@@ -796,7 +837,7 @@ def detect_raw_crease_entities_from_square(
             evidence_stats.get("adaptive_evidence_distance_px", 1.75)
         ),
     )
-    raw, detector_stats = _extract_finite_segments(
+    raw, noncanonical_observations, detector_stats = _extract_finite_segments(
         image,
         ink,
         confidence,
@@ -837,6 +878,7 @@ def detect_raw_crease_entities_from_square(
             int(key) for key in sorted(orientation_counts, key=int)
         ],
         "lines": entities,
+        "noncanonical_angle_observations": noncanonical_observations,
         "detector_stats": detector_stats,
         "pixel_agreement": _pixel_agreement(
             image,

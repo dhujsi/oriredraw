@@ -17,6 +17,7 @@ import math
 from typing import Any, Hashable, Iterable, Mapping
 
 from boundary_relations import detect_boundary_ratio_relations
+from constrained_angle_candidates import build_constrained_angle_candidates
 from construction_search import (
     ConstructionGraph,
     ConstructionOperation,
@@ -2616,6 +2617,10 @@ def build_guided_boundary_report(
         segment_line_types=line_type_assignments,
     )
     report["cp_output_contract"] = output_contract
+    report["construction_angle_candidates"] = build_constrained_angle_candidates(
+        raw_report if isinstance(raw_report, Mapping) else None,
+        output_contract,
+    )
     report["segment_line_type_assignments"] = output_contract[
         "segment_line_type_assignments"
     ]

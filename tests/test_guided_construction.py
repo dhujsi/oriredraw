@@ -75,6 +75,7 @@ class GuidedConstructionTest(unittest.TestCase):
         self.assertEqual(report["suppressed_unselected_root_operations"], 3)
         self.assertGreaterEqual(report["guided_selected_ray_count"], 3)
         self.assertTrue(report["output_unchanged"])
+        self.assertIn("construction_angle_candidates", report)
         json.dumps(report, ensure_ascii=False)
 
         geometry = report["geometry_graph"]

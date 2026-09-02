@@ -1,3 +1,4 @@
+import math
 import unittest
 
 import cv2
@@ -286,6 +287,40 @@ class RawCreaseEvidenceTest(unittest.TestCase):
             )
             self.assertGreater(line["total_visible_length_px"], 0.0)
             self.assertTrue(line["visible_segments_px"])
+
+    def test_noncanonical_stroke_is_retained_as_evidence_not_a_free_line(self):
+        square = _white_square(201)
+        maximum = square.shape[0] - 1
+        cv2.rectangle(square, (0, 0), (maximum, maximum), (0, 0, 0), 2)
+        angle = math.radians(33.75)
+        start = (30, 50)
+        end = (
+            round(start[0] + 150.0 * math.cos(angle)),
+            round(start[1] + 150.0 * math.sin(angle)),
+        )
+        cv2.line(square, start, end, (0, 0, 0), 2)
+
+        report = detect_raw_crease_entities_from_square(
+            square, Settings(analysis_size=square.shape[0])
+        )
+
+        observations = report["noncanonical_angle_observations"]
+        self.assertTrue(observations)
+        self.assertTrue(
+            all(
+                item["source"]
+                == "raw_image_noncanonical_finite_stroke_observation"
+                for item in observations
+            )
+        )
+        self.assertTrue(
+            any(abs(item["observed_angle_deg"] - 33.75) < 1.0 for item in observations)
+        )
+        self.assertEqual(report["lines"], [])
+        self.assertEqual(
+            report["detector_stats"]["retained_noncanonical_observation_count"],
+            len(observations),
+        )
 
 
 if __name__ == "__main__":
