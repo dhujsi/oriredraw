@@ -22,6 +22,8 @@ PYTHON_FILES = [
     "exact_graph_propagation.py",
     "finite_endpoint_closure.py",
     "guided_cp_output.py",
+    "constrained_angle_candidates.py",
+    "transactional_angle_repair.py",
     "guided_construction.py",
     "raw_boundary_evidence.py",
     "raw_crease_evidence.py",

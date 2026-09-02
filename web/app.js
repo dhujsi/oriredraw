@@ -71,7 +71,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260831-source-colour-default-red-v2';
+const WEB_ENGINE_VERSION = '20260902-transactional-angle-repair-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -842,6 +842,7 @@ function syncGuidedMvAssignments(root, report) {
           'explicit_segment_assignment',
           'source_image_color_evidence',
           'source_image_default_mountain',
+          'camv_maekawa_single_line_solution',
           'user_confirmed',
         ]
           .includes(String(segment?.line_type_source || ''))
@@ -930,6 +931,7 @@ const GUIDED_MV_TRUSTED_SOURCES = new Set([
   'explicit_segment_assignment',
   'source_image_color_evidence',
   'source_image_default_mountain',
+  'camv_maekawa_single_line_solution',
   'user_confirmed',
 ]);
 

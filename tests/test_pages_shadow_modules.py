@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -5,6 +6,7 @@ def test_pages_packages_every_shadow_worker_module():
     root = Path(__file__).parents[1]
     worker = (root / "web" / "pyodide-worker.js").read_text(encoding="utf-8")
     workflow = (root / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+    preview = (root / "scripts" / "preview.py").read_text(encoding="utf-8")
 
     required = [
         "shadow_search.py",
@@ -14,6 +16,8 @@ def test_pages_packages_every_shadow_worker_module():
         "exact_graph_propagation.py",
         "finite_endpoint_closure.py",
         "guided_cp_output.py",
+        "constrained_angle_candidates.py",
+        "transactional_angle_repair.py",
         "guided_construction.py",
         "raw_boundary_evidence.py",
         "raw_crease_evidence.py",
@@ -39,3 +43,8 @@ def test_pages_packages_every_shadow_worker_module():
     for name in required:
         assert name in worker, f"worker does not load {name}"
         assert name in workflow, f"Pages does not package {name}"
+        assert name in preview, f"local preview does not package {name}"
+
+    app = (root / "web" / "app.js").read_text(encoding="utf-8")
+    pattern = re.compile(r"^const WEB_ENGINE_VERSION = '([^']+)';$", re.MULTILINE)
+    assert pattern.search(app).group(1) == pattern.search(worker).group(1)

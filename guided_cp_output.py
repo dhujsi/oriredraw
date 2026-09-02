@@ -1,11 +1,10 @@
 """CP serialization and diagnostics for the user-guided finite crease graph.
 
-This module never extends a line or creates an internal segment.  It always
-serializes the currently observed finite topology when coordinates are
-available.  Exact fitted endpoints are preferred; unresolved endpoints fall
-back to their source-image positions.  Source-image colour is used where it is
-clear, and every missing or unusable M/V value is exported as red/mountain.
-Diagnostics describe defects in that current CP but never suppress it.
+This module never extends a line or creates an internal segment. It validates
+the currently observed finite topology and emits CP only when every geometry,
+provenance, line-type, boundary, and cAMV gate passes. A separate transactional
+repair layer may promote a copied topology only after the same complete cAMV
+audit succeeds; unresolved drafts remain diagnostic and are never exported.
 """
 
 from __future__ import annotations

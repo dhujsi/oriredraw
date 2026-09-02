@@ -10,6 +10,8 @@ const SOURCE_FILES = [
   'exact_graph_propagation.py',
   'finite_endpoint_closure.py',
   'guided_cp_output.py',
+  'constrained_angle_candidates.py',
+  'transactional_angle_repair.py',
   'guided_construction.py',
   'raw_boundary_evidence.py',
   'raw_crease_evidence.py',
@@ -33,7 +35,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260826-finite-endpoint-closure-v1';
+const WEB_ENGINE_VERSION = '20260902-transactional-angle-repair-v1';
 
 let pyodide;
 let readyPromise;

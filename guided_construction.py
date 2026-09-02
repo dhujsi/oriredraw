@@ -37,6 +37,7 @@ from qsqrt2_coordinates import (
     qsqrt2_to_mapping,
 )
 from raw_crease_topology import build_raw_crease_topology_graph
+from transactional_angle_repair import build_transactional_angle_repair
 from shadow_search import (
     _algebraic_coefficients,
     _anchor_point,
@@ -2612,16 +2613,26 @@ def build_guided_boundary_report(
         )
     else:
         report["finite_endpoint_closure"] = finite_topology
-    output_contract = build_guided_cp_output_contract(
+    base_output_contract = build_guided_cp_output_contract(
         report,
         segment_line_types=line_type_assignments,
     )
-    report["cp_output_contract"] = output_contract
-    report["construction_angle_candidates"] = build_constrained_angle_candidates(
+    angle_candidates = build_constrained_angle_candidates(
         raw_report if isinstance(raw_report, Mapping) else None,
-        output_contract,
+        base_output_contract,
     )
-    report["segment_line_type_assignments"] = output_contract[
+    angle_repair, repaired_output_contract = build_transactional_angle_repair(
+        base_output_contract,
+        angle_candidates,
+    )
+    output_contract = repaired_output_contract or base_output_contract
+    report["cp_output_contract"] = output_contract
+    report["construction_angle_candidates"] = angle_candidates
+    report["construction_angle_repair"] = angle_repair
+    # Persist only assignments belonging to the observed topology. Generated
+    # repair/split IDs exist solely in the effective output contract and must
+    # not be sent back as unknown user assignments on the next guided replay.
+    report["segment_line_type_assignments"] = base_output_contract[
         "segment_line_type_assignments"
     ]
     report["output_ready"] = bool(output_contract["output_ready"])

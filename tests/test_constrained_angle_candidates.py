@@ -148,7 +148,7 @@ class ConstrainedAngleCandidatesTest(unittest.TestCase):
             1,
         )
 
-    def test_noncanonical_bisector_is_only_a_supported_fallback(self):
+    def test_bisector_that_does_not_solve_kawasaki_is_not_a_missing_ray(self):
         segments = [
             _segment("east", 0.0),
             _segment("southeast", 67.5),
@@ -160,20 +160,42 @@ class ConstrainedAngleCandidatesTest(unittest.TestCase):
 
         report = build_constrained_angle_candidates(raw, _contract(segments))
 
-        self.assertEqual(report["candidate_count"], 1)
-        candidate = report["candidates"][0]
-        self.assertEqual(candidate["kind"], "existing_sector_angle_bisector")
-        self.assertEqual(candidate["priority"], 3)
-        self.assertEqual(candidate["direction_family"], "derived_noncanonical")
-        self.assertIsNone(candidate["direction_index"])
-        self.assertAlmostEqual(candidate["direction_angle_deg"], 33.75)
-        self.assertEqual(candidate["parent_segment_ids"], ["east", "southeast"])
-        self.assertEqual(
-            candidate["image_evidence"]["matched_observation_ids"],
-            ["bisector-stroke"],
+        self.assertEqual(report["candidate_count"], 0)
+        self.assertGreaterEqual(
+            report["rejection_counts"]["insufficient_source_image_evidence"],
+            1,
         )
 
-    def test_canonical_kawasaki_candidate_suppresses_bisector_fallbacks(self):
+    def test_noncanonical_missing_ray_must_be_both_kawasaki_and_bisector(self):
+        segments = [
+            _segment("east", 0.0),
+            _segment("ray-50", 50.0),
+            _segment("ray-100", 100.0),
+        ]
+        raw = _raw_report(
+            noncanonical=[_noncanonical_observation("joint-proof", 230.0)]
+        )
+
+        report = build_constrained_angle_candidates(raw, _contract(segments))
+
+        self.assertEqual(report["candidate_count"], 1)
+        candidate = report["candidates"][0]
+        self.assertEqual(candidate["kind"], "kawasaki_single_missing_ray")
+        self.assertEqual(candidate["priority"], 1)
+        self.assertEqual(
+            candidate["direction_family"],
+            "derived_existing_sector_angle_bisector",
+        )
+        self.assertEqual(
+            candidate["construction_sources"],
+            ["kawasaki_single_missing_ray", "existing_sector_angle_bisector"],
+        )
+        self.assertEqual(
+            candidate["angle_bisector_derivations"][0]["parent_segment_ids"],
+            ["east", "ray-100"],
+        )
+
+    def test_supported_bisector_is_ignored_when_it_is_not_the_kawasaki_solution(self):
         segments = [
             _segment("east", 0.0),
             _segment("southeast", 45.0),
@@ -192,8 +214,8 @@ class ConstrainedAngleCandidatesTest(unittest.TestCase):
         self.assertEqual(report["candidates"][0]["kind"], "kawasaki_single_missing_ray")
         self.assertEqual(report["candidates"][0]["direction_angle_deg"], 315.0)
         self.assertEqual(
-            report["rejection_counts"]["lower_priority_fallback_suppressed"],
-            1,
+            report["candidates"][0]["image_evidence"]["matched_observation_ids"],
+            ["kawasaki-stroke:0"],
         )
 
     def test_arbitrary_image_direction_is_not_a_construction_source(self):

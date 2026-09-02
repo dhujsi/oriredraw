@@ -247,7 +247,10 @@ class GuidedCpOutputContractTest(unittest.TestCase):
         contract = build_guided_cp_output_contract(
             report,
             segment_line_types={
-                "left-half": {"line_type": 2, "source": "guessed_default"},
+                "left-half": {
+                    "line_type": 2,
+                    "source": "camv_maekawa_single_line_solution",
+                },
                 "right-half": 3,
             },
         )

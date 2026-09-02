@@ -2,6 +2,7 @@ import copy
 import json
 import math
 import unittest
+from unittest.mock import patch
 
 from guided_construction import (
     _next_relation_rank_key,
@@ -76,6 +77,7 @@ class GuidedConstructionTest(unittest.TestCase):
         self.assertGreaterEqual(report["guided_selected_ray_count"], 3)
         self.assertTrue(report["output_unchanged"])
         self.assertIn("construction_angle_candidates", report)
+        self.assertIn("construction_angle_repair", report)
         json.dumps(report, ensure_ascii=False)
 
         geometry = report["geometry_graph"]
@@ -90,6 +92,7 @@ class GuidedConstructionTest(unittest.TestCase):
             if entity["kind"] == "crease" and entity["exact_geometry"]
         ]
         self.assertEqual(len(exact_creases), 3)
+
         self.assertTrue(
             all(
                 entity["observed_geometry"]["direction_index"]
@@ -115,6 +118,68 @@ class GuidedConstructionTest(unittest.TestCase):
         self.assertGreater(
             propagation["rejection_counts"].get("paper_boundary_tangent_pruned", 0),
             0,
+        )
+
+    def test_transactionally_repaired_contract_is_the_only_promoted_output(self):
+        relation = next(
+            item
+            for item in build_boundary_relation_catalog(self.result)
+            if item["kind"] == "trisection"
+            and item["side"] == "top"
+            and item["endpoint_coordinates"] == [0.0, 90.0]
+        )
+        base_contract = {
+            "output_ready": False,
+            "checks_passed": False,
+            "cp_available": False,
+            "cp": None,
+            "segment_line_type_assignments": {
+                "observed": {"line_type": 2, "source": "user_confirmed"}
+            },
+        }
+        candidate_report = {"enabled": True, "candidates": [{"id": "repair"}]}
+        repair_report = {"enabled": True, "output_promoted": True}
+        repaired_contract = {
+            "output_ready": True,
+            "checks_passed": True,
+            "cp_available": True,
+            "cp": "1 -200 -200 200 -200\n",
+            "segment_line_type_assignments": {
+                "generated": {
+                    "line_type": 3,
+                    "source": "camv_maekawa_single_line_solution",
+                }
+            },
+        }
+
+        with (
+            patch(
+                "guided_construction.build_guided_cp_output_contract",
+                return_value=base_contract,
+            ),
+            patch(
+                "guided_construction.build_constrained_angle_candidates",
+                return_value=candidate_report,
+            ),
+            patch(
+                "guided_construction.build_transactional_angle_repair",
+                return_value=(repair_report, repaired_contract),
+            ),
+        ):
+            report = build_guided_boundary_report(
+                self.result,
+                {"id": relation["id"]},
+            )
+
+        self.assertIs(report["cp_output_contract"], repaired_contract)
+        self.assertIs(report["construction_angle_candidates"], candidate_report)
+        self.assertIs(report["construction_angle_repair"], repair_report)
+        self.assertTrue(report["output_ready"])
+        self.assertTrue(report["cp_available"])
+        self.assertEqual(report["cp"], repaired_contract["cp"])
+        self.assertEqual(
+            report["segment_line_type_assignments"],
+            base_contract["segment_line_type_assignments"],
         )
 
     def test_raw_observation_and_exact_relation_coordinate_share_one_point_without_overwrite(self):

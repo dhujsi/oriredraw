@@ -2,8 +2,10 @@
 
 Image strokes are evidence, never a source of a free direction. Candidate rays
 must first be derived from existing exact rays by a named construction rule.
-Exact 22.5-degree candidates outrank non-canonical angle bisectors, and every
-candidate must be supported from its source vertex to its first exact contact.
+Every missing ray must solve Kawasaki at its source vertex. Exact 22.5-degree
+solutions are preferred; a non-canonical solution is admissible only when it
+is also an existing sector's angle bisector. Every candidate must be supported
+from its source vertex to its first exact contact.
 """
 
 from __future__ import annotations
@@ -16,6 +18,16 @@ from typing import Any, Iterable, Mapping
 Point = tuple[float, float]
 _FOLDING_TYPES = {2, 3}
 _GEOMETRY_CAMV_RULES = {"number_of_folds", "kawasaki_angles"}
+_REQUIRED_BASE_GATES = {
+    "exact_crease_closure",
+    "exact_endpoint_closure",
+    "observed_source_provenance",
+    "direction_consistency",
+    "residual_tolerance",
+    "finite_planar_geometry",
+    "segment_line_types",
+    "paper_boundary_closure",
+}
 
 
 def _point(raw: Any) -> Point | None:
@@ -405,10 +417,9 @@ def build_constrained_angle_candidates(
     gate_results = gate_results if isinstance(gate_results, Mapping) else {}
     failed_prerequisites = sorted(
         name
-        for name, value in gate_results.items()
-        if name != "flat_foldability"
-        and isinstance(value, Mapping)
-        and value.get("passed") is not True
+        for name in _REQUIRED_BASE_GATES
+        if not isinstance(gate_results.get(name), Mapping)
+        or gate_results[name].get("passed") is not True
     )
     if failed_prerequisites:
         return {
@@ -462,17 +473,55 @@ def build_constrained_angle_candidates(
         if "number_of_folds" not in rules or len(rays) % 2 == 0:
             rejected["not_a_single_missing_ray_parity_case"] += 1
             continue
-        theoretical = [
-            *_kawasaki_directions(rays),
-            *_angle_bisector_directions(rays),
-        ]
+        bisectors = _angle_bisector_directions(rays)
+        theoretical: list[dict[str, Any]] = []
+        for kawasaki in _kawasaki_directions(rays):
+            angle_deg = float(kawasaki["angle_deg"])
+            matching_bisectors = [
+                item
+                for item in bisectors
+                if abs(
+                    (float(item["angle_deg"]) - angle_deg + 180.0) % 360.0
+                    - 180.0
+                )
+                <= 1e-6
+            ]
+            canonical_index = _canonical_direction_index(angle_deg)
+            if canonical_index is None and not matching_bisectors:
+                rejected[
+                    "noncanonical_kawasaki_not_existing_sector_bisector"
+                ] += 1
+                continue
+            theoretical.append(
+                {
+                    **kawasaki,
+                    "canonical_direction_index": canonical_index,
+                    "construction_sources": [
+                        "kawasaki_single_missing_ray",
+                        *(
+                            ["existing_sector_angle_bisector"]
+                            if matching_bisectors
+                            else []
+                        ),
+                    ],
+                    "angle_bisector_derivations": [
+                        {
+                            "parent_segment_ids": list(
+                                item["parent_segment_ids"]
+                            ),
+                            "construction_expression": item[
+                                "construction_expression"
+                            ],
+                        }
+                        for item in matching_bisectors
+                    ],
+                }
+            )
         deduplicated: dict[float, dict[str, Any]] = {}
         for item in theoretical:
             angle_deg = float(item["angle_deg"])
             angle_key = round(angle_deg, 7)
-            old = deduplicated.get(angle_key)
-            rank = 0 if item["kind"] == "kawasaki_single_missing_ray" else 1
-            if old is None or rank < (0 if old["kind"] == "kawasaki_single_missing_ray" else 1):
+            if angle_key not in deduplicated:
                 deduplicated[angle_key] = item
         admitted_here: list[dict[str, Any]] = []
         for item in deduplicated.values():
@@ -509,18 +558,13 @@ def build_constrained_angle_candidates(
                 if len(line_type_options) == 1
                 else None
             )
-            canonical_index = _canonical_direction_index(float(item["angle_deg"]))
-            family = "canonical_22_5" if canonical_index is not None else "derived_noncanonical"
-            priority = (
-                0
-                if family == "canonical_22_5"
-                and item["kind"] == "kawasaki_single_missing_ray"
-                else 1
-                if family == "canonical_22_5"
-                else 2
-                if item["kind"] == "kawasaki_single_missing_ray"
-                else 3
+            canonical_index = item["canonical_direction_index"]
+            family = (
+                "canonical_22_5"
+                if canonical_index is not None
+                else "derived_existing_sector_angle_bisector"
             )
+            priority = 0 if canonical_index is not None else 1
             candidate = {
                 "id": f"{item['kind']}:{key[0]:.7g}:{key[1]:.7g}:{float(item['angle_deg']):.7g}",
                 "kind": item["kind"],
@@ -533,8 +577,16 @@ def build_constrained_angle_candidates(
                 "source_point_ids": sorted(vertex["point_ids"]),
                 "parent_segment_ids": list(item["parent_segment_ids"]),
                 "trigger_camv_rules": sorted(rules),
-                "construction_source": item["kind"],
+                "construction_source": (
+                    "kawasaki_single_missing_ray"
+                    if canonical_index is not None
+                    else "kawasaki_and_existing_sector_angle_bisector"
+                ),
+                "construction_sources": list(item["construction_sources"]),
                 "construction_expression": item["construction_expression"],
+                "angle_bisector_derivations": list(
+                    item["angle_bisector_derivations"]
+                ),
                 "target": {key: value for key, value in contact.items() if key != "end_cp"},
                 "image_evidence": evidence,
                 "maekawa_line_type_options": line_type_options,
@@ -568,11 +620,13 @@ def build_constrained_angle_candidates(
         "geometric_camv_vertex_count": len(violation_rules),
         "invariants": {
             "free_image_fitted_directions": 0,
-            "canonical_22_5_candidates_precede_angle_bisectors": True,
+            "canonical_22_5_missing_rays_precede_noncanonical_bisectors": True,
             "angle_bisectors_require_two_existing_parent_rays": True,
             "kawasaki_candidates_require_odd_existing_ray_count": True,
             "candidate_requires_source_image_evidence_to_first_exact_contact": True,
             "degree_two_noncollinear_vertices_do_not_generate_bisectors": True,
+            "missing_ray_direction_must_satisfy_kawasaki": True,
+            "noncanonical_missing_rays_must_also_be_existing_sector_bisectors": True,
             "candidates_are_not_applied_without_transactional_camv_recheck": True,
         },
     }
