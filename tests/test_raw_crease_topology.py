@@ -434,7 +434,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
             0,
         )
 
-    def test_one_boundary_seed_auto_fits_a_separate_existing_component(self):
+    def test_one_boundary_seed_requires_a_proved_relation_for_separate_component(self):
         side_length = qsqrt2_from_coefficients(2)
         zero = qsqrt2_from_coefficients(0)
         half = qsqrt2_from_coefficients(1, 0, 2)
@@ -475,18 +475,18 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertTrue(first["enabled"])
-        self.assertEqual(first["phase"], "complete_existing_creases")
+        self.assertEqual(first["phase"], "awaiting_additional_relation")
         self.assertEqual(first["selected_relation_ids"], [top["id"]])
-        self.assertEqual(first["unexplained_observations"], 0)
-        self.assertEqual(first["unresolved_crease_entity_ids"], [])
-        self.assertEqual(first["next_relation_candidate_count"], 0)
-        self.assertEqual(first["next_relation_candidates"], [])
-        self.assertEqual(first["automatic_topology_point_count"], 1)
-        self.assertEqual(
-            first["automatic_topology_point_history"][0][
-                "resolved_crease_count"
-            ],
-            1,
+        self.assertEqual(first["unexplained_observations"], 1)
+        self.assertEqual(len(first["unresolved_crease_entity_ids"]), 1)
+        self.assertEqual(first["next_relation_candidate_count"], 1)
+        self.assertEqual(first["next_relation_candidates"][0]["id"], bottom["id"])
+        self.assertEqual(first["automatic_topology_point_count"], 0)
+        self.assertEqual(first["automatic_topology_point_history"], [])
+        self.assertFalse(
+            first["generation_invariants"][
+                "raster_coordinate_fit_can_seed_construction"
+            ]
         )
         self.assertEqual(first["geometry_graph"]["crease_count"], 2)
         self.assertEqual(
@@ -551,7 +551,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(report["reason"], "incompatible_relation_coordinate_gauge")
         self.assertEqual(report["incompatible_relation_ids"], [incompatible["id"]])
 
-    def test_internal_topology_point_is_automatically_fitted_after_one_boundary_seed(self):
+    def test_disconnected_internal_observation_is_not_promoted_to_a_root(self):
         side_length = qsqrt2_from_coefficients(2)
         zero = qsqrt2_from_coefficients(0)
         half = qsqrt2_from_coefficients(1, 0, 2)
@@ -586,22 +586,19 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertTrue(first["enabled"])
-        self.assertEqual(first["phase"], "complete_existing_creases")
+        self.assertEqual(first["phase"], "proof_frontier_stalled")
         self.assertEqual(first["next_relation_candidates"], [])
         self.assertEqual(first["next_topology_point_candidates"], [])
-        self.assertEqual(first["unexplained_observations"], 0)
+        self.assertEqual(first["unexplained_observations"], 2)
         self.assertEqual(first["selection_steps"], [
             {"kind": "boundary_relation", "id": top["id"]},
         ])
         self.assertEqual(first["selected_topology_point_ids"], [])
-        self.assertEqual(first["automatic_topology_point_count"], 1)
-        crossing = first["automatic_topology_point_history"][0]
-        self.assertEqual(first["automatic_topology_point_ids"], [crossing["id"]])
-        self.assertEqual(crossing["point_kind"], "line_intersection")
-        self.assertEqual(crossing["coordinate_expression"], ["3/2", "3/2"])
-        self.assertAlmostEqual(crossing["fit_residual_px"], 0.0, places=6)
-        self.assertEqual(crossing["resolved_crease_count"], 2)
-        self.assertEqual(crossing["remaining_unresolved_crease_count"], 0)
+        self.assertEqual(first["automatic_topology_point_count"], 0)
+        self.assertEqual(first["automatic_topology_point_ids"], [])
+        self.assertEqual(first["automatic_topology_point_history"], [])
+        self.assertTrue(first["proof_generated_ray_required"])
+        self.assertFalse(first["manual_point_selection_required"])
         self.assertEqual(
             [item["step_kind"] for item in first["selection_history"]],
             ["boundary_relation"],
@@ -616,36 +613,26 @@ class RawCreaseTopologyTest(unittest.TestCase):
             0,
         )
 
-        # Old projects that already stored the same point as an explicit step
-        # still replay deterministically instead of being invalidated.
+        crossing_id = next(
+            item["id"]
+            for item in first["raw_topology"]["points"]
+            if item["point_kind"] == "line_intersection"
+            and not item["boundary_sides"]
+        )
         steps = [
             {"kind": "boundary_relation", "id": top["id"]},
-            {"kind": "topology_point", "id": crossing["id"]},
+            {"kind": "topology_point", "id": crossing_id},
         ]
-        completed = build_guided_boundary_report(
+        rejected = build_guided_boundary_report(
             result,
             {"selection_steps": steps},
         )
 
-        self.assertTrue(completed["enabled"])
-        self.assertEqual(completed["phase"], "complete_existing_creases")
-        self.assertEqual(completed["selection_steps"], steps)
-        self.assertEqual(completed["selected_topology_point_ids"], [crossing["id"]])
-        self.assertEqual(completed["automatic_topology_point_ids"], [])
+        self.assertFalse(rejected["enabled"])
         self.assertEqual(
-            [item["step_kind"] for item in completed["selection_history"]],
-            ["boundary_relation", "topology_point"],
+            rejected["reason"], "raster_fitted_topology_point_not_allowed"
         )
-        self.assertEqual(completed["unexplained_observations"], 0)
-        self.assertEqual(completed["geometry_graph"]["crease_count"], 3)
-        self.assertEqual(
-            completed["geometry_graph"]["invariants"]["invented_crease_count"],
-            0,
-        )
-        self.assertEqual(
-            completed["geometry_graph"]["invariants"]["invented_direction_count"],
-            0,
-        )
+        self.assertEqual(rejected["rejected_topology_point_ids"], [crossing_id])
 
     def test_arbitrary_cursor_coordinate_cannot_become_a_topology_seed(self):
         side_length = qsqrt2_from_coefficients(2)
@@ -680,10 +667,11 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertFalse(report["enabled"])
-        self.assertEqual(report["reason"], "invalid_guided_topology_point")
-        self.assertNotIn(
-            "cursor:73.2,74.8",
-            report["available_topology_point_ids"],
+        self.assertEqual(
+            report["reason"], "raster_fitted_topology_point_not_allowed"
+        )
+        self.assertEqual(
+            report["rejected_topology_point_ids"], ["cursor:73.2,74.8"]
         )
 
 

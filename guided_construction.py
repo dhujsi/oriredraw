@@ -2139,6 +2139,22 @@ def build_guided_boundary_report(
             "available_relation_ids": [item["id"] for item in catalog],
         }
     selected_relation_ids = [str(item["id"]) for item in selected_relations]
+    raster_fit_point_steps = [
+        step for step in selection_steps if step["kind"] == "topology_point"
+    ]
+    if raster_fit_point_steps:
+        return {
+            "enabled": False,
+            "mode": mode,
+            "reason": "raster_fitted_topology_point_not_allowed",
+            "selected_relation_ids": selected_relation_ids,
+            "rejected_topology_point_ids": [
+                str(step["id"]) for step in raster_fit_point_steps
+            ],
+            "invariants": {
+                "raster_coordinate_fit_can_seed_construction": False,
+            },
+        }
     global_side_length_key = _relation_side_length_key(selected_relations[0])
     incompatible_relation_ids = [
         str(item["id"])
@@ -2331,28 +2347,13 @@ def build_guided_boundary_report(
 
     automatic_point_operations: list[ConstructionOperation] = []
     automatic_point_history: list[dict[str, Any]] = []
-    if (
-        raw_available
-        and exact_side_length is not None
-        and sum(guided_candidate_counts) > 0
-    ):
-        (
-            graph,
-            details,
-            automatic_point_operations,
-            automatic_point_history,
-            automatic_reports,
-        ) = _automatically_fit_topology_points(
-            graph,
-            details,
-            exact_side_length,
-            maximum=maximum,
-        )
-        propagation_reports.extend(automatic_reports)
-    else:
-        propagation_reports.append(
-            propagate_exact_geometry(graph, maximum=maximum)
-        )
+    # Raster points must never become parentless construction roots.  Continue
+    # only with deterministic consequences of selected boundary relations;
+    # disconnected observations remain unresolved until a proof-generated ray
+    # reaches them.
+    propagation_reports.append(
+        propagate_exact_geometry(graph, maximum=maximum)
+    )
     geometry_propagation = _combine_propagation_reports(propagation_reports)
     relation_summaries = [
         _operation_summary(operation, details)
@@ -2441,31 +2442,17 @@ def build_guided_boundary_report(
         baseline_unresolved=unexplained,
         require_existing_incidence=require_existing_incidence,
     )
+    # Kept as empty compatibility fields for saved projects and the current UI.
+    # Candidate geometry must be generated from proved nodes, not fitted from
+    # these observed point coordinates.
     next_topology_point_candidates: list[dict[str, Any]] = []
-    if (
-        unexplained > 0
-        and not next_relation_candidates
-        and raw_available
-        and exact_side_length is not None
-    ):
-        next_topology_point_candidates = _rank_next_topology_point_candidates(
-            graph,
-            geometry_propagation,
-            exact_side_length,
-            maximum=maximum,
-        )
-    selectable_topology_point_count = sum(
-        bool(candidate.get("selectable"))
-        for candidate in next_topology_point_candidates
-    )
+    selectable_topology_point_count = 0
     phase = (
         "complete_existing_creases"
         if unexplained == 0
         else "awaiting_additional_relation"
         if next_relation_candidates
-        else "awaiting_topology_point"
-        if selectable_topology_point_count
-        else "manual_point_unavailable"
+        else "proof_frontier_stalled"
     )
     geometry_snapshot = graph.geometry_snapshot()
     direction_mismatches = [
@@ -2568,7 +2555,8 @@ def build_guided_boundary_report(
         "next_topology_point_candidate_count": len(next_topology_point_candidates),
         "selectable_topology_point_candidate_count": selectable_topology_point_count,
         "next_selection_required": unexplained > 0,
-        "manual_point_selection_required": (
+        "manual_point_selection_required": False,
+        "proof_generated_ray_required": (
             unexplained > 0 and not next_relation_candidates
         ),
         "suppressed_unselected_root_operations": suppressed_roots,
@@ -2618,12 +2606,18 @@ def build_guided_boundary_report(
                 ),
             },
         },
+        "generation_invariants": {
+            "raster_coordinate_fit_can_seed_construction": False,
+            "automatic_topology_point_fit_enabled": False,
+            "manual_topology_point_fit_enabled": False,
+            "unreached_observations_remain_unresolved": True,
+        },
         "notes": [
             "观测点与计算用精确几何仍共享点—折痕关联图；另有只读构造证明层，像素拟合本身不会被提升为证明事实。",
             "旧 beam/组合搜索不再执行；旧操作只作为来源记录保留。",
-            "全部人工选择按边界关系或内部拓扑点组成一条有序步骤链；撤销后以缩短的步骤列表确定性重算，不保存平行结果。",
-            "系统先列出仍能减少未解释折痕的同尺度边界关系；只有边界续选耗尽后，才显示连接未解释折痕的既有内部拓扑点。",
-            "内部点的 Q(√2) 坐标是对像素观测的带复杂度约束拟合；界面显示残差，只有复制图试算确实减少已有未解释折痕时才允许人工确认。",
+            "人工选择只允许确认有明确比例语义的边界关系；撤销后以缩短的步骤列表确定性重算。",
+            "系统可以继续列出同尺度边界关系，但不再把内部观测点拟合成新的构造起点。",
+            "未被已证明构造前沿到达的像素点与线保持未解释，不以简单 Q(√2) 坐标或减少未解释数量为晋升条件。",
             "关系点只绑定穿过该点的已有折痕，精确方向沿用对应观测轨迹，不枚举或生成八个方向。",
             "原图拓扑模式还要求关系点与折痕已经存在有限区间入射；无限延长线恰好穿点不会被激活。",
             "精确传播使用有界前沿：精确点只激活已有入射折痕，精确折痕只求已有交点或纸边接触；残差过大或候选冲突即停止该分支。",
