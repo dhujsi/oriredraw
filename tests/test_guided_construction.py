@@ -4,11 +4,16 @@ import math
 import unittest
 from unittest.mock import patch
 
+from construction_search import ConstructionGraph, GeometryEntity
+from exact_qsqrt2 import Qsqrt2
 from guided_construction import (
+    _apply_single_core_reference,
     _next_relation_rank_key,
     build_boundary_relation_catalog,
     build_guided_boundary_report,
 )
+from exact_graph_propagation import propagate_exact_geometry
+from qsqrt2_coordinates import qsqrt2_to_mapping
 
 
 def _anchor(trace_id, point, angle, source, *, generation=0, parents=()):
@@ -110,7 +115,7 @@ class GuidedConstructionTest(unittest.TestCase):
         )
         self.assertFalse(tangent["exact_geometry"])
         propagation = report["geometry_propagation"]
-        self.assertEqual(propagation["mode"], "deterministic_exact_frontier_v2")
+        self.assertEqual(propagation["mode"], "node_incidence_exact_frontier_v3")
         self.assertEqual(propagation["status"], "complete_existing_creases")
         self.assertFalse(propagation["frontier_limit_reached"])
         self.assertEqual(propagation["invariants"]["enumerated_direction_count"], 0)
@@ -180,6 +185,109 @@ class GuidedConstructionTest(unittest.TestCase):
         self.assertEqual(
             report["segment_line_type_assignments"],
             base_contract["segment_line_type_assignments"],
+        )
+
+    def test_single_core_reference_starts_only_observed_incident_child_rays(self):
+        graph = ConstructionGraph()
+        side_length = Qsqrt2(2)
+        one = Qsqrt2(1)
+        graph.add_geometry_entity(
+            GeometryEntity(
+                id="parent",
+                kind="crease",
+                observed_geometry={
+                    "direction_index": 0,
+                    "angle_deg": 0.0,
+                    "line_offset_px": 50.0,
+                    "match_tolerance_px": 1.0,
+                    "evidence_intervals_px": [[0.0, 50.0]],
+                },
+                exact_geometry={
+                    "source_relation_id": "selected",
+                    "direction_index": 0,
+                    "through_point_project": [
+                        qsqrt2_to_mapping(Qsqrt2()),
+                        qsqrt2_to_mapping(one),
+                    ],
+                    "side_length": qsqrt2_to_mapping(side_length),
+                    "exact_generation": 0,
+                },
+            )
+        )
+        graph.add_geometry_entity(
+            GeometryEntity(
+                id="frontier",
+                kind="point",
+                observed_geometry={
+                    "point_px": [50.0, 50.0],
+                    "point_kind": "line_intersection",
+                    "boundary_sides": [],
+                    "match_tolerance_px": 1.0,
+                },
+            )
+        )
+        graph.connect_incidence("frontier", "parent")
+        for crease_id, direction_index, offset in (
+            ("vertical", 4, -50.0),
+            ("diagonal-down", 2, 0.0),
+            ("diagonal-up", 6, -math.sqrt(2.0) * 50.0),
+        ):
+            graph.add_geometry_entity(
+                GeometryEntity(
+                    id=crease_id,
+                    kind="crease",
+                    observed_geometry={
+                        "direction_index": direction_index,
+                        "angle_deg": direction_index * 22.5,
+                        "line_offset_px": offset,
+                        "match_tolerance_px": 1.0,
+                        "evidence_intervals_px": [[40.0, 80.0]],
+                    },
+                )
+            )
+            graph.connect_incidence("frontier", crease_id)
+        graph.add_geometry_entity(
+            GeometryEntity(
+                id="nearby-unattached",
+                kind="crease",
+                observed_geometry={
+                    "direction_index": 4,
+                    "angle_deg": 90.0,
+                    "line_offset_px": -53.0,
+                    "match_tolerance_px": 3.2,
+                    "evidence_intervals_px": [[53.0, 90.0]],
+                },
+            )
+        )
+        baseline = propagate_exact_geometry(graph, maximum=100.0)
+
+        (
+            result_graph,
+            _,
+            operation,
+            history,
+            propagation,
+            report,
+        ) = _apply_single_core_reference(
+            graph,
+            {},
+            baseline,
+            side_length,
+            maximum=100.0,
+        )
+
+        self.assertEqual(report["status"], "applied")
+        self.assertEqual(report["applied_count"], 1)
+        self.assertIsNotNone(operation)
+        self.assertEqual(history["resolved_crease_count"], 3)
+        self.assertEqual(propagation["unresolved_crease_count"], 1)
+        self.assertTrue(result_graph.geometry_entity("vertical").is_exact)
+        self.assertTrue(result_graph.geometry_entity("diagonal-down").is_exact)
+        self.assertTrue(result_graph.geometry_entity("diagonal-up").is_exact)
+        self.assertFalse(result_graph.geometry_entity("nearby-unattached").is_exact)
+        self.assertEqual(
+            result_graph.geometry_entity("frontier").exact_geometry["source"],
+            "guided_single_qsqrt2_core_reference",
         )
 
     def test_raw_observation_and_exact_relation_coordinate_share_one_point_without_overwrite(self):

@@ -69,6 +69,9 @@ _CORNER_POINTS = (
 _RADICAL_DENOMINATORS = (1, 2, 3, 4, 6, 8, 12)
 _MAX_FREE_POINT_COMPLEXITY = 28
 _MAX_LINE_CONSTRAINED_POINT_COMPLEXITY = 48
+_SINGLE_CORE_REFERENCE_SOURCE = "guided_single_qsqrt2_core_reference"
+_MIN_SINGLE_CORE_REFERENCE_GAIN = 3
+_MAX_PARENT_RAY_ENDPOINT_GAP_PX = 3.2
 
 
 def _reduce_radical(a: int, b: int, denominator: int) -> tuple[int, int, int]:
@@ -1763,6 +1766,232 @@ def _rank_next_topology_point_candidates(
     return candidates[:64]
 
 
+def _parent_ray_endpoint_evidence(
+    graph: ConstructionGraph,
+    candidate: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Require the proposed core point to be an observed end of its exact parent ray."""
+
+    if (
+        candidate.get("point_kind") != "line_intersection"
+        or candidate.get("fit_constraint") != "existing_exact_incident_crease"
+        or int(candidate.get("incident_unresolved_crease_count", 0) or 0) < 2
+    ):
+        return None
+    point_id = str(candidate.get("id") or "")
+    parent_id = str(candidate.get("fit_constraint_crease_id") or "")
+    point_entity = next(
+        (
+            entity
+            for entity in graph.geometry_entities.values()
+            if entity.kind == "point" and str(entity.id) == point_id
+        ),
+        None,
+    )
+    parent = next(
+        (
+            entity
+            for entity in graph.geometry_entities.values()
+            if entity.kind == "crease" and str(entity.id) == parent_id
+        ),
+        None,
+    )
+    if point_entity is None or parent is None or not parent.exact_geometry:
+        return None
+    raw_point = point_entity.observed_geometry.get("point_px")
+    intervals = parent.observed_geometry.get("evidence_intervals_px")
+    try:
+        point = float(raw_point[0]), float(raw_point[1])
+        direction_index = int(parent.exact_geometry.get("direction_index"))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not isinstance(intervals, (list, tuple)) or not 0 <= direction_index < 8:
+        return None
+    angle = math.radians(direction_index * 22.5)
+    parameter = math.cos(angle) * point[0] + math.sin(angle) * point[1]
+    endpoints: list[float] = []
+    for interval in intervals:
+        if not isinstance(interval, (list, tuple)) or len(interval) < 2:
+            continue
+        try:
+            first, second = float(interval[0]), float(interval[1])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(first) and math.isfinite(second):
+            endpoints.extend((first, second))
+    if not endpoints:
+        return None
+    gap = min(abs(parameter - endpoint) for endpoint in endpoints)
+    if gap > _MAX_PARENT_RAY_ENDPOINT_GAP_PX + 1e-9:
+        return None
+    return {
+        "parent_crease_id": parent_id,
+        "observed_parent_endpoint_gap_px": round(gap, 6),
+    }
+
+
+def _apply_single_core_reference(
+    graph: ConstructionGraph,
+    details: dict[Hashable, dict[str, Any]],
+    propagation: Mapping[str, Any],
+    side_length: Qsqrt2,
+    *,
+    maximum: float,
+) -> tuple[
+    ConstructionGraph,
+    dict[Hashable, dict[str, Any]],
+    ConstructionOperation | None,
+    dict[str, Any] | None,
+    Mapping[str, Any] | None,
+    dict[str, Any],
+]:
+    """Use at most one exact scalar to start a stalled observed component.
+
+    The point must already be a source-observed high-degree node at the finite
+    endpoint of one proved exact crease.  Its only independent value is the
+    position along that parent crease.  Once selected, ordinary point-first
+    propagation may activate only the legal observed creases incident there.
+    """
+
+    baseline = int(propagation.get("unresolved_crease_count", 0) or 0)
+    if baseline <= 0:
+        return graph, details, None, None, None, {
+            "enabled": True,
+            "status": "not_needed",
+            "applied_count": 0,
+        }
+    candidates = _rank_next_topology_point_candidates(
+        graph,
+        propagation,
+        side_length,
+        maximum=maximum,
+    )
+    eligible: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    rejection_counts: Counter[str] = Counter()
+    for candidate in candidates:
+        if not candidate.get("selectable"):
+            rejection_counts["candidate_not_selectable"] += 1
+            continue
+        gain = int(candidate.get("projected_new_crease_count", 0) or 0)
+        if gain < _MIN_SINGLE_CORE_REFERENCE_GAIN:
+            rejection_counts["insufficient_downstream_gain"] += 1
+            continue
+        endpoint_evidence = _parent_ray_endpoint_evidence(graph, candidate)
+        if endpoint_evidence is None:
+            rejection_counts["not_an_observed_exact_parent_ray_endpoint"] += 1
+            continue
+        eligible.append((dict(candidate), endpoint_evidence))
+    if not eligible:
+        return graph, details, None, None, None, {
+            "enabled": True,
+            "status": "no_eligible_core_reference",
+            "applied_count": 0,
+            "candidate_count": len(candidates),
+            "rejection_counts": dict(sorted(rejection_counts.items())),
+        }
+    candidate, endpoint_evidence = min(
+        eligible,
+        key=lambda item: (
+            -int(item[0].get("projected_new_crease_count", 0) or 0),
+            -int(item[0].get("incident_unresolved_crease_count", 0) or 0),
+            float(item[0].get("fit_residual_px", math.inf)),
+            int(item[0].get("algebraic_complexity", 10**9)),
+            str(item[0].get("id") or ""),
+        ),
+    )
+    trial_graph = copy.deepcopy(graph)
+    trial_details = copy.deepcopy(details)
+    point_entity = next(
+        entity
+        for entity in trial_graph.geometry_entities.values()
+        if entity.kind == "point" and str(entity.id) == str(candidate["id"])
+    )
+    parent_entity = next(
+        entity
+        for entity in trial_graph.geometry_entities.values()
+        if entity.kind == "crease"
+        and str(entity.id) == str(endpoint_evidence["parent_crease_id"])
+    )
+    point_entity.add_exact_geometry(
+        {
+            "source": _SINGLE_CORE_REFERENCE_SOURCE,
+            "parent_entity_ids": [str(parent_entity.id)],
+            "project_coordinate": list(candidate["project_coordinate"]),
+            "side_length": qsqrt2_to_mapping(side_length),
+            "exact_generation": int(
+                parent_entity.exact_geometry.get("exact_generation", 0) or 0
+            )
+            + 1,
+            "observed_residual_px": candidate["fit_residual_px"],
+            "fit_parameter": candidate.get("fit_parameter"),
+            "independent_parameter_count": 1,
+            **endpoint_evidence,
+        }
+    )
+    operation = ConstructionOperation(
+        id=(_SINGLE_CORE_REFERENCE_SOURCE, str(point_entity.id)),
+        kind=_SINGLE_CORE_REFERENCE_SOURCE,
+        parents=(parent_entity.id,),
+        outputs=(point_entity.id,),
+        residual=float(candidate["fit_residual_px"]),
+        generation=int(point_entity.exact_geometry["exact_generation"]),
+        independent_parameters=1,
+    )
+    trial_graph.add_operation(operation)
+    trial_details[operation.id] = {
+        "provenance": _SINGLE_CORE_REFERENCE_SOURCE,
+        "topology_point_id": str(point_entity.id),
+        "parent_crease_id": str(parent_entity.id),
+        "observed_point_px": list(candidate["observed_point_px"]),
+        "fitted_point_px": list(candidate["fitted_point_px"]),
+        "coordinate_expression": list(candidate["coordinate_expression"]),
+        "fit_residual_px": candidate["fit_residual_px"],
+        "independent_parameter_count": 1,
+        **endpoint_evidence,
+    }
+    trial_report = propagate_exact_geometry(trial_graph, maximum=maximum)
+    remaining = int(trial_report.get("unresolved_crease_count", baseline) or 0)
+    gain = baseline - remaining
+    if gain < _MIN_SINGLE_CORE_REFERENCE_GAIN:
+        rejection_counts["trial_gain_below_minimum"] += 1
+        return graph, details, None, None, None, {
+            "enabled": True,
+            "status": "trial_rejected",
+            "applied_count": 0,
+            "candidate_count": len(candidates),
+            "rejection_counts": dict(sorted(rejection_counts.items())),
+        }
+    history = {
+        "id": str(point_entity.id),
+        "kind": "single_qsqrt2_core_reference",
+        "parent_crease_id": str(parent_entity.id),
+        "observed_point_px": list(candidate["observed_point_px"]),
+        "fitted_point_px": list(candidate["fitted_point_px"]),
+        "coordinate_expression": list(candidate["coordinate_expression"]),
+        "fit_residual_px": candidate["fit_residual_px"],
+        "resolved_crease_count": gain,
+        "remaining_unresolved_crease_count": remaining,
+        **endpoint_evidence,
+    }
+    return trial_graph, trial_details, operation, history, trial_report, {
+        "enabled": True,
+        "status": "applied",
+        "applied_count": 1,
+        "candidate_count": len(candidates),
+        "eligible_candidate_count": len(eligible),
+        "selected": history,
+        "rejection_counts": dict(sorted(rejection_counts.items())),
+        "invariants": {
+            "maximum_core_reference_count": 1,
+            "core_reference_is_on_exact_parent_crease": True,
+            "core_reference_is_observed_parent_ray_endpoint": True,
+            "core_reference_is_existing_observed_topology_point": True,
+            "downstream_lines_require_existing_observed_incidence": True,
+            "free_xy_fit_used": False,
+        },
+    }
+
+
 def _add_guided_topology_point_operation(
     graph: ConstructionGraph,
     details: dict[Hashable, dict[str, Any]],
@@ -2347,13 +2576,36 @@ def build_guided_boundary_report(
 
     automatic_point_operations: list[ConstructionOperation] = []
     automatic_point_history: list[dict[str, Any]] = []
-    # Raster points must never become parentless construction roots.  Continue
-    # only with deterministic consequences of selected boundary relations;
-    # disconnected observations remain unresolved until a proof-generated ray
-    # reaches them.
-    propagation_reports.append(
-        propagate_exact_geometry(graph, maximum=maximum)
-    )
+    core_reference_operations: list[ConstructionOperation] = []
+    core_reference_history: list[dict[str, Any]] = []
+    initial_propagation = propagate_exact_geometry(graph, maximum=maximum)
+    propagation_reports.append(initial_propagation)
+    core_reference_report: dict[str, Any] = {
+        "enabled": False,
+        "status": "not_available_without_raw_topology",
+        "applied_count": 0,
+    }
+    if raw_available and exact_side_length is not None:
+        (
+            graph,
+            details,
+            core_operation,
+            core_history,
+            core_propagation,
+            core_reference_report,
+        ) = _apply_single_core_reference(
+            graph,
+            details,
+            initial_propagation,
+            exact_side_length,
+            maximum=maximum,
+        )
+        if core_operation is not None:
+            core_reference_operations.append(core_operation)
+        if core_history is not None:
+            core_reference_history.append(core_history)
+        if core_propagation is not None:
+            propagation_reports.append(core_propagation)
     geometry_propagation = _combine_propagation_reports(propagation_reports)
     relation_summaries = [
         _operation_summary(operation, details)
@@ -2366,6 +2618,10 @@ def build_guided_boundary_report(
     automatic_point_summaries = [
         _operation_summary(operation, details)
         for operation in automatic_point_operations
+    ]
+    core_reference_summaries = [
+        _operation_summary(operation, details)
+        for operation in core_reference_operations
     ]
     guided_operations = [
         _operation_summary(operation, details)
@@ -2388,6 +2644,7 @@ def build_guided_boundary_report(
         *relation_summaries,
         *selected_point_summaries,
         *automatic_point_summaries,
+        *core_reference_summaries,
         *guided_operations,
         *propagation_operations,
     ]
@@ -2432,10 +2689,9 @@ def build_guided_boundary_report(
         for entity in crease_entities
         if str(entity.id) in unresolved_crease_set
     ]
-    # One proved boundary relation is the only human construction seed.  A
-    # second raster-derived relation would be another independent root, not a
-    # consequence of the first selection.  All continuation must therefore be
-    # automatic and construction-backed.
+    # One proved boundary relation is the only human selection.  A stalled
+    # one-parameter component may additionally consume the single explicit
+    # Q(sqrt(2)) core reference recorded above; it is not another UI step.
     next_relation_candidates: list[dict[str, Any]] = []
     # Kept as empty compatibility fields for saved projects and the current UI.
     # Candidate geometry must be generated from proved nodes, not fitted from
@@ -2519,6 +2775,11 @@ def build_guided_boundary_report(
         "automatic_topology_point_ids": automatic_topology_point_ids,
         "automatic_topology_point_history": automatic_point_history,
         "automatic_topology_point_count": len(automatic_point_history),
+        "single_core_reference": core_reference_report,
+        "single_core_reference_point_ids": [
+            str(item["id"]) for item in core_reference_history
+        ],
+        "single_core_reference_history": core_reference_history,
         "selection_steps": [dict(step) for step in selection_steps],
         "selection_history": selection_history,
         "selection_round": len(selection_steps),
@@ -2564,6 +2825,7 @@ def build_guided_boundary_report(
         "selected_guided_operations": guided_operations,
         "selected_guided_point_operations": selected_point_summaries,
         "automatic_guided_point_operations": automatic_point_summaries,
+        "single_core_reference_operations": core_reference_summaries,
         "geometry_propagation": geometry_propagation,
         "geometry_graph": geometry_snapshot,
         "construction_proof_topology": construction_proof_topology,
@@ -2597,9 +2859,13 @@ def build_guided_boundary_report(
             "raster_coordinate_fit_can_seed_construction": False,
             "automatic_topology_point_fit_enabled": False,
             "manual_topology_point_fit_enabled": False,
+            "single_qsqrt2_core_reference_enabled": True,
+            "single_qsqrt2_core_reference_count": len(core_reference_history),
+            "single_qsqrt2_core_reference_limit": 1,
             "unreached_observations_remain_unresolved": True,
             "global_direction_enumeration_enabled": False,
-            "topology_constrained_endpoint_bridge_enabled": True,
+            "topology_constrained_endpoint_bridge_enabled": False,
+            "proximity_only_endpoint_connection_enabled": False,
         },
         "notes": [
             "观测点与计算用精确几何仍共享点—折痕关联图；另有只读构造证明层，像素拟合本身不会被提升为证明事实。",
@@ -2653,7 +2919,7 @@ def build_guided_boundary_report(
     report["canonical_ray_candidates"] = {
         "enabled": False,
         "mode": "proved_node_canonical_ray_candidates_v1",
-        "reason": "replaced_by_topology_constrained_endpoint_bridge",
+        "reason": "replaced_by_node_incidence_frontier",
         "candidate_count": 0,
         "candidates": [],
         "invariants": {
@@ -2697,12 +2963,10 @@ def build_guided_boundary_report(
     report["cp_available"] = bool(output_contract["cp_available"])
     report["cp"] = output_contract["cp"]
     report["output_unchanged"] = not report["cp_available"]
-    accepted_endpoint_bridges = int(
-        geometry_propagation.get("endpoint_bridge_applied_count", 0) or 0
-    )
+    applied_core_references = int(core_reference_report.get("applied_count", 0) or 0)
     if unexplained == 0:
         report["phase"] = "complete_existing_creases"
-    elif accepted_endpoint_bridges:
+    elif applied_core_references:
         report["phase"] = "automatic_construction_partial"
     else:
         report["phase"] = "proof_frontier_stalled"

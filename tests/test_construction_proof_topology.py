@@ -110,6 +110,60 @@ class ConstructionProofTopologyTest(unittest.TestCase):
         self.assertEqual(graph, original_graph)
         self.assertEqual(topology, original_topology)
 
+    def test_single_core_reference_is_proved_only_from_a_proved_parent_crease(self):
+        graph = {
+            "entities": [
+                {
+                    "id": "parent-crease",
+                    "kind": "crease",
+                    "exact_geometry": {
+                        "source_relation_id": "selected-relation",
+                        "direction_index": 6,
+                    },
+                },
+                {
+                    "id": "core-point",
+                    "kind": "point",
+                    "exact_geometry": {
+                        "source": "guided_single_qsqrt2_core_reference",
+                        "parent_entity_ids": ["parent-crease"],
+                        "independent_parameter_count": 1,
+                        "project_coordinate": [{"a": 1}, {"a": 1}],
+                    },
+                },
+                {
+                    "id": "child-crease",
+                    "kind": "crease",
+                    "exact_geometry": {
+                        "source": "existing_incident_crease_from_exact_point",
+                        "source_point_id": "core-point",
+                        "direction_index": 0,
+                    },
+                },
+            ]
+        }
+        topology = {
+            "enabled": True,
+            "segments": [
+                {
+                    "id": "core-child",
+                    "crease_entity_id": "child-crease",
+                    "start_point_id": "core-point",
+                    "end_point_id": "core-point",
+                }
+            ],
+        }
+
+        proof = build_construction_proof_topology(graph, topology)
+
+        self.assertEqual(proof["single_core_reference_count"], 1)
+        self.assertEqual(proof["single_core_reference_point_ids"], ["core-point"])
+        self.assertIn("core-point", proof["proved_point_ids"])
+        self.assertIn("child-crease", proof["proved_crease_ids"])
+        self.assertTrue(
+            proof["invariants"]["single_core_reference_limit_respected"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 
 _MODE = "construction_proof_topology_v1"
+_SINGLE_CORE_REFERENCE_SOURCE = "guided_single_qsqrt2_core_reference"
 _FIT_ONLY_SOURCES = {
     "guided_internal_topology_point",
     "guided_automatic_topology_point",
@@ -43,6 +44,9 @@ def _derived_parents(
     if source == "existing_canonical_crease_endpoint_from_exact_point":
         parent = str(exact.get("source_point_id") or "")
         return source, ([parent] if parent else []), False
+    if source == _SINGLE_CORE_REFERENCE_SOURCE:
+        parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
+        return source, parents, False
     if source == "existing_crease_intersection":
         parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
         return source, parents, False
@@ -140,12 +144,22 @@ def build_construction_proof_topology(
                 "existing_incident_crease_from_exact_point",
                 "existing_canonical_crease_endpoint_from_exact_point",
                 "existing_crease_paper_boundary_intersection",
+                _SINGLE_CORE_REFERENCE_SOURCE,
             } else 2 if source == "existing_crease_intersection" else 0
+            exact = entities[entity_id].get("exact_geometry")
+            core_parameter_is_valid = (
+                source != _SINGLE_CORE_REFERENCE_SOURCE
+                or (
+                    isinstance(exact, Mapping)
+                    and int(exact.get("independent_parameter_count", 0) or 0) == 1
+                )
+            )
             if (
                 expected_parent_count
                 and len(parents) >= expected_parent_count
                 and all(parent in proved for parent in parents)
                 and (source != "existing_crease_paper_boundary_intersection" or has_boundary)
+                and core_parameter_is_valid
             ):
                 proved.add(entity_id)
                 statuses[entity_id] = {
@@ -155,6 +169,9 @@ def build_construction_proof_topology(
                     "proof_kind": source,
                     "parent_entity_ids": parents,
                     "uses_known_paper_boundary": has_boundary,
+                    "independent_parameter_count": (
+                        1 if source == _SINGLE_CORE_REFERENCE_SOURCE else 0
+                    ),
                 }
                 del pending[entity_id]
                 changed = True
@@ -165,6 +182,7 @@ def build_construction_proof_topology(
             "existing_canonical_crease_endpoint_from_exact_point",
             "existing_crease_intersection",
             "existing_crease_paper_boundary_intersection",
+            _SINGLE_CORE_REFERENCE_SOURCE,
         }
         statuses[entity_id] = {
             "id": entity_id,
@@ -191,6 +209,13 @@ def build_construction_proof_topology(
         for entity_id in proved
         if entities.get(entity_id, {}).get("kind") == "crease"
     }
+    single_core_reference_ids = sorted(
+        entity_id
+        for entity_id in proved_points
+        if isinstance(entities.get(entity_id, {}).get("exact_geometry"), Mapping)
+        and entities[entity_id]["exact_geometry"].get("source")
+        == _SINGLE_CORE_REFERENCE_SOURCE
+    )
     segment_records: list[dict[str, Any]] = []
     reason_counts: Counter[str] = Counter()
     segments = [
@@ -245,6 +270,8 @@ def build_construction_proof_topology(
         "observed_only_segment_count": len(observed_only_segment_ids),
         "proved_point_ids": sorted(proved_points),
         "proved_crease_ids": sorted(proved_creases),
+        "single_core_reference_point_ids": single_core_reference_ids,
+        "single_core_reference_count": len(single_core_reference_ids),
         "proved_segment_ids": proved_segment_ids,
         "observed_only_segment_ids": observed_only_segment_ids,
         "segment_records": segment_records,
@@ -255,6 +282,12 @@ def build_construction_proof_topology(
             "raster_coordinate_fit_is_not_a_proof_root": True,
             "derived_fact_requires_all_parent_facts_proved": True,
             "paper_boundary_is_the_only_parentless_geometric_constraint": True,
+            "single_core_reference_limit_respected": len(single_core_reference_ids) <= 1,
+            "single_core_reference_has_one_independent_parameter": all(
+                int(entities[item]["exact_geometry"].get("independent_parameter_count", 0) or 0)
+                == 1
+                for item in single_core_reference_ids
+            ),
         },
     }
 

@@ -160,7 +160,7 @@ class ExactGraphPropagationTest(unittest.TestCase):
             0,
         )
 
-    def test_observed_canonical_endpoint_gap_bridges_to_one_exact_line(self):
+    def test_nearby_observed_endpoint_does_not_create_new_incidence(self):
         graph = ConstructionGraph()
         side_length = qsqrt2_from_coefficients(2)
         one = qsqrt2_from_coefficients(1)
@@ -175,20 +175,16 @@ class ExactGraphPropagationTest(unittest.TestCase):
 
         report = propagate_exact_geometry(graph, maximum=100.0)
 
-        exact = graph.geometry_entity("observed-horizontal").exact_geometry
-        self.assertEqual(
-            exact["source"],
-            "existing_canonical_crease_endpoint_from_exact_point",
-        )
-        self.assertEqual(exact["source_point_id"], "proved")
-        self.assertEqual(exact["direction_index"], 0)
-        self.assertEqual(exact["endpoint_gap_px"], 3.0)
-        self.assertIn("observed-horizontal", graph.incidence["proved"])
-        self.assertEqual(report["endpoint_bridge_applied_count"], 1)
-        self.assertEqual(report["endpoint_bridge_added_incidence_count"], 1)
+        self.assertFalse(graph.geometry_entity("observed-horizontal").is_exact)
+        self.assertNotIn("observed-horizontal", graph.incidence["proved"])
+        self.assertEqual(report["endpoint_bridge_applied_count"], 0)
+        self.assertEqual(report["endpoint_bridge_added_incidence_count"], 0)
         self.assertEqual(report["invariants"]["enumerated_direction_count"], 0)
+        self.assertFalse(
+            report["invariants"]["proximity_endpoint_bridge_enabled"]
+        )
 
-    def test_endpoint_bridge_rejects_two_distinct_exact_parallel_lines(self):
+    def test_nearby_parallel_exact_lines_do_not_nominate_an_observed_crease(self):
         graph = ConstructionGraph()
         side_length = qsqrt2_from_coefficients(2)
         one = qsqrt2_from_coefficients(1)
@@ -208,11 +204,10 @@ class ExactGraphPropagationTest(unittest.TestCase):
 
         self.assertFalse(graph.geometry_entity("ambiguous-horizontal").is_exact)
         self.assertEqual(report["endpoint_bridge_applied_count"], 0)
-        self.assertEqual(
-            report["rejection_counts"].get(
-                "ambiguous_endpoint_bridge_exact_line", 0
-            ),
-            1,
+        self.assertTrue(
+            report["invariants"][
+                "new_incidence_requires_explicit_topology_evidence"
+            ]
         )
 
 

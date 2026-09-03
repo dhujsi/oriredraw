@@ -1,10 +1,10 @@
 """Deterministic exact-geometry propagation on the unified construction graph.
 
-The frontier never proposes a free direction.  Besides following recorded
-incidence, it may repair a detector endpoint gap when an existing canonical
-crease ends immediately beside one unique proved exact point.  The observed
-finite interval and line residual are used only to accept or reject that
-specific topology repair; they never choose among globally enumerated rays.
+The frontier follows recorded point/crease incidence only.  It deliberately
+does not connect a nearby detector endpoint to a proved point merely because
+their supporting lines are close: that shortcut can turn a detached observed
+stroke into a constructed crease.  Missing incidence must first be justified
+by an explicit construction point or source-topology evidence.
 """
 
 from __future__ import annotations
@@ -486,13 +486,13 @@ def propagate_exact_geometry(
     maximum: float,
     consistency_tolerance_px: float = 0.75,
 ) -> dict[str, Any]:
-    """Propagate exactness over incidence and unique finite endpoint bridges."""
+    """Propagate exactness over existing, source-observed incidence."""
 
     started = time.perf_counter()
     if maximum <= 0:
         return {
             "enabled": False,
-            "mode": "deterministic_exact_frontier_v2",
+            "mode": "node_incidence_exact_frontier_v3",
             "reason": "invalid_paper_size",
             "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
         }
@@ -500,7 +500,7 @@ def propagate_exact_geometry(
     if side_length is None or float(side_length) <= 0:
         return {
             "enabled": False,
-            "mode": "deterministic_exact_frontier_v2",
+            "mode": "node_incidence_exact_frontier_v3",
             "reason": "missing_or_conflicting_side_length",
             "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
         }
@@ -525,86 +525,9 @@ def propagate_exact_geometry(
     rejection_counts: Counter[str] = Counter()
     pruned_tangent_creases: set[Hashable] = set()
     events: list[dict[str, Any]] = []
-    endpoint_bridge_round_count = 0
-    endpoint_bridge_applied_ids: list[Hashable] = []
-    endpoint_bridge_added_incidence_count = 0
     frontier_pops = 0
     maximum_frontier_pops = max(32, len(graph.geometry_entities) * 4)
-    while frontier_pops < maximum_frontier_pops:
-        if not frontier:
-            bridge_candidates, bridge_rejections = _endpoint_bridge_candidates(
-                graph,
-                side_length,
-                maximum,
-            )
-            rejection_counts.update(bridge_rejections)
-            if not bridge_candidates:
-                break
-            endpoint_bridge_round_count += 1
-            for candidate in bridge_candidates:
-                crease = graph.geometry_entity(candidate["crease_id"])
-                if _entity_exact_line(crease) is not None:
-                    continue
-                point_entity = graph.geometry_entity(candidate["point_id"])
-                exact_point = candidate["exact_point"]
-                incidence_point_ids = candidate.get("incidence_point_ids") or [
-                    point_entity.id
-                ]
-                for incidence_point_id in incidence_point_ids:
-                    if crease.id in graph.incidence.get(incidence_point_id, set()):
-                        continue
-                    graph.connect_incidence(incidence_point_id, crease.id)
-                    endpoint_bridge_added_incidence_count += 1
-                direction_index = int(candidate["direction_index"])
-                graph.exactify_geometry(
-                    crease.id,
-                    {
-                        "source": _ENDPOINT_BRIDGE_SOURCE,
-                        "source_point_id": str(point_entity.id),
-                        "bridged_incidence_point_ids": [
-                            str(item) for item in incidence_point_ids
-                        ],
-                        "direction_index": direction_index,
-                        "direction_deg": round(direction_index * 22.5, 6),
-                        "through_point_id": str(point_entity.id),
-                        "through_point_project": [
-                            qsqrt2_to_mapping(exact_point[0]),
-                            qsqrt2_to_mapping(exact_point[1]),
-                        ],
-                        "side_length": qsqrt2_to_mapping(side_length),
-                        "exact_generation": int(candidate["point_generation"]) + 1,
-                        "observed_residual_px": round(
-                            float(candidate["line_residual_px"]), 6
-                        ),
-                        "endpoint_gap_px": round(
-                            float(candidate["endpoint_gap_px"]), 6
-                        ),
-                        "endpoint_gap_limit_px": round(
-                            float(candidate["endpoint_gap_limit_px"]), 6
-                        ),
-                    },
-                )
-                endpoint_bridge_applied_ids.append(crease.id)
-                events.append(
-                    {
-                        "kind": "exactify_endpoint_bridged_crease",
-                        "entity_id": str(crease.id),
-                        "source_point_id": str(point_entity.id),
-                        "bridged_incidence_point_ids": [
-                            str(item) for item in incidence_point_ids
-                        ],
-                        "direction_index": direction_index,
-                        "residual_px": round(
-                            float(candidate["line_residual_px"]), 6
-                        ),
-                        "endpoint_gap_px": round(
-                            float(candidate["endpoint_gap_px"]), 6
-                        ),
-                    }
-                )
-                frontier.append(("crease", crease.id))
-            if not frontier:
-                break
+    while frontier and frontier_pops < maximum_frontier_pops:
         kind, entity_id = frontier.popleft()
         frontier_pops += 1
         entity = graph.geometry_entity(entity_id)
@@ -742,7 +665,7 @@ def propagate_exact_geometry(
     frontier_limit_reached = bool(frontier)
     return {
         "enabled": True,
-        "mode": "deterministic_exact_frontier_v2",
+        "mode": "node_incidence_exact_frontier_v3",
         "status": (
             "complete_existing_creases"
             if unresolved_creases == 0
@@ -762,13 +685,10 @@ def propagate_exact_geometry(
         "unresolved_crease_entity_ids": [
             str(entity_id) for entity_id in unresolved_crease_ids
         ],
-        "endpoint_bridge_round_count": endpoint_bridge_round_count,
-        "endpoint_bridge_applied_count": len(endpoint_bridge_applied_ids),
-        "endpoint_bridge_applied_crease_entity_ids": [
-            str(entity_id)
-            for entity_id in sorted(endpoint_bridge_applied_ids, key=repr)
-        ],
-        "endpoint_bridge_added_incidence_count": endpoint_bridge_added_incidence_count,
+        "endpoint_bridge_round_count": 0,
+        "endpoint_bridge_applied_count": 0,
+        "endpoint_bridge_applied_crease_entity_ids": [],
+        "endpoint_bridge_added_incidence_count": 0,
         "pruned_paper_boundary_tangent_entity_ids": [
             str(entity_id)
             for entity_id in sorted(pruned_tangent_creases, key=repr)
@@ -785,9 +705,8 @@ def propagate_exact_geometry(
             "created_point_count": 0,
             "created_crease_count": 0,
             "each_entity_exactified_at_most_once": True,
-            "endpoint_bridge_requires_existing_observed_crease": True,
-            "endpoint_bridge_requires_unique_exact_line": True,
-            "endpoint_bridge_requires_finite_image_endpoint_gap": True,
+            "proximity_endpoint_bridge_enabled": False,
+            "new_incidence_requires_explicit_topology_evidence": True,
             "raster_selects_no_free_direction": True,
         },
     }

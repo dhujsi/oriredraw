@@ -605,7 +605,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(canonical["candidate_count"], 0)
         self.assertEqual(
             canonical["reason"],
-            "replaced_by_topology_constrained_endpoint_bridge",
+            "replaced_by_node_incidence_frontier",
         )
         self.assertFalse(
             first["generation_invariants"]["global_direction_enumeration_enabled"]
