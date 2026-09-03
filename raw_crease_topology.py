@@ -22,7 +22,12 @@ from reconstructor import ALLOWED_ANGLES, _boundary_hits
 
 
 _BOUNDARY_SIDE = {"上": "top", "右": "right", "下": "bottom", "左": "left"}
-_CANDIDATE_PRIORITY = {"line_intersection": 0, "boundary_contact": 1, "finite_endpoint": 2}
+_CANDIDATE_PRIORITY = {
+    "line_intersection": 0,
+    "source_verified_endpoint_intersection": 0,
+    "boundary_contact": 1,
+    "finite_endpoint": 2,
+}
 
 
 def _line_basis(orientation: int) -> tuple[np.ndarray, np.ndarray]:
@@ -173,6 +178,7 @@ def _candidate(
     *,
     boundary_sides: set[str] | None = None,
     interval_gaps: Mapping[int, float] | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -180,6 +186,7 @@ def _candidate(
         "line_ids": set(line_ids),
         "boundary_sides": set(boundary_sides or ()),
         "interval_gaps": dict(interval_gaps or {}),
+        "evidence": dict(evidence or {}),
     }
 
 
@@ -189,6 +196,7 @@ def _topology_candidates(
     *,
     incidence_margin: float,
     boundary_margin: float,
+    endpoint_connection_evidence: list[Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     maximum = float(size - 1)
     candidates: list[dict[str, Any]] = []
@@ -227,6 +235,72 @@ def _topology_candidates(
                 )
             )
             stats["finite_evidence_intersections"] += 1
+
+    line_by_raw_id = {str(line["raw_id"]): line for line in lines}
+    for evidence in endpoint_connection_evidence or []:
+        if evidence.get("source") != "source_image_continuous_endpoint_evidence":
+            stats["invalid_endpoint_connection_evidence"] += 1
+            continue
+        raw_ids = [str(item) for item in evidence.get("line_ids") or []]
+        if len(raw_ids) != 2 or any(item not in line_by_raw_id for item in raw_ids):
+            stats["invalid_endpoint_connection_evidence"] += 1
+            continue
+        first, second = (line_by_raw_id[item] for item in raw_ids)
+        point = _intersection(first, second)
+        if point is None or np.any(point < -incidence_margin) or np.any(
+            point > maximum + incidence_margin
+        ):
+            stats["invalid_endpoint_connection_evidence"] += 1
+            continue
+        recorded_point = evidence.get("point_px")
+        try:
+            point_error = float(
+                np.linalg.norm(point - np.asarray(recorded_point[:2], dtype=float))
+            )
+            coverage = float(evidence.get("bridge_coverage", 0.0) or 0.0)
+            mean_confidence = float(
+                evidence.get("bridge_mean_confidence", 0.0) or 0.0
+            )
+        except (TypeError, ValueError, IndexError):
+            stats["invalid_endpoint_connection_evidence"] += 1
+            continue
+        maximum_gap = float(np.clip(incidence_margin * 1.75, 6.0, 8.0))
+        gap_by_id: dict[int, float] = {}
+        for line in (first, second):
+            value = float(line["direction"] @ point)
+            gap_by_id[int(line["target_id"])] = _interval_distance(
+                line["intervals"], value
+            )
+        extended = [
+            target_id
+            for target_id, gap in gap_by_id.items()
+            if gap > incidence_margin
+        ]
+        occluded = line_by_raw_id.get(
+            str(evidence.get("occluded_line_id") or "")
+        )
+        valid = (
+            point_error <= 0.75
+            and coverage >= 0.80
+            and mean_confidence >= 0.16
+            and len(extended) == 1
+            and occluded is not None
+            and extended[0] == int(occluded["target_id"])
+            and gap_by_id[extended[0]] <= maximum_gap + 1e-6
+        )
+        if not valid:
+            stats["invalid_endpoint_connection_evidence"] += 1
+            continue
+        candidates.append(
+            _candidate(
+                "source_verified_endpoint_intersection",
+                np.clip(point, 0.0, maximum),
+                set(gap_by_id),
+                interval_gaps=gap_by_id,
+                evidence=evidence,
+            )
+        )
+        stats["source_verified_endpoint_intersections"] += 1
 
     for line in lines:
         target_id = int(line["target_id"])
@@ -497,7 +571,20 @@ def _point_records(
             # Joint fitting can move a high-degree node slightly beyond one
             # stroke's original endpoint. Only a line that participated in an
             # accepted finite-evidence candidate may be incident here.
-            allowed_gap = incidence_margin + min(2.0, line_residual_tolerance)
+            verified_gap = max(
+                (
+                    float(item.get("interval_gaps", {}).get(target_id, 0.0))
+                    for item in candidates
+                    if item.get("kind")
+                    == "source_verified_endpoint_intersection"
+                    and target_id in item.get("line_ids", ())
+                ),
+                default=0.0,
+            )
+            allowed_gap = max(
+                incidence_margin + min(2.0, line_residual_tolerance),
+                verified_gap + 0.25,
+            )
             if gap > allowed_gap:
                 continue
             incident_ids.append(target_id)
@@ -514,7 +601,10 @@ def _point_records(
         candidate_kinds = {str(item["kind"]) for item in candidates}
         if boundary_sides:
             point_kind = "boundary_contact"
-        elif orientation_count >= 2 and "line_intersection" in candidate_kinds:
+        elif orientation_count >= 2 and candidate_kinds & {
+            "line_intersection",
+            "source_verified_endpoint_intersection",
+        }:
             point_kind = "line_intersection"
         else:
             point_kind = "finite_endpoint"
@@ -530,7 +620,12 @@ def _point_records(
                 "candidate_count": len(candidates),
                 "observations": [
                     {
-                        "source": "raw_image_finite_line_evidence",
+                        "source": (
+                            "source_image_continuous_endpoint_evidence"
+                            if item["kind"]
+                            == "source_verified_endpoint_intersection"
+                            else "raw_image_finite_line_evidence"
+                        ),
                         "kind": str(item["kind"]),
                         "point_px": [round(float(value), 6) for value in item["point"]],
                         "raw_line_ids": [
@@ -544,6 +639,11 @@ def _point_records(
                             for line_id, gap in item.get("interval_gaps", {}).items()
                             if int(line_id) in line_index
                         },
+                        **(
+                            {"endpoint_connection_evidence": dict(item["evidence"])}
+                            if item.get("evidence")
+                            else {}
+                        ),
                     }
                     for item in candidates
                 ],
@@ -727,6 +827,11 @@ def build_raw_crease_topology_graph(
         size,
         incidence_margin=incidence_margin,
         boundary_margin=boundary_margin,
+        endpoint_connection_evidence=[
+            item
+            for item in list(raw_report.get("endpoint_connection_evidence") or [])
+            if isinstance(item, Mapping)
+        ],
     )
     clusters, rejected_merges = _cluster_candidates(
         candidates,
@@ -921,7 +1026,9 @@ def build_raw_crease_topology_graph(
         "invariants": {
             "generated_crease_count": 0,
             "generated_direction_count": 0,
-            "intersection_requires_two_finite_evidence_intervals": True,
+            "intersection_requires_finite_or_source_continuity_evidence": True,
+            "source_endpoint_connection_requires_one_supported_line": True,
+            "two_extended_lines_may_not_create_a_junction": True,
             "boundary_contact_requires_finite_evidence_interval": True,
             "segments_join_consecutive_incident_points_only": True,
             "point_cluster_merge_requires_shared_raw_line": True,

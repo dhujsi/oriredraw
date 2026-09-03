@@ -172,8 +172,84 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
         self.assertTrue(
             topology["invariants"][
-                "intersection_requires_two_finite_evidence_intervals"
+                "intersection_requires_finite_or_source_continuity_evidence"
             ]
+        )
+
+    def test_source_verified_endpoint_occlusion_restores_recorded_incidence(self):
+        raw = _report(
+            [
+                _line("short-horizontal", 0, 50.0, [[10.0, 45.0]]),
+                _line("supported-vertical", 4, -50.0, [[10.0, 90.0]]),
+            ]
+        )
+        raw["endpoint_connection_evidence"] = [
+            {
+                "source": "source_image_continuous_endpoint_evidence",
+                "point_px": [50.0, 50.0],
+                "line_ids": ["short-horizontal", "supported-vertical"],
+                "occluded_line_id": "short-horizontal",
+                "supporting_line_id": "supported-vertical",
+                "bridge_coverage": 1.0,
+                "bridge_mean_confidence": 0.9,
+                "maximum_endpoint_gap_px": 6.2,
+            }
+        ]
+
+        graph, _, topology = build_raw_crease_topology_graph(raw)
+
+        crossing = _point_near(graph, (50.0, 50.0))
+        incident_raw_ids = {
+            entity.observed_geometry["raw_line_id"]
+            for entity in graph.incident_entities(crossing.id)
+            if entity.kind == "crease"
+        }
+        self.assertEqual(
+            incident_raw_ids,
+            {"short-horizontal", "supported-vertical"},
+        )
+        self.assertEqual(
+            topology["candidate_stats"][
+                "source_verified_endpoint_intersections"
+            ],
+            1,
+        )
+
+    def test_even_recorded_evidence_cannot_join_two_extended_lines(self):
+        raw = _report(
+            [
+                _line("short-horizontal", 0, 50.0, [[10.0, 45.0]]),
+                _line("short-vertical", 4, -50.0, [[10.0, 45.0]]),
+            ]
+        )
+        raw["endpoint_connection_evidence"] = [
+            {
+                "source": "source_image_continuous_endpoint_evidence",
+                "point_px": [50.0, 50.0],
+                "line_ids": ["short-horizontal", "short-vertical"],
+                "occluded_line_id": "short-horizontal",
+                "supporting_line_id": "short-vertical",
+                "bridge_coverage": 1.0,
+                "bridge_mean_confidence": 0.9,
+                "maximum_endpoint_gap_px": 6.2,
+            }
+        ]
+
+        graph, _, topology = build_raw_crease_topology_graph(raw)
+
+        intersections = [
+            entity
+            for entity in graph.geometry_entities.values()
+            if entity.kind == "point"
+            and entity.observed_geometry["point_kind"] == "line_intersection"
+        ]
+        self.assertEqual(intersections, [])
+        self.assertEqual(
+            topology["candidate_stats"]["invalid_endpoint_connection_evidence"],
+            1,
+        )
+        self.assertTrue(
+            topology["invariants"]["two_extended_lines_may_not_create_a_junction"]
         )
 
     def test_nearby_parallel_detector_endpoints_remain_distinct(self):

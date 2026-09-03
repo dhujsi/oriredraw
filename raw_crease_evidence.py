@@ -674,6 +674,168 @@ def _pixel_agreement(
     }
 
 
+def _interval_endpoint_gap(
+    intervals: list[list[float]],
+    value: float,
+) -> tuple[float, float | None]:
+    """Return distance to finite evidence and the nearest interval endpoint."""
+
+    best: tuple[float, float | None] = (math.inf, None)
+    for first, second in intervals:
+        if first - 1e-9 <= value <= second + 1e-9:
+            return 0.0, None
+        endpoint = first if value < first else second
+        candidate = (abs(value - endpoint), float(endpoint))
+        if candidate[0] < best[0]:
+            best = candidate
+    return best
+
+
+def _bridge_confidence(
+    confidence: np.ndarray,
+    line: Mapping[str, Any],
+    endpoint_t: float,
+    intersection_t: float,
+    *,
+    band_radius: float,
+) -> dict[str, Any]:
+    """Measure actual source ink between one line endpoint and an intersection."""
+
+    direction = np.asarray(line["direction"], dtype=float)
+    normal = np.asarray(line["normal"], dtype=float)
+    offset = float(line["observed_offset_px"])
+    length = abs(float(intersection_t) - float(endpoint_t))
+    sample_count = max(3, int(math.ceil(length * 2.0)) + 1)
+    values_t = np.linspace(endpoint_t, intersection_t, sample_count)
+    centers = normal * offset + values_t[:, None] * direction
+    strongest = np.zeros(sample_count, dtype=np.float32)
+    for shift in np.linspace(-band_radius, band_radius, 7):
+        points = centers + normal * shift
+        map_x = np.clip(points[:, 0], 0, confidence.shape[1] - 1).astype(
+            np.float32
+        )
+        map_y = np.clip(points[:, 1], 0, confidence.shape[0] - 1).astype(
+            np.float32
+        )
+        sampled = cv2.remap(
+            confidence,
+            map_x.reshape(1, -1),
+            map_y.reshape(1, -1),
+            cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT,
+        ).ravel()
+        strongest = np.maximum(strongest, sampled)
+    return {
+        "sample_count": sample_count,
+        "coverage": float(np.mean(strongest >= 0.12)),
+        "mean_confidence": float(np.mean(strongest)),
+        "minimum_confidence": float(np.min(strongest)),
+    }
+
+
+def _source_verified_endpoint_connections(
+    entities: list[dict[str, Any]],
+    confidence: np.ndarray,
+    evidence_distance_px: float,
+) -> list[dict[str, Any]]:
+    """Record short endpoint occlusions supported by continuous source ink.
+
+    One supporting line must already carry finite evidence at the intersection.
+    This deliberately rejects a junction that exists only after extending both
+    nearby strokes, even when their infinite canonical lines cross.
+    """
+
+    incidence_margin = float(np.clip(evidence_distance_px * 2.0, 3.5, 5.5))
+    maximum_gap = float(np.clip(evidence_distance_px * 3.5, 6.0, 8.0))
+    maximum = float(min(confidence.shape[:2]) - 1)
+    records: list[dict[str, Any]] = []
+    for first_index, first in enumerate(entities):
+        for second in entities[first_index + 1 :]:
+            if int(first["orientation"]) == int(second["orientation"]):
+                continue
+            matrix = np.asarray([first["normal"], second["normal"]], dtype=float)
+            if abs(float(np.linalg.det(matrix))) < 1e-8:
+                continue
+            point = np.linalg.solve(
+                matrix,
+                np.asarray(
+                    [first["observed_offset_px"], second["observed_offset_px"]],
+                    dtype=float,
+                ),
+            )
+            if np.any(point < -incidence_margin) or np.any(
+                point > maximum + incidence_margin
+            ):
+                continue
+
+            pair: list[dict[str, Any]] = []
+            for line in (first, second):
+                direction = np.asarray(line["direction"], dtype=float)
+                intersection_t = float(direction @ point)
+                gap, endpoint_t = _interval_endpoint_gap(
+                    line["evidence_intervals_px"],
+                    intersection_t,
+                )
+                pair.append(
+                    {
+                        "line": line,
+                        "intersection_t": intersection_t,
+                        "gap": gap,
+                        "endpoint_t": endpoint_t,
+                    }
+                )
+
+            extended = [item for item in pair if item["gap"] > incidence_margin]
+            # Exactly one observed stroke may be hidden by a node marker.  If
+            # both need extension, the source does not establish a junction.
+            if len(extended) != 1:
+                continue
+            target = extended[0]
+            support = pair[0] if pair[1] is target else pair[1]
+            if (
+                target["gap"] > maximum_gap
+                or support["gap"] > incidence_margin
+                or target["endpoint_t"] is None
+            ):
+                continue
+            bridge = _bridge_confidence(
+                confidence,
+                target["line"],
+                float(target["endpoint_t"]),
+                float(target["intersection_t"]),
+                band_radius=evidence_distance_px,
+            )
+            if bridge["coverage"] < 0.80 or bridge["mean_confidence"] < 0.16:
+                continue
+            records.append(
+                {
+                    "id": f"source-endpoint-connection:{len(records) + 1}",
+                    "source": "source_image_continuous_endpoint_evidence",
+                    "point_px": [round(float(value), 6) for value in point],
+                    "line_ids": sorted(
+                        [str(first["id"]), str(second["id"])]
+                    ),
+                    "occluded_line_id": str(target["line"]["id"]),
+                    "supporting_line_id": str(support["line"]["id"]),
+                    "endpoint_gap_px": round(float(target["gap"]), 6),
+                    "supporting_interval_gap_px": round(
+                        float(support["gap"]), 6
+                    ),
+                    "bridge_coverage": round(float(bridge["coverage"]), 6),
+                    "bridge_mean_confidence": round(
+                        float(bridge["mean_confidence"]), 6
+                    ),
+                    "bridge_minimum_confidence": round(
+                        float(bridge["minimum_confidence"]), 6
+                    ),
+                    "bridge_sample_count": int(bridge["sample_count"]),
+                    "incidence_margin_px": round(incidence_margin, 6),
+                    "maximum_endpoint_gap_px": round(maximum_gap, 6),
+                }
+            )
+    return records
+
+
 def classify_topology_segment_line_types(
     square: np.ndarray,
     topology: Mapping[str, Any],
@@ -850,6 +1012,11 @@ def detect_raw_crease_entities_from_square(
         effective_settings,
         diffuse_input=bool(detector_stats["diffuse_input"]),
     )
+    endpoint_connections = _source_verified_endpoint_connections(
+        entities,
+        confidence,
+        effective_settings.evidence_distance_px,
+    )
     orientation_counts = {
         str(orientation): sum(
             int(entity["orientation"]) == orientation for entity in entities
@@ -878,6 +1045,8 @@ def detect_raw_crease_entities_from_square(
             int(key) for key in sorted(orientation_counts, key=int)
         ],
         "lines": entities,
+        "endpoint_connection_evidence": endpoint_connections,
+        "endpoint_connection_count": len(endpoint_connections),
         "noncanonical_angle_observations": noncanonical_observations,
         "detector_stats": detector_stats,
         "pixel_agreement": _pixel_agreement(
@@ -894,6 +1063,9 @@ def detect_raw_crease_entities_from_square(
                 "estimated_stroke_radius_px"
             ),
             "adaptive_evidence_distance_px": effective_settings.evidence_distance_px,
+            "endpoint_connection_requires_one_supported_line": True,
+            "endpoint_connection_requires_continuous_source_ink": True,
+            "two_extended_lines_may_not_create_a_junction": True,
         },
         "extraction_duration_ms": round(
             (time.perf_counter() - started) * 1000.0, 3

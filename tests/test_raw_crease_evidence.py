@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 
 from raw_crease_evidence import (
+    _source_verified_endpoint_connections,
     classify_topology_segment_line_types,
     detect_raw_crease_entities_from_square,
 )
@@ -16,6 +17,69 @@ def _white_square(size: int = 121) -> np.ndarray:
 
 
 class RawCreaseEvidenceTest(unittest.TestCase):
+    def test_endpoint_connection_requires_continuous_source_ink(self):
+        entities = [
+            {
+                "id": "horizontal",
+                "orientation": 0,
+                "direction": [1.0, 0.0],
+                "normal": [0.0, 1.0],
+                "observed_offset_px": 50.0,
+                "evidence_intervals_px": [[10.0, 45.0]],
+            },
+            {
+                "id": "vertical",
+                "orientation": 4,
+                "direction": [0.0, 1.0],
+                "normal": [-1.0, 0.0],
+                "observed_offset_px": -50.0,
+                "evidence_intervals_px": [[10.0, 90.0]],
+            },
+        ]
+        blank = np.zeros((101, 101), dtype=np.float32)
+        connected = blank.copy()
+        cv2.line(connected, (44, 50), (51, 50), 1.0, 2)
+
+        rejected = _source_verified_endpoint_connections(
+            entities, blank, 1.75
+        )
+        accepted = _source_verified_endpoint_connections(
+            entities, connected, 1.75
+        )
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(accepted[0]["occluded_line_id"], "horizontal")
+        self.assertEqual(accepted[0]["supporting_line_id"], "vertical")
+        self.assertEqual(accepted[0]["bridge_coverage"], 1.0)
+
+    def test_endpoint_connection_rejects_two_lines_that_both_need_extension(self):
+        entities = [
+            {
+                "id": "horizontal",
+                "orientation": 0,
+                "direction": [1.0, 0.0],
+                "normal": [0.0, 1.0],
+                "observed_offset_px": 50.0,
+                "evidence_intervals_px": [[10.0, 45.0]],
+            },
+            {
+                "id": "vertical",
+                "orientation": 4,
+                "direction": [0.0, 1.0],
+                "normal": [-1.0, 0.0],
+                "observed_offset_px": -50.0,
+                "evidence_intervals_px": [[10.0, 45.0]],
+            },
+        ]
+        confidence = np.ones((101, 101), dtype=np.float32)
+
+        records = _source_verified_endpoint_connections(
+            entities, confidence, 1.75
+        )
+
+        self.assertEqual(records, [])
+
     def test_source_color_is_measured_per_finite_topology_segment(self):
         square = _white_square()
         cv2.line(square, (10, 30), (110, 30), (0, 0, 255), 3)
