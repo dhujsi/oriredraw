@@ -142,11 +142,29 @@ class ProvedNodeCanonicalRayCandidatesTest(unittest.TestCase):
             "enabled": True,
             "candidate_segments": [
                 {
+                    "id": "exact-source-anchor",
+                    "start_point_id": "paper-top",
+                    "end_point_id": "paper-bottom",
+                    "start_cp": [0.0, -200.0],
+                    "end_cp": [0.0, 200.0],
+                    "line_type": 2,
+                    "line_type_source": "source_image_color_evidence",
+                },
+                {
                     "id": "exact-vertical-contact",
                     "start_point_id": "top",
                     "end_point_id": "bottom",
                     "start_cp": [100.0, -200.0],
                     "end_cp": [100.0, 200.0],
+                    "line_type": 2,
+                    "line_type_source": "source_image_color_evidence",
+                },
+                {
+                    "id": "isolated-base-segment",
+                    "start_point_id": "isolated-a",
+                    "end_point_id": "isolated-b",
+                    "start_cp": [150.0, 50.0],
+                    "end_cp": [175.0, 50.0],
                     "line_type": 2,
                     "line_type_source": "source_image_color_evidence",
                 }
@@ -172,7 +190,7 @@ class ProvedNodeCanonicalRayCandidatesTest(unittest.TestCase):
             "existing_exact_segment",
         )
         self.assertIsNotNone(effective)
-        self.assertEqual(effective["candidate_internal_segment_count"], 3)
+        self.assertEqual(effective["candidate_internal_segment_count"], 5)
         generated = [
             item
             for item in effective["candidate_segments"]
@@ -184,6 +202,66 @@ class ProvedNodeCanonicalRayCandidatesTest(unittest.TestCase):
         self.assertEqual(
             effective["invariants"]["raster_created_direction_count"], 0
         )
+        self.assertTrue(
+            report["invariants"]["every_output_segment_endpoint_is_boundary_or_shared"]
+        )
+        self.assertEqual(report["internal_dangling_pruned_segment_count"], 1)
+        self.assertEqual(
+            report["internal_dangling_pruned_segment_ids"],
+            ["isolated-base-segment"],
+        )
+
+    def test_candidate_with_detached_source_is_rejected(self):
+        candidate = {
+            "id": "proof-ray:detached",
+            "kind": "canonical_22_5_ray",
+            "status": "unapplied_candidate",
+            "source_point_id": "proved-but-not-output",
+            "source_point_project": _coordinate(1, 1),
+            "parent_entity_ids": ["proved-but-not-output"],
+            "directed_direction_index": 0,
+            "line_orientation_index": 0,
+            "direction_deg": 0.0,
+            "generation_rule": "canonical_22_5_ray_from_proved_point",
+        }
+        report, effective = apply_image_supported_canonical_rays(
+            {"enabled": True, "candidate_count": 1, "candidates": [candidate]},
+            {
+                "maximum_coordinate_px": 100,
+                "lines": [
+                    {
+                        "id": "observed-horizontal",
+                        "orientation_deg": 0.0,
+                        "source_channels": ["red"],
+                        "visible_segments_px": [
+                            {"start": [50.0, 50.0], "end": [75.0, 50.0]}
+                        ],
+                    }
+                ],
+            },
+            {
+                "enabled": True,
+                "candidate_segments": [
+                    {
+                        "id": "exact-contact-only",
+                        "start_cp": [100.0, -200.0],
+                        "end_cp": [100.0, 200.0],
+                        "line_type": 2,
+                    }
+                ],
+            },
+            qsqrt2_to_mapping(Qsqrt2(2)),
+        )
+
+        self.assertTrue(report["enabled"])
+        self.assertEqual(report["accepted_candidate_count"], 0)
+        self.assertEqual(
+            report["rejection_counts"][
+                "source_not_attached_to_current_output_topology"
+            ],
+            1,
+        )
+        self.assertIsNone(effective)
 
 
 if __name__ == "__main__":

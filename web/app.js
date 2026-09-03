@@ -71,7 +71,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260903-proof-ray-application-v1';
+const WEB_ENGINE_VERSION = '20260903-topology-anchored-rays-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -916,6 +916,9 @@ function guidedMvRawDisplaySegments(report) {
 
 function guidedMvDisplaySegments(report) {
   const candidates = guidedMvCandidateSegments(report);
+  if (report?.cp_available || report?.cp_output_contract?.cp_available) {
+    return candidates;
+  }
   const candidateIds = new Set(candidates.map(segment => String(segment.id)));
   const rawSegments = guidedMvRawDisplaySegments(report)
     .filter(segment => !candidateIds.has(String(segment.id)));
@@ -1004,7 +1007,7 @@ function guidedBlockerLabel(code) {
 function renderGuidedMvOverlay(root, report) {
   if (!mvSegmentLayer) return;
   mvSegmentLayer.replaceChildren();
-  const segments = report?.phase === 'complete_existing_creases'
+  const segments = report?.enabled
     ? guidedMvDisplaySegments(report)
     : [];
   mvSegmentLayer.classList.toggle('hidden', segments.length === 0);

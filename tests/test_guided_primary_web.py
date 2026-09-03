@@ -103,6 +103,8 @@ def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
 
     assert "cp_output_contract?.candidate_segments" in app
     assert "guidedMvDisplaySegments" in app
+    assert "report?.cp_available || report?.cp_output_contract?.cp_available" in app
+    assert "const segments = report?.enabled" in app
     assert "observed_raw_topology" in app
     assert "const topology = report?.raw_topology;" in app
     assert "source_image_default_mountain" in app

@@ -174,6 +174,87 @@ def _segment_geometries(
     return output
 
 
+def _on_paper_boundary(point: tuple[float, float], tolerance: float = 1e-5) -> bool:
+    return any(
+        abs(value - boundary) <= tolerance
+        for value in point
+        for boundary in (-200.0, 200.0)
+    )
+
+
+def _point_on_segment(
+    point: tuple[float, float],
+    segment: Mapping[str, Any],
+    tolerance: float = 1e-5,
+) -> bool:
+    start = _float_point(segment.get("start_cp"))
+    end = _float_point(segment.get("end_cp"))
+    if start is None or end is None:
+        return False
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length_squared = dx * dx + dy * dy
+    if length_squared <= tolerance * tolerance:
+        return False
+    parameter = (
+        (point[0] - start[0]) * dx + (point[1] - start[1]) * dy
+    ) / length_squared
+    if not -tolerance <= parameter <= 1.0 + tolerance:
+        return False
+    projected = start[0] + parameter * dx, start[1] + parameter * dy
+    return math.dist(point, projected) <= tolerance
+
+
+def _point_attached_to_topology(
+    point: tuple[float, float],
+    segments: list[dict[str, Any]],
+) -> bool:
+    return _on_paper_boundary(point) or any(
+        _point_on_segment(point, segment) for segment in segments
+    )
+
+
+def _prune_internal_dangling_segments(
+    segments: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Remove finite leaves whose free endpoint is not on the paper boundary."""
+
+    working = copy.deepcopy(segments)
+    pruned_ids: list[str] = []
+    while working:
+        degrees: Counter[tuple[float, float]] = Counter()
+        endpoints: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {}
+        for segment in working:
+            start = _float_point(segment.get("start_cp"))
+            end = _float_point(segment.get("end_cp"))
+            if start is None or end is None:
+                continue
+            start_key, end_key = _float_point_key(start), _float_point_key(end)
+            endpoints[str(segment.get("id") or "")] = start_key, end_key
+            degrees[start_key] += 1
+            degrees[end_key] += 1
+        dangling = {
+            point
+            for point, degree in degrees.items()
+            if degree == 1 and not _on_paper_boundary(point)
+        }
+        if not dangling:
+            break
+        retained: list[dict[str, Any]] = []
+        removed_this_round = 0
+        for segment in working:
+            segment_id = str(segment.get("id") or "")
+            points = endpoints.get(segment_id)
+            if points is not None and (points[0] in dangling or points[1] in dangling):
+                pruned_ids.append(segment_id)
+                removed_this_round += 1
+            else:
+                retained.append(segment)
+        working = retained
+        if not removed_this_round:
+            break
+    return working, sorted(set(pruned_ids))
+
+
 def _line_type_from_evidence(evidence: Mapping[str, Any]) -> tuple[int, str] | None:
     channels = {str(item) for item in evidence.get("source_channels", []) if str(item)}
     if "red" in channels and "blue" in channels:
@@ -535,6 +616,8 @@ def apply_image_supported_canonical_rays(
             tuple[float, float, float, tuple[tuple[float, float], int]]
         ] = []
         for key, (candidate, start) in remaining.items():
+            if not _point_attached_to_topology(start, working):
+                continue
             angle = float(candidate["direction_deg"])
             contact = _nearest_contact(start, angle, working)
             if contact is None:
@@ -571,6 +654,8 @@ def apply_image_supported_canonical_rays(
             if key not in remaining or len(accepted) >= _MAX_APPLIED_RAYS:
                 continue
             candidate, start = remaining[key]
+            if not _point_attached_to_topology(start, working):
+                continue
             angle = float(candidate["direction_deg"])
             contact = _nearest_contact(start, angle, working)
             if contact is None:
@@ -659,6 +744,9 @@ def apply_image_supported_canonical_rays(
     # a newly applied ray created an earlier exact contact was not a rejection.
     geometries = _segment_geometries(working)
     for candidate, start in remaining.values():
+        if not _point_attached_to_topology(start, working):
+            rejection_counts["source_not_attached_to_current_output_topology"] += 1
+            continue
         angle = float(candidate["direction_deg"])
         contact = _nearest_contact(start, angle, working)
         if contact is None:
@@ -698,6 +786,22 @@ def apply_image_supported_canonical_rays(
             "reason": "generated_candidate_topology_invalid",
             "topology_errors": topology_errors,
         }, None
+    normalized, dangling_pruned_segment_ids = _prune_internal_dangling_segments(
+        normalized
+    )
+    retained_root_ids = {
+        str(segment.get("transactional_root_segment_id") or segment.get("id") or "")
+        for segment in normalized
+    }
+    attempted_accepted_count = len(accepted)
+    accepted = [
+        item for item in accepted if str(item["segment_id"]) in retained_root_ids
+    ]
+    pruned_generated_count = attempted_accepted_count - len(accepted)
+    if pruned_generated_count:
+        rejection_counts["generated_internal_dangling_segment_pruned"] += (
+            pruned_generated_count
+        )
     before_audit = _audit(_materialize(
         _normalise_segments(base_contract.get("candidate_segments"))[0]
     ))
@@ -709,10 +813,15 @@ def apply_image_supported_canonical_rays(
         "initial_candidate_count": int(candidate_report.get("candidate_count", 0) or 0),
         "initial_unique_source_direction_count": initial_unique_candidate_count,
         "application_round_count": application_rounds,
+        "attempted_application_count": attempted_accepted_count,
         "accepted_candidate_count": len(accepted),
         "accepted_candidates": accepted,
         "base_segment_count": len(base_contract.get("candidate_segments", [])),
         "effective_segment_count": len(normalized),
+        "internal_dangling_pruned_segment_count": len(
+            dangling_pruned_segment_ids
+        ),
+        "internal_dangling_pruned_segment_ids": dangling_pruned_segment_ids,
         "camv_violation_count_before": int(before_audit.get("violation_count", 0) or 0),
         "camv_violation_count_after": int(after_audit.get("violation_count", 0) or 0),
         "camv_rule_counts_before": dict(before_audit.get("rule_counts") or {}),
@@ -726,6 +835,7 @@ def apply_image_supported_canonical_rays(
             "candidate_ends_at_first_exact_contact": True,
             "fitted_image_point_can_become_endpoint": False,
             "noncanonical_direction_count": 0,
+            "every_output_segment_endpoint_is_boundary_or_shared": True,
         },
     }
     return report, (
