@@ -160,6 +160,61 @@ class ExactGraphPropagationTest(unittest.TestCase):
             0,
         )
 
+    def test_observed_canonical_endpoint_gap_bridges_to_one_exact_line(self):
+        graph = ConstructionGraph()
+        side_length = qsqrt2_from_coefficients(2)
+        one = qsqrt2_from_coefficients(1)
+        graph.add_geometry_entity(
+            _point("proved", (50.0, 50.0), exact=(one, one), side_length=side_length)
+        )
+        graph.add_geometry_entity(_point("detector-terminal", (53.0, 50.0)))
+        crease = _crease("observed-horizontal", 0, 50.0)
+        crease.observed_geometry["evidence_intervals_px"] = [[53.0, 90.0]]
+        graph.add_geometry_entity(crease)
+        graph.connect_incidence("detector-terminal", "observed-horizontal")
+
+        report = propagate_exact_geometry(graph, maximum=100.0)
+
+        exact = graph.geometry_entity("observed-horizontal").exact_geometry
+        self.assertEqual(
+            exact["source"],
+            "existing_canonical_crease_endpoint_from_exact_point",
+        )
+        self.assertEqual(exact["source_point_id"], "proved")
+        self.assertEqual(exact["direction_index"], 0)
+        self.assertEqual(exact["endpoint_gap_px"], 3.0)
+        self.assertIn("observed-horizontal", graph.incidence["proved"])
+        self.assertEqual(report["endpoint_bridge_applied_count"], 1)
+        self.assertEqual(report["endpoint_bridge_added_incidence_count"], 1)
+        self.assertEqual(report["invariants"]["enumerated_direction_count"], 0)
+
+    def test_endpoint_bridge_rejects_two_distinct_exact_parallel_lines(self):
+        graph = ConstructionGraph()
+        side_length = qsqrt2_from_coefficients(2)
+        one = qsqrt2_from_coefficients(1)
+        lower = qsqrt2_from_coefficients(49, 0, 50)
+        upper = qsqrt2_from_coefficients(51, 0, 50)
+        graph.add_geometry_entity(
+            _point("lower", (50.0, 49.0), exact=(one, lower), side_length=side_length)
+        )
+        graph.add_geometry_entity(
+            _point("upper", (50.0, 51.0), exact=(one, upper), side_length=side_length)
+        )
+        crease = _crease("ambiguous-horizontal", 0, 50.0)
+        crease.observed_geometry["evidence_intervals_px"] = [[53.0, 90.0]]
+        graph.add_geometry_entity(crease)
+
+        report = propagate_exact_geometry(graph, maximum=100.0)
+
+        self.assertFalse(graph.geometry_entity("ambiguous-horizontal").is_exact)
+        self.assertEqual(report["endpoint_bridge_applied_count"], 0)
+        self.assertEqual(
+            report["rejection_counts"].get(
+                "ambiguous_endpoint_bridge_exact_line", 0
+            ),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

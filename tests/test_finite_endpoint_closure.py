@@ -127,6 +127,47 @@ class FiniteEndpointClosureTest(unittest.TestCase):
         self.assertEqual(closed["invariants"]["generated_crease_count"], 0)
         self.assertEqual(closed["invariants"]["generated_direction_count"], 0)
 
+    def test_proved_subgraph_closes_while_other_creases_remain_unresolved(self):
+        report = _report(
+            [
+                _point("left", (_q(1, 5), _q(1, 2)), (20, 50)),
+                _point("terminal", None, (75, 50)),
+                _point(
+                    "target",
+                    (_q(4, 5), _q(1, 2)),
+                    (80, 50),
+                    incident_ids=("horizontal",),
+                ),
+                _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+                {
+                    "id": "unresolved-other",
+                    "kind": "crease",
+                    "observed_geometry": {"direction_index": 4},
+                    "exact_geometry": {},
+                    "evidence_sources": ["raw_image_finite_line_evidence"],
+                },
+            ],
+            [_segment("segment", "horizontal", "left", "terminal", 0, 55)],
+        )
+        report["phase"] = "proof_frontier_stalled"
+        report["geometry_propagation"] = {
+            "enabled": True,
+            "unresolved_crease_count": 1,
+        }
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertTrue(closed["enabled"])
+        self.assertEqual(closed["segments"][0]["end_point_id"], "target")
+        self.assertEqual(
+            closed["endpoint_closure"]["input_unresolved_crease_count"], 1
+        )
+        self.assertTrue(
+            closed["invariants"][
+                "proved_subgraph_closure_runs_before_global_crease_completion"
+            ]
+        )
+
     def test_short_detector_linehead_collapses_instead_of_becoming_zero_length(self):
         report = _report(
             [

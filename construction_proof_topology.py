@@ -40,6 +40,9 @@ def _derived_parents(
     if source == "existing_incident_crease_from_exact_point":
         parent = str(exact.get("source_point_id") or "")
         return source, ([parent] if parent else []), False
+    if source == "existing_canonical_crease_endpoint_from_exact_point":
+        parent = str(exact.get("source_point_id") or "")
+        return source, ([parent] if parent else []), False
     if source == "existing_crease_intersection":
         parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
         return source, parents, False
@@ -135,6 +138,7 @@ def build_construction_proof_topology(
         for entity_id, (source, parents, has_boundary) in list(pending.items()):
             expected_parent_count = 1 if source in {
                 "existing_incident_crease_from_exact_point",
+                "existing_canonical_crease_endpoint_from_exact_point",
                 "existing_crease_paper_boundary_intersection",
             } else 2 if source == "existing_crease_intersection" else 0
             if (
@@ -158,6 +162,7 @@ def build_construction_proof_topology(
     for entity_id, (source, parents, has_boundary) in pending.items():
         known_source = source in {
             "existing_incident_crease_from_exact_point",
+            "existing_canonical_crease_endpoint_from_exact_point",
             "existing_crease_intersection",
             "existing_crease_paper_boundary_intersection",
         }

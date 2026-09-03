@@ -110,7 +110,7 @@ class GuidedConstructionTest(unittest.TestCase):
         )
         self.assertFalse(tangent["exact_geometry"])
         propagation = report["geometry_propagation"]
-        self.assertEqual(propagation["mode"], "deterministic_exact_frontier_v1")
+        self.assertEqual(propagation["mode"], "deterministic_exact_frontier_v2")
         self.assertEqual(propagation["status"], "complete_existing_creases")
         self.assertFalse(propagation["frontier_limit_reached"])
         self.assertEqual(propagation["invariants"]["enumerated_direction_count"], 0)

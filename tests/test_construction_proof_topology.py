@@ -50,6 +50,15 @@ class ConstructionProofTopologyTest(unittest.TestCase):
                         "direction_index": 4,
                     },
                 },
+                {
+                    "id": "endpoint-bridged-crease",
+                    "kind": "crease",
+                    "exact_geometry": {
+                        "source": "existing_canonical_crease_endpoint_from_exact_point",
+                        "source_point_id": "relation-point",
+                        "direction_index": 2,
+                    },
+                },
             ]
         }
         topology = {
@@ -68,6 +77,12 @@ class ConstructionProofTopologyTest(unittest.TestCase):
                     "start_point_id": "fitted-point",
                     "end_point_id": "boundary-point",
                 },
+                {
+                    "id": "endpoint-bridged",
+                    "crease_entity_id": "endpoint-bridged-crease",
+                    "start_point_id": "relation-point",
+                    "end_point_id": "boundary-point",
+                },
             ],
         }
         original_graph = copy.deepcopy(graph)
@@ -75,9 +90,12 @@ class ConstructionProofTopologyTest(unittest.TestCase):
 
         proof = build_construction_proof_topology(graph, topology)
 
-        self.assertEqual(proof["proved_segment_ids"], ["proved"])
+        self.assertEqual(
+            proof["proved_segment_ids"], ["endpoint-bridged", "proved"]
+        )
         self.assertEqual(proof["observed_only_segment_ids"], ["fit-dependent"])
         self.assertIn("relation-crease", proof["proved_crease_ids"])
+        self.assertIn("endpoint-bridged-crease", proof["proved_crease_ids"])
         self.assertNotIn("fit-dependent-crease", proof["proved_crease_ids"])
         fitted = next(
             item for item in proof["entity_records"] if item["id"] == "fitted-point"

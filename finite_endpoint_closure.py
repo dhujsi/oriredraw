@@ -226,18 +226,13 @@ def build_finite_endpoint_closed_topology(
             "mode": _CLOSED_TOPOLOGY_MODE,
             "reason": "missing_raw_finite_topology",
         }
-    unresolved_creases = (
-        int(propagation.get("unresolved_crease_count", 0) or 0)
-        if isinstance(propagation, Mapping)
-        else 1
-    )
-    if guided_report.get("phase") != "complete_existing_creases" or unresolved_creases:
+    if not isinstance(propagation, Mapping) or propagation.get("enabled") is False:
         return {
             "enabled": False,
             "mode": _CLOSED_TOPOLOGY_MODE,
-            "reason": "exact_crease_graph_incomplete",
-            "unresolved_crease_count": unresolved_creases,
+            "reason": "exact_geometry_propagation_unavailable",
         }
+    unresolved_creases = int(propagation.get("unresolved_crease_count", 0) or 0)
 
     raw_side_length = guided_report.get("global_side_length")
     try:
@@ -660,6 +655,7 @@ def build_finite_endpoint_closed_topology(
         "unresolved_endpoint_occurrences": unresolved_occurrences,
         "crease_placement_repair_count": 0,
         "crease_placement_repairs": [],
+        "input_unresolved_crease_count": unresolved_creases,
         "tolerances": {
             "paper_scale_gap_fraction": 0.05,
             "local_segment_length_fraction": 0.75,
@@ -685,6 +681,7 @@ def build_finite_endpoint_closed_topology(
             "crease_placement_repair_allowed": False,
             "endpoint_targets_require_construction_proof": True,
             "crease_lines_require_construction_proof": True,
+            "proved_subgraph_closure_runs_before_global_crease_completion": True,
         },
     }
 

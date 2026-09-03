@@ -37,10 +37,6 @@ from qsqrt2_coordinates import (
     qsqrt2_from_mapping,
     qsqrt2_to_mapping,
 )
-from proof_ray_candidates import (
-    apply_image_supported_canonical_rays,
-    build_proved_node_canonical_ray_candidates,
-)
 from raw_crease_topology import build_raw_crease_topology_graph
 from transactional_angle_repair import build_transactional_angle_repair
 from shadow_search import (
@@ -2602,6 +2598,8 @@ def build_guided_boundary_report(
             "automatic_topology_point_fit_enabled": False,
             "manual_topology_point_fit_enabled": False,
             "unreached_observations_remain_unresolved": True,
+            "global_direction_enumeration_enabled": False,
+            "topology_constrained_endpoint_bridge_enabled": True,
         },
         "notes": [
             "观测点与计算用精确几何仍共享点—折痕关联图；另有只读构造证明层，像素拟合本身不会被提升为证明事实。",
@@ -2652,32 +2650,29 @@ def build_guided_boundary_report(
         )
     else:
         report["finite_endpoint_closure"] = finite_topology
-    candidate_topology = (
-        finite_topology
-        if finite_topology.get("enabled", False)
-        else topology_report
-    )
-    report["canonical_ray_candidates"] = (
-        build_proved_node_canonical_ray_candidates(
-            geometry_snapshot,
-            candidate_topology,
-            report["construction_proof_topology"],
-            global_side_length,
-        )
-    )
+    report["canonical_ray_candidates"] = {
+        "enabled": False,
+        "mode": "proved_node_canonical_ray_candidates_v1",
+        "reason": "replaced_by_topology_constrained_endpoint_bridge",
+        "candidate_count": 0,
+        "candidates": [],
+        "invariants": {
+            "global_direction_enumeration_enabled": False,
+            "raster_selects_no_free_direction": True,
+        },
+    }
     base_output_contract = build_guided_cp_output_contract(
         report,
         segment_line_types=line_type_assignments,
     )
-    canonical_application, canonical_output_contract = (
-        apply_image_supported_canonical_rays(
-            report["canonical_ray_candidates"],
-            raw_report if isinstance(raw_report, Mapping) else None,
-            base_output_contract,
-            global_side_length,
-        )
-    )
-    canonical_base_contract = canonical_output_contract or base_output_contract
+    canonical_application = {
+        "enabled": False,
+        "mode": "proved_canonical_ray_application_v1",
+        "reason": "global_direction_enumeration_disabled",
+        "accepted_candidate_count": 0,
+        "accepted_candidates": [],
+    }
+    canonical_base_contract = base_output_contract
     angle_candidates = build_constrained_angle_candidates(
         raw_report if isinstance(raw_report, Mapping) else None,
         canonical_base_contract,
@@ -2702,12 +2697,12 @@ def build_guided_boundary_report(
     report["cp_available"] = bool(output_contract["cp_available"])
     report["cp"] = output_contract["cp"]
     report["output_unchanged"] = not report["cp_available"]
-    accepted_canonical = int(
-        canonical_application.get("accepted_candidate_count", 0) or 0
+    accepted_endpoint_bridges = int(
+        geometry_propagation.get("endpoint_bridge_applied_count", 0) or 0
     )
     if unexplained == 0:
         report["phase"] = "complete_existing_creases"
-    elif accepted_canonical:
+    elif accepted_endpoint_bridges:
         report["phase"] = "automatic_construction_partial"
     else:
         report["phase"] = "proof_frontier_stalled"
