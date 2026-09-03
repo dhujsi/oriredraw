@@ -599,6 +599,19 @@ class RawCreaseTopologyTest(unittest.TestCase):
         self.assertEqual(first["automatic_topology_point_history"], [])
         self.assertTrue(first["proof_generated_ray_required"])
         self.assertFalse(first["manual_point_selection_required"])
+        canonical = first["canonical_ray_candidates"]
+        self.assertTrue(canonical["enabled"])
+        self.assertGreater(canonical["candidate_count"], 0)
+        self.assertTrue(
+            set(item["source_point_id"] for item in canonical["candidates"])
+            <= set(first["construction_proof_topology"]["proved_point_ids"])
+        )
+        self.assertTrue(
+            all(
+                item["image_evidence_status"] == "not_evaluated"
+                for item in canonical["candidates"]
+            )
+        )
         self.assertEqual(
             [item["step_kind"] for item in first["selection_history"]],
             ["boundary_relation"],

@@ -8,10 +8,12 @@ const SOURCE_FILES = [
   'exact_qsqrt2.py',
   'qsqrt2_coordinates.py',
   'exact_graph_propagation.py',
+  'construction_proof_topology.py',
   'finite_endpoint_closure.py',
   'guided_cp_output.py',
   'constrained_angle_candidates.py',
   'transactional_angle_repair.py',
+  'proof_ray_candidates.py',
   'guided_construction.py',
   'raw_boundary_evidence.py',
   'raw_crease_evidence.py',
@@ -35,7 +37,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260902-transactional-angle-repair-v1';
+const WEB_ENGINE_VERSION = '20260903-proof-ray-candidates-v1';
 
 let pyodide;
 let readyPromise;

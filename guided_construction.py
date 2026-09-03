@@ -37,6 +37,7 @@ from qsqrt2_coordinates import (
     qsqrt2_from_mapping,
     qsqrt2_to_mapping,
 )
+from proof_ray_candidates import build_proved_node_canonical_ray_candidates
 from raw_crease_topology import build_raw_crease_topology_graph
 from transactional_angle_repair import build_transactional_angle_repair
 from shadow_search import (
@@ -2661,6 +2662,19 @@ def build_guided_boundary_report(
         )
     else:
         report["finite_endpoint_closure"] = finite_topology
+    candidate_topology = (
+        finite_topology
+        if finite_topology.get("enabled", False)
+        else topology_report
+    )
+    report["canonical_ray_candidates"] = (
+        build_proved_node_canonical_ray_candidates(
+            geometry_snapshot,
+            candidate_topology,
+            report["construction_proof_topology"],
+            global_side_length,
+        )
+    )
     base_output_contract = build_guided_cp_output_contract(
         report,
         segment_line_types=line_type_assignments,

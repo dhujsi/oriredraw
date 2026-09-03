@@ -71,7 +71,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260902-transactional-angle-repair-v1';
+const WEB_ENGINE_VERSION = '20260903-proof-ray-candidates-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
