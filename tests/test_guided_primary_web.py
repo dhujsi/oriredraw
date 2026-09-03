@@ -78,7 +78,7 @@ def test_raw_primary_bridge_is_packaged_for_preview_and_pages():
     assert "raw_primary_bridge.py" in pages
 
 
-def test_guided_boundary_ui_keeps_multiple_rounds_in_one_reversible_chain():
+def test_guided_boundary_ui_stops_after_one_reversible_initial_relation():
     app = _source("web/app.js")
     html = _source("web/index.html")
 
@@ -86,7 +86,8 @@ def test_guided_boundary_ui_keeps_multiple_rounds_in_one_reversible_chain():
     assert "segment_line_types: assignments" in app
     assert "guidedSelectionSteps" in app
     assert "guidedSelectionIds" in app
-    assert "guided.next_relation_candidates" in app
+    assert "const candidates = continuing ? [] : allCandidates;" in app
+    assert "if (selectedSteps.length) return;" in app
     assert "undoGuidedBoundary" in app
     assert "delete root.shadow_search.guided_boundary" in app
     assert "root.phase = 'awaiting_boundary_relation'" in app
@@ -173,10 +174,11 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     assert "第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。" in app
     assert "点一个绿色点，在点旁边选择开始方式。" in app
     assert "请直接点图上的绿色点；开始方式会出现在点旁边。" not in app
-    assert "程序已经根据这个起点把能确定的线处理完了，不用再选点。" not in app
+    assert "唯一的起点" in app
+    assert "不再要求选择第二个起点" in app
     assert "自动取线已结束" in app
     assert "initialRawSelection" in app
-    assert "下面是可选的补充方式，不选也可以" in app
+    assert "下面是可选的补充方式，不选也可以" not in app
     assert "红线：原图为红色，或无色线按红色输出" in html
     assert "灰线" not in html
     assert "选择开始方式后即可下载当前 .cp 草稿" in app

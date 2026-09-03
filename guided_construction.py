@@ -37,7 +37,10 @@ from qsqrt2_coordinates import (
     qsqrt2_from_mapping,
     qsqrt2_to_mapping,
 )
-from proof_ray_candidates import build_proved_node_canonical_ray_candidates
+from proof_ray_candidates import (
+    apply_image_supported_canonical_rays,
+    build_proved_node_canonical_ray_candidates,
+)
 from raw_crease_topology import build_raw_crease_topology_graph
 from transactional_angle_repair import build_transactional_angle_repair
 from shadow_search import (
@@ -2433,28 +2436,17 @@ def build_guided_boundary_report(
         for entity in crease_entities
         if str(entity.id) in unresolved_crease_set
     ]
-    next_relation_candidates = _rank_next_relation_candidates(
-        catalog,
-        selected_relation_ids,
-        graph,
-        anchors,
-        details,
-        maximum=maximum,
-        baseline_unresolved=unexplained,
-        require_existing_incidence=require_existing_incidence,
-    )
+    # One proved boundary relation is the only human construction seed.  A
+    # second raster-derived relation would be another independent root, not a
+    # consequence of the first selection.  All continuation must therefore be
+    # automatic and construction-backed.
+    next_relation_candidates: list[dict[str, Any]] = []
     # Kept as empty compatibility fields for saved projects and the current UI.
     # Candidate geometry must be generated from proved nodes, not fitted from
     # these observed point coordinates.
     next_topology_point_candidates: list[dict[str, Any]] = []
     selectable_topology_point_count = 0
-    phase = (
-        "complete_existing_creases"
-        if unexplained == 0
-        else "awaiting_additional_relation"
-        if next_relation_candidates
-        else "proof_frontier_stalled"
-    )
+    phase = "complete_existing_creases" if unexplained == 0 else "proof_frontier_stalled"
     geometry_snapshot = graph.geometry_snapshot()
     direction_mismatches = [
         str(entity.id)
@@ -2555,11 +2547,9 @@ def build_guided_boundary_report(
         "next_topology_point_candidates": next_topology_point_candidates,
         "next_topology_point_candidate_count": len(next_topology_point_candidates),
         "selectable_topology_point_candidate_count": selectable_topology_point_count,
-        "next_selection_required": unexplained > 0,
+        "next_selection_required": False,
         "manual_point_selection_required": False,
-        "proof_generated_ray_required": (
-            unexplained > 0 and not next_relation_candidates
-        ),
+        "proof_generated_ray_required": unexplained > 0,
         "suppressed_unselected_root_operations": suppressed_roots,
         "legacy_search_executed": False,
         "guided_candidate_ray_count": guided_candidates,
@@ -2679,16 +2669,26 @@ def build_guided_boundary_report(
         report,
         segment_line_types=line_type_assignments,
     )
+    canonical_application, canonical_output_contract = (
+        apply_image_supported_canonical_rays(
+            report["canonical_ray_candidates"],
+            raw_report if isinstance(raw_report, Mapping) else None,
+            base_output_contract,
+            global_side_length,
+        )
+    )
+    canonical_base_contract = canonical_output_contract or base_output_contract
     angle_candidates = build_constrained_angle_candidates(
         raw_report if isinstance(raw_report, Mapping) else None,
-        base_output_contract,
+        canonical_base_contract,
     )
     angle_repair, repaired_output_contract = build_transactional_angle_repair(
-        base_output_contract,
+        canonical_base_contract,
         angle_candidates,
     )
-    output_contract = repaired_output_contract or base_output_contract
+    output_contract = repaired_output_contract or canonical_base_contract
     report["cp_output_contract"] = output_contract
+    report["canonical_ray_application"] = canonical_application
     report["construction_angle_candidates"] = angle_candidates
     report["construction_angle_repair"] = angle_repair
     # Persist only assignments belonging to the observed topology. Generated
@@ -2702,6 +2702,16 @@ def build_guided_boundary_report(
     report["cp_available"] = bool(output_contract["cp_available"])
     report["cp"] = output_contract["cp"]
     report["output_unchanged"] = not report["cp_available"]
+    accepted_canonical = int(
+        canonical_application.get("accepted_candidate_count", 0) or 0
+    )
+    if unexplained == 0:
+        report["phase"] = "complete_existing_creases"
+    elif accepted_canonical:
+        report["phase"] = "automatic_construction_partial"
+    else:
+        report["phase"] = "proof_frontier_stalled"
+    report["next_selection_required"] = False
     return report
 
 

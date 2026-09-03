@@ -71,7 +71,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260903-proof-ray-candidates-v1';
+const WEB_ENGINE_VERSION = '20260903-proof-ray-application-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -638,30 +638,25 @@ function updateRawPrimaryGuidedCopy(root, report) {
   }
 
   const unresolved = Number(report.unexplained_observations || 0);
-  if (report.phase === 'complete_existing_creases') {
-    const blockerLabels = [...new Set((report.cp_output_contract?.blockers || [])
-      .map(item => guidedBlockerLabel(item?.code))
-      .filter(Boolean))];
-    resultEyebrow.textContent = '自动取线';
-    resultTitle.textContent = '自动取线已结束';
-    const messages = report.checks_passed
+  const canonicalAdded = Number(
+    report.canonical_ray_application?.accepted_candidate_count || 0,
+  );
+  const blockerLabels = [...new Set((report.cp_output_contract?.blockers || [])
+    .map(item => guidedBlockerLabel(item?.code))
+    .filter(Boolean))];
+  resultEyebrow.textContent = '自动取线';
+  resultTitle.textContent = '自动取线已结束';
+  const messages = [
+    `程序已从唯一的起点自动检验合法方向，并加入 ${canonicalAdded} 条有连续原图证据的 22.5° 系折痕。`,
+    ...(unresolved > 0 ? [`仍有 ${unresolved} 条观测线无法由当前证明链确定。`] : []),
+    ...(report.checks_passed
       ? ['全部检查已通过，可以下载当前 .cp。']
       : [
           '当前结果没有通过检查；仍可下载未验证的 .cp 草稿。',
-          ...(blockerLabels.length
-            ? [`需要处理：${blockerLabels.join('；')}。`]
-            : []),
-        ];
-    warnings.innerHTML = messages.map(message => `<p>${escapeHtml(message)}</p>`).join('');
-    return;
-  }
-
-  resultEyebrow.textContent = '自动取线';
-  resultTitle.textContent = '已保留当前结果';
-  warnings.innerHTML = [
-    `程序已经根据起点处理原图，还有 ${unresolved} 条线无法确定。`,
-    '结果尚未完成全部检查；仍可下载未验证的 .cp 草稿。',
-  ].map(message => `<p>${escapeHtml(message)}</p>`).join('');
+          ...(blockerLabels.length ? [`需要处理：${blockerLabels.join('；')}。`] : []),
+        ]),
+  ];
+  warnings.innerHTML = messages.map(message => `<p>${escapeHtml(message)}</p>`).join('');
 }
 
 function renderRawPrimaryResult(data) {
@@ -1427,8 +1422,7 @@ function boundaryRelationMessage(report, root) {
   }
   const guided = Number(report.guided_selected_ray_count || 0);
   const unresolved = Number(report.unexplained_observations || 0);
-  const nextCount = Number(report.next_relation_candidate_count || 0);
-  const nextPointCount = Number(report.selectable_topology_point_candidate_count || 0);
+  const canonicalAdded = Number(report.canonical_ray_application?.accepted_candidate_count || 0);
   if (report.phase === 'complete_existing_creases') {
     const segments = guidedMvDisplaySegments(report);
     const segmentCount = Number(
@@ -1451,13 +1445,7 @@ function boundaryRelationMessage(report, root) {
     return `已经补上 ${guided} 条线。原来的 .cp 没有改动。`;
   }
   if (report.status === 'partial_propagation') {
-    if (nextCount > 0) {
-      return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，可下载未验证草稿。`;
-    }
-    if (nextPointCount > 0) {
-      return '当前结果仍不完整；可下载未验证草稿，下面还有待确认的黄色点。';
-    }
-    return `已经补上 ${guided} 条线；还有 ${unresolved} 条没补上，可下载未验证草稿。`;
+    return `自动推导已结束：加入 ${canonicalAdded} 条有证据的合法方向折痕；还有 ${unresolved} 条没确定，不再要求选择第二个起点。`;
   }
   if (report.status === 'no_matching_trace_rays' || report.status === 'no_matching_observed_creases') {
     return '这个方式没有补上原图里的线。请换一个点或方式。';
@@ -1476,17 +1464,14 @@ function renderBoundaryRelations(root) {
   const guided = shadow.guided_boundary || null;
   updateRawPrimaryGuidedCopy(root, guided);
   const selectedSteps = guidedSelectionSteps(guided);
-  const selectedIds = guidedSelectionIds(guided);
   const continuing = Boolean(guided?.enabled && selectedSteps.length);
-  const candidates = continuing && Array.isArray(guided.next_relation_candidates)
-    ? guided.next_relation_candidates
-    : allCandidates;
+  const candidates = continuing ? [] : allCandidates;
   const topologyPointCandidates = continuing && Array.isArray(guided.next_topology_point_candidates)
     ? guided.next_topology_point_candidates
     : [];
   const selectableTopologyPointCount = topologyPointCandidates.filter(candidate => candidate.selectable).length;
   const showingTopologyPoints = continuing && candidates.length === 0 && topologyPointCandidates.length > 0;
-  const completed = guided?.phase === 'complete_existing_creases';
+  const completed = continuing;
   const rawPrimary = isRawPrimaryResult(root);
   const initialRawSelection = rawPrimary && selectedSteps.length === 0;
   boundaryRelations.classList.toggle(
@@ -1516,19 +1501,11 @@ function renderBoundaryRelations(root) {
     : continuing
     ? `${candidates.length} 个可选方式`
     : `${candidates.length} 个起点方式`;
-  boundaryRelationStatus.textContent = rawPrimary && completed
-    ? ''
-    : boundaryRelationMessage(guided, root);
+  boundaryRelationStatus.textContent = boundaryRelationMessage(guided, root);
   if (boundaryRelationIntro) {
     boundaryRelationIntro.classList.toggle('hidden', completed);
     if (completed) {
       boundaryRelationIntro.textContent = '';
-    } else if (continuing) {
-      boundaryRelationIntro.textContent = candidates.length
-        ? '下面是可选的补充方式，不选也可以；当前结果已经保留。'
-        : showingTopologyPoints
-        ? '下面的黄色点是可选补充，不确定就不要点；当前结果已经保留。'
-        : '没有找到可靠的补充方式。当前结果已经保留，可以停在这里。';
     } else {
       boundaryRelationIntro.textContent = isRawPrimaryResult(root)
         ? '点一个绿色点，在点旁边选择开始方式。'
@@ -1679,6 +1656,7 @@ async function evaluateBoundaryRelation(relationId) {
   if (!currentResult || boundaryRelationList.dataset.busy === 'true') return;
   const report = currentResult.shadow_search?.guided_boundary;
   const selectedSteps = guidedSelectionSteps(report);
+  if (selectedSteps.length) return;
   const selectedIds = guidedSelectionIds(report);
   const nextId = String(relationId || '');
   if (!nextId || selectedIds.includes(nextId)) return;

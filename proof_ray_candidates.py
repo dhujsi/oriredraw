@@ -8,16 +8,33 @@ point here.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import math
+from collections import Counter
 from typing import Any, Mapping
 
+from constrained_angle_candidates import (
+    _nearest_contact,
+    _raw_observations,
+    _ray_evidence,
+)
 from exact_qsqrt2 import Qsqrt2
 from qsqrt2_coordinates import qsqrt2_from_mapping, qsqrt2_to_mapping
+from transactional_angle_repair import (
+    _audit,
+    _materialize,
+    _normalise_segments,
+    _split_segments_at_point,
+    _unexpected_candidate_intersection,
+)
 
 
 ExactPoint = tuple[Qsqrt2, Qsqrt2]
 _MODE = "proved_node_canonical_ray_candidates_v1"
+_APPLICATION_MODE = "proved_canonical_ray_application_v1"
+_MAX_APPLICATION_ROUNDS = 8
+_MAX_APPLIED_RAYS = 256
 
 
 def _exact_point(raw: Any) -> ExactPoint | None:
@@ -112,6 +129,152 @@ def _candidate_id(point_id: str, direction_index: int) -> str:
         f"{point_id}|canonical-22.5|{direction_index}".encode("utf-8")
     ).hexdigest()[:12]
     return f"proof-ray-{digest}"
+
+
+def _cp_point(raw: Any, side_length: Qsqrt2) -> tuple[float, float] | None:
+    point = _exact_point(raw)
+    if point is None or side_length <= Qsqrt2():
+        return None
+    return (
+        float(point[0] / side_length) * 400.0 - 200.0,
+        float(point[1] / side_length) * 400.0 - 200.0,
+    )
+
+
+def _float_point(raw: Any) -> tuple[float, float] | None:
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+        return None
+    try:
+        point = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError):
+        return None
+    return point if all(math.isfinite(value) for value in point) else None
+
+
+def _float_point_key(point: tuple[float, float]) -> tuple[float, float]:
+    return round(point[0], 6), round(point[1], 6)
+
+
+def _segment_geometry_key(
+    first: tuple[float, float],
+    second: tuple[float, float],
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    return tuple(sorted((_float_point_key(first), _float_point_key(second))))
+
+
+def _segment_geometries(
+    segments: list[dict[str, Any]],
+) -> set[tuple[tuple[float, float], tuple[float, float]]]:
+    output: set[tuple[tuple[float, float], tuple[float, float]]] = set()
+    for segment in segments:
+        start = _float_point(segment.get("start_cp"))
+        end = _float_point(segment.get("end_cp"))
+        if start is not None and end is not None:
+            output.add(_segment_geometry_key(start, end))
+    return output
+
+
+def _line_type_from_evidence(evidence: Mapping[str, Any]) -> tuple[int, str] | None:
+    channels = {str(item) for item in evidence.get("source_channels", []) if str(item)}
+    if "red" in channels and "blue" in channels:
+        return None
+    if "blue" in channels:
+        return 3, "source_image_color_evidence"
+    if "red" in channels:
+        return 2, "source_image_color_evidence"
+    # Black, gray and otherwise neutral strokes have geometry evidence but no
+    # reliable MV colour.  The existing product rule keeps them as mountain
+    # folds in the unverified draft; this choice does not create geometry.
+    return 2, "source_image_neutral_default_mountain"
+
+
+def _replace_camv_diagnostic(
+    base_contract: Mapping[str, Any],
+    segments: list[dict[str, Any]],
+    accepted: list[dict[str, Any]],
+) -> dict[str, Any]:
+    contract = copy.deepcopy(dict(base_contract))
+    materialized = _materialize(segments)
+    audit = _audit(materialized)
+    blockers = [
+        copy.deepcopy(dict(item))
+        for item in contract.get("blockers", [])
+        if isinstance(item, Mapping)
+        and str(item.get("code") or "") != "camv_foldability_violations"
+    ]
+    violation_count = int(audit.get("violation_count", 0) or 0)
+    if violation_count:
+        blockers.append(
+            {
+                "code": "camv_foldability_violations",
+                "count": violation_count,
+                "rule_counts": dict(audit.get("rule_counts") or {}),
+                "violations": list(audit.get("violations") or []),
+            }
+        )
+    blocker_counts: Counter[str] = Counter()
+    for blocker in blockers:
+        try:
+            count = int(blocker.get("count", 1))
+        except (TypeError, ValueError):
+            count = 1
+        blocker_counts[str(blocker.get("code") or "unknown")] += max(1, count)
+    gate_results = copy.deepcopy(dict(contract.get("gate_results") or {}))
+    gate_results["flat_foldability"] = {
+        "passed": violation_count == 0,
+        "blocker_codes": [] if violation_count == 0 else ["camv_foldability_violations"],
+    }
+    invariants = copy.deepcopy(dict(contract.get("invariants") or {}))
+    previous_generated = int(invariants.get("generated_internal_segment_count", 0) or 0)
+    invariants.update(
+        {
+            "generated_internal_segment_count": previous_generated + len(accepted),
+            "generated_direction_count": 0,
+            "image_supported_canonical_segment_count": len(accepted),
+            "all_generated_segments_start_at_proved_points": True,
+            "all_generated_directions_are_exact_22_5_multiples": True,
+            "all_generated_segments_end_at_first_exact_contact": True,
+            "raster_created_direction_count": 0,
+        }
+    )
+    checks_passed = bool(contract.get("enabled", False)) and not blockers
+    contract.update(
+        {
+            "status": "ready" if checks_passed else "unverified_canonical_rays_applied",
+            "output_ready": checks_passed,
+            "checks_passed": checks_passed,
+            "cp_available": bool(materialized["cp"]),
+            "cp": materialized["cp"],
+            "candidate_internal_segment_count": len(segments),
+            "typed_candidate_internal_segment_count": len(segments),
+            "draft_internal_segment_count": len(segments),
+            "boundary_segment_count": materialized["boundary_segment_count"],
+            "boundary_segment_counts_by_side": materialized[
+                "boundary_segment_counts_by_side"
+            ],
+            "checked_boundary_segment_count": materialized["boundary_segment_count"],
+            "checked_boundary_segment_counts_by_side": materialized[
+                "boundary_segment_counts_by_side"
+            ],
+            "candidate_segments": segments,
+            "gate_results": gate_results,
+            "blocker_count": len(blockers),
+            "blocker_counts": dict(sorted(blocker_counts.items())),
+            "blockers": blockers,
+            "soft_diagnostics": {
+                "camv": audit,
+                "camv_blocks_output": False,
+                "camv_blocks_verification": True,
+            },
+            "canonical_ray_application": {
+                "applied": bool(accepted),
+                "accepted_candidate_ids": [item["candidate_id"] for item in accepted],
+                "accepted_segment_ids": [item["segment_id"] for item in accepted],
+            },
+            "invariants": invariants,
+        }
+    )
+    return contract
 
 
 def build_proved_node_canonical_ray_candidates(
@@ -264,4 +427,315 @@ def build_proved_node_canonical_ray_candidates(
     }
 
 
-__all__ = ["build_proved_node_canonical_ray_candidates"]
+def apply_image_supported_canonical_rays(
+    candidate_report: Mapping[str, Any] | None,
+    raw_report: Mapping[str, Any] | None,
+    base_contract: Mapping[str, Any] | None,
+    side_length_mapping: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Apply proved 22.5-degree rays with continuous image support.
+
+    A candidate direction and source have already been fixed by construction.
+    Raster data may only accept or reject that finite ray.  The ray ends at the
+    first exact segment or paper-boundary contact, never at a fitted image point.
+    """
+
+    candidate_report = candidate_report if isinstance(candidate_report, Mapping) else {}
+    raw_report = raw_report if isinstance(raw_report, Mapping) else {}
+    base_contract = base_contract if isinstance(base_contract, Mapping) else {}
+    if not candidate_report.get("enabled", False):
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "canonical_candidate_layer_disabled",
+        }, None
+    try:
+        side_length = (
+            qsqrt2_from_mapping(side_length_mapping)
+            if isinstance(side_length_mapping, Mapping)
+            else None
+        )
+    except (TypeError, ValueError, ZeroDivisionError):
+        side_length = None
+    if side_length is None or side_length <= Qsqrt2():
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "missing_side_length",
+        }, None
+    try:
+        maximum_px = float(raw_report.get("maximum_coordinate_px", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        maximum_px = 0.0
+    if maximum_px <= 0.0:
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "missing_raw_image_scale",
+        }, None
+    working, topology_errors = _normalise_segments(base_contract.get("candidate_segments"))
+    if topology_errors or not working:
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "invalid_base_candidate_topology",
+            "topology_errors": topology_errors,
+        }, None
+
+    observations = _raw_observations(raw_report)
+    if not observations:
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "missing_finite_image_observations",
+        }, None
+
+    rejection_counts: Counter[str] = Counter()
+    remaining: dict[
+        tuple[tuple[float, float], int],
+        tuple[dict[str, Any], tuple[float, float]],
+    ] = {}
+    for raw_candidate in candidate_report.get("candidates", []):
+        if not isinstance(raw_candidate, Mapping):
+            rejection_counts["invalid_candidate_record"] += 1
+            continue
+        candidate = dict(raw_candidate)
+        source_point_id = str(candidate.get("source_point_id") or "")
+        if (
+            candidate.get("kind") != "canonical_22_5_ray"
+            or candidate.get("status") != "unapplied_candidate"
+            or candidate.get("generation_rule")
+            != "canonical_22_5_ray_from_proved_point"
+            or not source_point_id
+            or list(candidate.get("parent_entity_ids") or []) != [source_point_id]
+        ):
+            rejection_counts["candidate_not_from_proved_point_generator"] += 1
+            continue
+        start = _cp_point(candidate.get("source_point_project"), side_length)
+        try:
+            direction_index = int(candidate.get("directed_direction_index"))
+        except (TypeError, ValueError):
+            direction_index = -1
+        if start is None or not 0 <= direction_index < 16:
+            rejection_counts["invalid_exact_candidate_geometry"] += 1
+            continue
+        key = _float_point_key(start), direction_index
+        if key in remaining:
+            rejection_counts["duplicate_exact_source_direction"] += 1
+            continue
+        remaining[key] = candidate, start
+
+    initial_unique_candidate_count = len(remaining)
+    accepted: list[dict[str, Any]] = []
+    application_rounds = 0
+    while remaining and application_rounds < _MAX_APPLICATION_ROUNDS:
+        application_rounds += 1
+        geometries = _segment_geometries(working)
+        options: list[
+            tuple[float, float, float, tuple[tuple[float, float], int]]
+        ] = []
+        for key, (candidate, start) in remaining.items():
+            angle = float(candidate["direction_deg"])
+            contact = _nearest_contact(start, angle, working)
+            if contact is None:
+                continue
+            end = _float_point(contact.get("end_cp"))
+            if end is None or _segment_geometry_key(start, end) in geometries:
+                continue
+            if _unexpected_candidate_intersection(start, end, working) is not None:
+                continue
+            evidence = _ray_evidence(
+                start,
+                end,
+                angle,
+                observations,
+                maximum_px=maximum_px,
+                angle_tolerance_deg=2.0,
+                distance_tolerance_px=3.2,
+            )
+            if evidence is None or _line_type_from_evidence(evidence) is None:
+                continue
+            options.append(
+                (
+                    -float(evidence["visible_coverage"]),
+                    float(evidence["unsupported_length_px"]),
+                    math.dist(start, end),
+                    key,
+                )
+            )
+        if not options:
+            break
+
+        accepted_this_round = 0
+        for *_, key in sorted(options):
+            if key not in remaining or len(accepted) >= _MAX_APPLIED_RAYS:
+                continue
+            candidate, start = remaining[key]
+            angle = float(candidate["direction_deg"])
+            contact = _nearest_contact(start, angle, working)
+            if contact is None:
+                continue
+            end = _float_point(contact.get("end_cp"))
+            if end is None:
+                continue
+            if _segment_geometry_key(start, end) in _segment_geometries(working):
+                continue
+            if _unexpected_candidate_intersection(start, end, working) is not None:
+                continue
+            evidence = _ray_evidence(
+                start,
+                end,
+                angle,
+                observations,
+                maximum_px=maximum_px,
+                angle_tolerance_deg=2.0,
+                distance_tolerance_px=3.2,
+            )
+            line_type = _line_type_from_evidence(evidence) if evidence else None
+            if evidence is None or line_type is None:
+                continue
+
+            remaining.pop(key)
+            token = hashlib.sha1(str(candidate["id"]).encode("utf-8")).hexdigest()[:12]
+            working, start_splits = _split_segments_at_point(
+                working, start, token=f"{token}:start"
+            )
+            working, end_splits = _split_segments_at_point(
+                working, end, token=f"{token}:end"
+            )
+            segment_id = f"proved-canonical-ray:{token}"
+            working.append(
+                {
+                    "id": segment_id,
+                    "source": "proved_canonical_22_5_image_supported",
+                    "transactional_root_segment_id": segment_id,
+                    "source_candidate_id": str(candidate["id"]),
+                    "start_point_id": str(candidate.get("source_point_id") or ""),
+                    "end_point_id": f"proved-exact-contact:{token}",
+                    "start_cp": list(start),
+                    "end_cp": list(end),
+                    "orientation": int(candidate["line_orientation_index"]),
+                    "direction_angle_deg": angle,
+                    "direction_family": "canonical_22_5",
+                    "line_type": line_type[0],
+                    "line_type_source": line_type[1],
+                    "visible_coverage": evidence["visible_coverage"],
+                    "unsupported_length_px": evidence["unsupported_length_px"],
+                    "image_evidence": copy.deepcopy(evidence),
+                    "construction_sources": [
+                        "proved_point",
+                        "canonical_22_5_direction",
+                    ],
+                    "parent_entity_ids": list(candidate.get("parent_entity_ids", [])),
+                    "target": copy.deepcopy(contact),
+                }
+            )
+            accepted.append(
+                {
+                    "candidate_id": str(candidate["id"]),
+                    "segment_id": segment_id,
+                    "source_point_id": str(candidate.get("source_point_id") or ""),
+                    "start_cp": list(start),
+                    "end_cp": list(end),
+                    "directed_direction_index": int(
+                        candidate["directed_direction_index"]
+                    ),
+                    "direction_deg": angle,
+                    "line_type": line_type[0],
+                    "line_type_source": line_type[1],
+                    "image_evidence": copy.deepcopy(evidence),
+                    "target": copy.deepcopy(contact),
+                    "split_segment_count": start_splits + end_splits,
+                }
+            )
+            accepted_this_round += 1
+        if len(accepted) >= _MAX_APPLIED_RAYS:
+            rejection_counts["application_limit_reached"] += len(remaining)
+            break
+        if not accepted_this_round:
+            break
+
+    # Classify only the final stalled frontier.  A candidate that failed before
+    # a newly applied ray created an earlier exact contact was not a rejection.
+    geometries = _segment_geometries(working)
+    for candidate, start in remaining.values():
+        angle = float(candidate["direction_deg"])
+        contact = _nearest_contact(start, angle, working)
+        if contact is None:
+            rejection_counts["no_first_exact_contact"] += 1
+            continue
+        end = _float_point(contact.get("end_cp"))
+        if end is None:
+            rejection_counts["invalid_exact_contact"] += 1
+            continue
+        if _segment_geometry_key(start, end) in geometries:
+            rejection_counts["already_represented_geometry"] += 1
+            continue
+        if _unexpected_candidate_intersection(start, end, working) is not None:
+            rejection_counts["overlaps_existing_exact_ray"] += 1
+            continue
+        evidence = _ray_evidence(
+            start,
+            end,
+            angle,
+            observations,
+            maximum_px=maximum_px,
+            angle_tolerance_deg=2.0,
+            distance_tolerance_px=3.2,
+        )
+        if evidence is None:
+            rejection_counts["insufficient_continuous_image_evidence"] += 1
+        elif _line_type_from_evidence(evidence) is None:
+            rejection_counts["conflicting_red_blue_evidence"] += 1
+        else:
+            rejection_counts["not_reached_before_round_limit"] += 1
+
+    normalized, topology_errors = _normalise_segments(working)
+    if topology_errors:
+        return {
+            "enabled": False,
+            "mode": _APPLICATION_MODE,
+            "reason": "generated_candidate_topology_invalid",
+            "topology_errors": topology_errors,
+        }, None
+    before_audit = _audit(_materialize(
+        _normalise_segments(base_contract.get("candidate_segments"))[0]
+    ))
+    after_audit = _audit(_materialize(normalized))
+    report = {
+        "enabled": True,
+        "mode": _APPLICATION_MODE,
+        "status": "applied" if accepted else "no_supported_canonical_ray",
+        "initial_candidate_count": int(candidate_report.get("candidate_count", 0) or 0),
+        "initial_unique_source_direction_count": initial_unique_candidate_count,
+        "application_round_count": application_rounds,
+        "accepted_candidate_count": len(accepted),
+        "accepted_candidates": accepted,
+        "base_segment_count": len(base_contract.get("candidate_segments", [])),
+        "effective_segment_count": len(normalized),
+        "camv_violation_count_before": int(before_audit.get("violation_count", 0) or 0),
+        "camv_violation_count_after": int(after_audit.get("violation_count", 0) or 0),
+        "camv_rule_counts_before": dict(before_audit.get("rule_counts") or {}),
+        "camv_rule_counts_after": dict(after_audit.get("rule_counts") or {}),
+        "rejection_counts": dict(sorted(rejection_counts.items())),
+        "invariants": {
+            "human_selects_only_one_initial_boundary_relation": True,
+            "candidate_source_must_be_construction_proved": True,
+            "candidate_direction_is_fixed_before_image_evaluation": True,
+            "image_evidence_can_only_accept_or_reject": True,
+            "candidate_ends_at_first_exact_contact": True,
+            "fitted_image_point_can_become_endpoint": False,
+            "noncanonical_direction_count": 0,
+        },
+    }
+    return report, (
+        _replace_camv_diagnostic(base_contract, normalized, accepted)
+        if accepted
+        else None
+    )
+
+
+__all__ = [
+    "apply_image_supported_canonical_rays",
+    "build_proved_node_canonical_ray_candidates",
+]

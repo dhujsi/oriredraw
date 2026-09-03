@@ -434,7 +434,7 @@ class RawCreaseTopologyTest(unittest.TestCase):
             0,
         )
 
-    def test_one_boundary_seed_requires_a_proved_relation_for_separate_component(self):
+    def test_one_boundary_seed_does_not_request_an_independent_second_root(self):
         side_length = qsqrt2_from_coefficients(2)
         zero = qsqrt2_from_coefficients(0)
         half = qsqrt2_from_coefficients(1, 0, 2)
@@ -475,12 +475,13 @@ class RawCreaseTopologyTest(unittest.TestCase):
         )
 
         self.assertTrue(first["enabled"])
-        self.assertEqual(first["phase"], "awaiting_additional_relation")
+        self.assertEqual(first["phase"], "proof_frontier_stalled")
         self.assertEqual(first["selected_relation_ids"], [top["id"]])
         self.assertEqual(first["unexplained_observations"], 1)
         self.assertEqual(len(first["unresolved_crease_entity_ids"]), 1)
-        self.assertEqual(first["next_relation_candidate_count"], 1)
-        self.assertEqual(first["next_relation_candidates"][0]["id"], bottom["id"])
+        self.assertEqual(first["next_relation_candidate_count"], 0)
+        self.assertEqual(first["next_relation_candidates"], [])
+        self.assertFalse(first["next_selection_required"])
         self.assertEqual(first["automatic_topology_point_count"], 0)
         self.assertEqual(first["automatic_topology_point_history"], [])
         self.assertFalse(

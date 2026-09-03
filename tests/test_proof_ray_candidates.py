@@ -2,7 +2,10 @@ import copy
 import unittest
 
 from exact_qsqrt2 import Qsqrt2
-from proof_ray_candidates import build_proved_node_canonical_ray_candidates
+from proof_ray_candidates import (
+    apply_image_supported_canonical_rays,
+    build_proved_node_canonical_ray_candidates,
+)
 from qsqrt2_coordinates import qsqrt2_to_mapping
 
 
@@ -103,6 +106,84 @@ class ProvedNodeCanonicalRayCandidatesTest(unittest.TestCase):
         )
         self.assertEqual(graph, original_graph)
         self.assertEqual(topology, original_topology)
+
+    def test_continuously_supported_candidate_is_applied_to_first_exact_contact(self):
+        candidate = {
+            "id": "proof-ray:test",
+            "kind": "canonical_22_5_ray",
+            "status": "unapplied_candidate",
+            "source_point_id": "proved-center",
+            "source_point_project": _coordinate(1, 1),
+            "parent_entity_ids": ["proved-center"],
+            "directed_direction_index": 0,
+            "line_orientation_index": 0,
+            "direction_deg": 0.0,
+            "generation_rule": "canonical_22_5_ray_from_proved_point",
+        }
+        candidate_report = {
+            "enabled": True,
+            "candidate_count": 1,
+            "candidates": [candidate],
+        }
+        raw_report = {
+            "maximum_coordinate_px": 100,
+            "lines": [
+                {
+                    "id": "observed-horizontal",
+                    "orientation_deg": 0.0,
+                    "source_channels": ["red"],
+                    "visible_segments_px": [
+                        {"start": [50.0, 50.0], "end": [75.0, 50.0]}
+                    ],
+                }
+            ],
+        }
+        base_contract = {
+            "enabled": True,
+            "candidate_segments": [
+                {
+                    "id": "exact-vertical-contact",
+                    "start_point_id": "top",
+                    "end_point_id": "bottom",
+                    "start_cp": [100.0, -200.0],
+                    "end_cp": [100.0, 200.0],
+                    "line_type": 2,
+                    "line_type_source": "source_image_color_evidence",
+                }
+            ],
+            "blockers": [],
+            "gate_results": {},
+            "invariants": {"generated_internal_segment_count": 0},
+        }
+
+        report, effective = apply_image_supported_canonical_rays(
+            candidate_report,
+            raw_report,
+            base_contract,
+            qsqrt2_to_mapping(Qsqrt2(2)),
+        )
+
+        self.assertTrue(report["enabled"])
+        self.assertEqual(report["accepted_candidate_count"], 1)
+        self.assertEqual(report["accepted_candidates"][0]["start_cp"], [0.0, 0.0])
+        self.assertEqual(report["accepted_candidates"][0]["end_cp"], [100.0, 0.0])
+        self.assertEqual(
+            report["accepted_candidates"][0]["target"]["target_kind"],
+            "existing_exact_segment",
+        )
+        self.assertIsNotNone(effective)
+        self.assertEqual(effective["candidate_internal_segment_count"], 3)
+        generated = [
+            item
+            for item in effective["candidate_segments"]
+            if item.get("source") == "proved_canonical_22_5_image_supported"
+        ]
+        self.assertEqual(len(generated), 1)
+        self.assertEqual(generated[0]["direction_angle_deg"], 0.0)
+        self.assertEqual(generated[0]["line_type"], 2)
+        self.assertEqual(
+            effective["invariants"]["raster_created_direction_count"], 0
+        )
 
 
 if __name__ == "__main__":

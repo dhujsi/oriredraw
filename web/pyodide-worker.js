@@ -37,7 +37,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260903-proof-ray-candidates-v1';
+const WEB_ENGINE_VERSION = '20260903-proof-ray-application-v1';
 
 let pyodide;
 let readyPromise;
