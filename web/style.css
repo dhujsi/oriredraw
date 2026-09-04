@@ -211,6 +211,7 @@ body.corner-editor-open { overflow: hidden; }
 .topology-point-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .topology-point-marker { position: absolute; width: 17px; height: 17px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 2px var(--ink); transform: translate(-50%, -50%); cursor: crosshair; pointer-events: auto; }
 .topology-point-marker.boundary-relation-point { width: 15px; height: 15px; background: #fff; border-color: var(--green); border-style: solid; cursor: pointer; }
+.topology-point-marker.topology-point-start { background: var(--acid); border-color: var(--green); cursor: pointer; }
 .topology-point-marker:hover, .topology-point-marker:focus-visible, .topology-point-marker.pending { z-index: 2; background: #fff; box-shadow: 0 0 0 3px var(--green); outline: 0; }
 .topology-point-marker[aria-disabled="true"] { background: #aaa; box-shadow: 0 0 0 2px #555; cursor: help; }
 .topology-point-tooltip { position: absolute; z-index: 4; max-width: min(300px, 80%); padding: 8px 9px; border: 1px solid var(--ink); background: rgba(23, 23, 20, .94); color: #fff; box-shadow: 3px 3px 0 rgba(0, 0, 0, .18); transform: translate(10px, calc(-100% - 10px)); pointer-events: none; font: 700 9px/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }

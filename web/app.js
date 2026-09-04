@@ -1114,6 +1114,28 @@ function guidedPointCoordinateExpressions(point) {
   });
 }
 
+const CROSS_SIDE_LABELS = { left: '左', right: '右', top: '上', bottom: '下' };
+
+function crossSegmentSummary(point) {
+  const cross = point?.cross_segment_lengths;
+  const visible = Array.isArray(cross?.visible_sides) ? cross.visible_sides : [];
+  const distances = cross?.distances && typeof cross.distances === 'object'
+    ? cross.distances
+    : {};
+  return visible
+    .map(side => {
+      const expression = distances[side]?.expression;
+      return expression ? `${CROSS_SIDE_LABELS[side] || side}：${expression}` : '';
+    })
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function pointGeometrySummary(point) {
+  const summary = crossSegmentSummary(point);
+  return summary ? `到纸边：${summary}` : '';
+}
+
 function buildBoundaryRelationPointCandidates(relations) {
   const points = new Map();
   for (const relation of Array.isArray(relations) ? relations : []) {
@@ -1163,6 +1185,7 @@ function buildBoundaryRelationPointCandidates(relations) {
         coordinate_expression: coordinateExpression,
         sideLength,
         boundary_range_px: boundaryRangePx,
+        cross_segment_lengths: point?.cross_segment_lengths || null,
         imageResidualPx: Number(point?.image_residual_px || 0),
       });
     }
@@ -1217,7 +1240,8 @@ function showTopologyPointTooltip(candidate, report, root = null) {
       ? candidate.boundary_assignments
       : [];
     const more = assignments.length > 4 ? `，另有 ${assignments.length - 4} 种方案` : '';
-    topologyPointTooltip.textContent = `点绿色点，再选一种开始方式${more}`;
+    const geometry = pointGeometrySummary(assignments[0]);
+    topologyPointTooltip.textContent = `绿色起点，再选一种开始方式${more}${geometry ? `；${geometry}` : ''}`;
   } else {
     const expression = Array.isArray(candidate.coordinate_expression)
       ? candidate.coordinate_expression.join(', ')
@@ -1225,7 +1249,10 @@ function showTopologyPointTooltip(candidate, report, root = null) {
     const selectableNote = candidate.selectable
       ? `黄色补充点：可能补上 ${Number(candidate.projected_new_crease_count || 0)} 条线；点一下查看，确认后才会使用`
       : '这个黄色点暂时不能使用';
-    const coordinateNote = expression !== '—' ? `；根号二坐标约为 (${expression})` : '';
+    const geometry = pointGeometrySummary(candidate);
+    const coordinateNote = geometry
+      ? `；${geometry}`
+      : expression !== '—' ? `；根号二坐标 (${expression})` : '';
     topologyPointTooltip.textContent = `${selectableNote}${coordinateNote}`;
   }
   topologyPointTooltip.style.left = `${left}%`;
@@ -1251,13 +1278,8 @@ function clearBoundaryPointPopover() {
 }
 
 function boundaryAssignmentDetail(assignment) {
-  const range = Array.isArray(assignment?.boundary_range_px)
-    ? assignment.boundary_range_px.filter(value => Number.isFinite(Number(value)))
-    : [];
-  if (range.length < 2) return '';
-  const start = Math.round(Number(range[0]));
-  const end = Math.round(Number(range[range.length - 1]));
-  return `（范围约 ${Math.min(start, end)}–${Math.max(start, end)} 像素）`;
+  const summary = pointGeometrySummary(assignment);
+  return summary ? `（${summary}）` : '';
 }
 
 function showBoundaryPointPopover(candidate, report, root) {
@@ -1331,9 +1353,15 @@ function stageTopologyPointConfirmation(candidate, report, root) {
   topologyPointLayer?.querySelectorAll('.topology-point-marker')
     .forEach(marker => marker.classList.toggle('pending', marker.dataset.pointId === pendingTopologyPointId));
   const unresolvedCount = Number(candidate.incident_unresolved_crease_count || 0);
-  topologyPointConfirmationTitle.textContent = '要不要用这个黄色点补线？';
-  topologyPointConfirmationCoordinate.textContent = '这是图上的黄色点，不需要输入坐标。';
-  topologyPointConfirmationNote.textContent = unresolvedCount > 0
+  const isStartPoint = candidate.kind === 'topology_point_start';
+  topologyPointConfirmationTitle.textContent = isStartPoint
+    ? '要用这个点作为起点吗？'
+    : '要不要用这个黄色点补线？';
+  topologyPointConfirmationCoordinate.textContent = pointGeometrySummary(candidate)
+    || '这是图上的点，不需要输入坐标。';
+  topologyPointConfirmationNote.textContent = isStartPoint
+    ? `这是原图中连接斜线的交点；试算可继续解释 ${Number(candidate.projected_new_crease_count || 0)} 条已有线。`
+    : unresolvedCount > 0
     ? `程序估计它可以补上 ${unresolvedCount} 条还没接上的线。确定它是关键点时再继续；不确定就先跳过。`
     : '程序还不确定它能补哪条线。不确定就先跳过。';
   const point = Array.isArray(candidate.observed_point_px) ? candidate.observed_point_px : [0, 0];
@@ -1357,7 +1385,12 @@ function bindGuidedPointTooltip(marker, candidate, report, root) {
   marker.addEventListener('blur', hideTopologyPointTooltip);
 }
 
-function renderTopologyPointOverlay(report, boundaryRelations = [], root = null) {
+function renderTopologyPointOverlay(
+  report,
+  boundaryRelations = [],
+  root = null,
+  initialTopologyPoints = [],
+) {
   if (!topologyPointLayer || !topologyPointTooltip) return;
   topologyPointLayer.replaceChildren();
   hideTopologyPointTooltip();
@@ -1368,7 +1401,10 @@ function renderTopologyPointOverlay(report, boundaryRelations = [], root = null)
     : [];
   const candidates = topologyCandidates.length
     ? topologyCandidates
-    : buildBoundaryRelationPointCandidates(boundaryRelations);
+    : [
+      ...buildBoundaryRelationPointCandidates(boundaryRelations),
+      ...(Array.isArray(initialTopologyPoints) ? initialTopologyPoints : []),
+    ];
   topologyPointLayer.classList.toggle('hidden', candidates.length === 0);
   if (!candidates.length) return;
   const maximum = guidedPointMaximum(report, root);
@@ -1376,9 +1412,10 @@ function renderTopologyPointOverlay(report, boundaryRelations = [], root = null)
     const point = Array.isArray(candidate.observed_point_px) ? candidate.observed_point_px : null;
     if (!point || maximum <= 0) continue;
     const isBoundaryPoint = candidate.kind === 'boundary_relation_point';
+    const isStartPoint = candidate.kind === 'topology_point_start';
     const marker = document.createElement('button');
     marker.type = 'button';
-    marker.className = `topology-point-marker${isBoundaryPoint ? ' boundary-relation-point' : ''}`;
+    marker.className = `topology-point-marker${isBoundaryPoint ? ' boundary-relation-point' : ''}${isStartPoint ? ' topology-point-start' : ''}`;
     marker.dataset.pointId = String(candidate.id || '');
     marker.style.left = `${Math.max(0, Math.min(100, Number(point[0]) / maximum * 100))}%`;
     marker.style.top = `${Math.max(0, Math.min(100, Number(point[1]) / maximum * 100))}%`;
@@ -1463,6 +1500,9 @@ function renderBoundaryRelations(root) {
   const allCandidates = Array.isArray(shadow.boundary_relation_candidates)
     ? shadow.boundary_relation_candidates
     : [];
+  const initialTopologyPoints = Array.isArray(shadow.topology_point_start_candidates)
+    ? shadow.topology_point_start_candidates
+    : [];
   if (!boundaryRelations || !boundaryRelationList || !boundaryRelationStatus) return;
   const guided = shadow.guided_boundary || null;
   updateRawPrimaryGuidedCopy(root, guided);
@@ -1482,7 +1522,12 @@ function renderBoundaryRelations(root) {
     initialRawSelection || (allCandidates.length === 0 && selectedSteps.length === 0),
   );
   renderBoundaryRelationHistory(guided);
-  renderTopologyPointOverlay(guided, candidates, root);
+  renderTopologyPointOverlay(
+    guided,
+    candidates,
+    root,
+    selectedSteps.length ? [] : initialTopologyPoints,
+  );
   renderGuidedMvOverlay(root, guided);
   if (!allCandidates.length && !selectedSteps.length) {
     boundaryRelationList.replaceChildren();
@@ -1509,6 +1554,9 @@ function renderBoundaryRelations(root) {
     boundaryRelationIntro.classList.toggle('hidden', completed);
     if (completed) {
       boundaryRelationIntro.textContent = '';
+    } else if (isStartPoint) {
+      marker.setAttribute('aria-disabled', candidate.selectable ? 'false' : 'true');
+      marker.setAttribute('aria-label', `${candidate.label || '对角线起点'}，点击确认是否使用`);
     } else {
       boundaryRelationIntro.textContent = isRawPrimaryResult(root)
         ? '点一个绿色点，在点旁边选择开始方式。'
@@ -1545,22 +1593,13 @@ function renderBoundaryRelations(root) {
     heading.append(title, meta);
 
     const expressions = document.createElement('code');
-    const gauge = relation.recommended_coordinate_gauge || null;
-    const sideLength = gauge?.side_length?.expression || '';
     expressions.textContent = (relation.points || []).map(point => {
-      const projectCoordinate = Array.isArray(point.project_coordinate)
-        ? point.project_coordinate.map(value => value?.expression || '—')
-        : null;
-      const coordinate = projectCoordinate
-        ? projectCoordinate.join(', ')
-        : (Array.isArray(point.coordinate_expression) ? point.coordinate_expression.join(', ') : '—');
-      return `${point.label || point.id}: (${coordinate})`;
+      return `${point.label || point.id}: ${pointGeometrySummary(point) || '精确长度关系已记录'}`;
     }).join(' · ');
-    if (sideLength) expressions.textContent = `整张纸的边长 L = ${sideLength} · ${expressions.textContent}`;
     const coordinateDetails = document.createElement('details');
     coordinateDetails.className = 'boundary-relation-coordinates';
     const coordinateSummary = document.createElement('summary');
-    coordinateSummary.textContent = '查看坐标（含 √2）';
+    coordinateSummary.textContent = '查看精确长度关系';
     coordinateDetails.append(coordinateSummary, expressions);
 
     const note = document.createElement('small');
@@ -1628,6 +1667,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
         playback_trace: root.playback_trace || [],
         raw_crease_evidence: root.shadow_search?.raw_crease_evidence || null,
         boundary_relation_candidates: root.shadow_search?.boundary_relation_candidates || [],
+        topology_point_start_candidates: root.shadow_search?.topology_point_start_candidates || [],
       },
       selection: {
         selection_steps: selectionSteps,
@@ -1674,7 +1714,10 @@ async function confirmGuidedTopologyPoint() {
   const report = currentResult.shadow_search?.guided_boundary;
   const selectedSteps = guidedSelectionSteps(report);
   const pointId = String(pendingTopologyPointId || '');
-  const candidate = (report?.next_topology_point_candidates || [])
+  const initialCandidates = selectedSteps.length === 0
+    ? (currentResult.shadow_search?.topology_point_start_candidates || [])
+    : [];
+  const candidate = [...initialCandidates, ...(report?.next_topology_point_candidates || [])]
     .find(item => String(item?.id || '') === pointId && item?.selectable);
   if (!candidate || !pointId) return;
   await requestGuidedBoundary([

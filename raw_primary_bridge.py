@@ -17,7 +17,10 @@ from typing import Any, Callable, Mapping
 import cv2
 import numpy as np
 
-from guided_construction import build_boundary_relation_catalog_from_points
+from guided_construction import (
+    build_boundary_relation_catalog_from_points,
+    build_topology_point_start_candidates,
+)
 from guided_cp_output import build_raw_topology_draft_cp
 from raw_crease_evidence import (
     classify_topology_segment_line_types,
@@ -183,6 +186,11 @@ def analyze_raw_primary_from_square(
         tolerance_px=max(5.0, maximum * 0.012),
         fit_algebraic_geometry=True,
     )
+    topology_point_start_candidates = build_topology_point_start_candidates(
+        raw_report,
+        candidates,
+        maximum=maximum,
+    )
 
     report(90, "正在绘制原图折痕…")
     overlay_uri, topology_uri = _render_raw_primary_previews(
@@ -197,7 +205,7 @@ def analyze_raw_primary_from_square(
         "红线和蓝线按原图颜色输出；无色、黑色或无法判断的折痕按红色输出。",
     ]
     if not candidates:
-        warnings.append("当前没有形成稳定的边界等分候选；请检查纸边是否完整、线稿是否清晰。")
+        warnings.append("当前没有形成稳定的纸边取点关系；请检查纸边是否完整、线稿是否清晰。")
 
     settings_mapping = asdict(effective_settings)
     stats = {
@@ -225,6 +233,7 @@ def analyze_raw_primary_from_square(
             line_type_evidence.get("unavailable_segment_count", 0) or 0
         ),
         "boundary_relation_candidate_count": len(candidates),
+        "topology_point_start_candidate_count": len(topology_point_start_candidates),
         "raw_analysis_duration_ms": duration_ms,
         "construction_search_executed": False,
         "strict_reconstruction_executed": False,
@@ -256,6 +265,7 @@ def analyze_raw_primary_from_square(
             "raw_crease_evidence": raw_report,
             "raw_crease_topology": topology,
             "boundary_relation_candidates": candidates,
+            "topology_point_start_candidates": topology_point_start_candidates,
             "boundary_relation_candidate_source": "raw_image_finite_topology",
         },
         "invariants": {

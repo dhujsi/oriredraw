@@ -314,8 +314,7 @@ def _build_playback_boundary_relation_catalog_legacy(result: Mapping[str, Any]) 
         relation_copy = dict(relation)
         relation_copy["id"] = _relation_id(relation)
         relation_copy["label"] = (
-            f"{_SIDE_LABELS.get(str(relation.get('side')), str(relation.get('side')))}边"
-            + ("完整三等分" if relation.get("kind") == "trisection" else "二等分")
+            f"沿{_SIDE_LABELS.get(str(relation.get('side')), str(relation.get('side')))}边的精确取点关系"
         )
         relation_copy["points"] = points
         relation_copy["evidence_source"] = "strict_playback_trace_boundary_contacts"
@@ -603,10 +602,7 @@ def build_boundary_relation_catalog_from_points(
 
         relation_copy = dict(relation)
         relation_copy["id"] = _relation_id(relation)
-        relation_copy["label"] = (
-            f"{_SIDE_LABELS.get(side, side)}边"
-            + ("完整三等分" if relation.get("kind") == "trisection" else "二等分")
-        )
+        relation_copy["label"] = f"沿{_SIDE_LABELS.get(side, side)}边的精确取点关系"
         relation_copy["points"] = points
         relation_copy["_edge_parameter_values"] = edge_parameter_values
         relation_copy["evidence_source"] = evidence_source
@@ -717,6 +713,13 @@ def build_boundary_relation_catalog_from_points(
                 point["project_coordinate"] = project_point.get("coordinate")
                 point["edge_distance"] = project_point.get("edge_distance")
                 point["edge_parameter"] = project_point.get("edge_parameter")
+                point["cross_segment_lengths"] = _cross_segment_lengths(
+                    project_point.get("coordinate") or [],
+                    qsqrt2_from_mapping(
+                        item["recommended_coordinate_gauge"]["side_length"]
+                    ),
+                    boundary_sides=[str(item.get("side") or "")],
+                )
     return catalog
 
 
@@ -1337,8 +1340,10 @@ def _selection_steps(
             continue
         seen.add(key)
         unique_steps.append(step)
-    if unique_steps and unique_steps[0]["kind"] != "boundary_relation":
-        invalid.append("first_step_must_be_boundary_relation")
+    if unique_steps and unique_steps[0]["kind"] == "topology_point":
+        # An observed diagonal point may be the sole initial scalar reference.
+        # Later topology-point steps still remain post-relation confirmations.
+        pass
     return unique_steps, invalid
 
 
@@ -1561,6 +1566,13 @@ def _line_constrained_topology_point_fit(
     fit_is_selectable = (
         candidate["complexity"] <= _MAX_LINE_CONSTRAINED_POINT_COMPLEXITY
     )
+    cross_segment_lengths = _cross_segment_lengths(
+        [
+            qsqrt2_to_mapping(coordinate[0]),
+            qsqrt2_to_mapping(coordinate[1]),
+        ],
+        side_length,
+    )
     return {
         "observed_point_px": [round(observed[0], 6), round(observed[1], 6)],
         "fitted_point_px": [
@@ -1575,6 +1587,7 @@ def _line_constrained_topology_point_fit(
             qsqrt2_expression(coordinate[0]),
             qsqrt2_expression(coordinate[1]),
         ],
+        "cross_segment_lengths": cross_segment_lengths,
         "fit_residual_px": round(float(candidate["residual_px"]), 6),
         "fit_tolerance_px": round(float(tolerance), 6),
         "algebraic_complexity": int(candidate["complexity"]),
@@ -1641,11 +1654,13 @@ def _fit_topology_point(
         and residual <= tolerance
         and complexity <= _MAX_FREE_POINT_COMPLEXITY
     )
+    cross_segment_lengths = _cross_segment_lengths(coordinates, side_length)
     return {
         "observed_point_px": [round(observed[0], 6), round(observed[1], 6)],
         "fitted_point_px": [x_fit["fitted_pixel"], y_fit["fitted_pixel"]],
         "project_coordinate": coordinates,
         "coordinate_expression": [x_fit["expression"], y_fit["expression"]],
+        "cross_segment_lengths": cross_segment_lengths,
         "fit_residual_px": round(float(residual), 6),
         "fit_tolerance_px": round(float(tolerance), 6),
         "algebraic_complexity": complexity,
@@ -1764,6 +1779,155 @@ def _rank_next_topology_point_candidates(
     for priority, candidate in enumerate(candidates[:64], start=1):
         candidate["next_priority"] = priority
     return candidates[:64]
+
+
+def _cross_segment_lengths(
+    project_coordinate: Iterable[Mapping[str, Any]],
+    side_length: Qsqrt2,
+    *,
+    boundary_sides: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Serialize exact distances from a point to the four paper edges."""
+
+    values = list(project_coordinate)
+    if len(values) != 2:
+        return {}
+    try:
+        x, y = (qsqrt2_from_mapping(value) for value in values)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return {}
+    boundary = {str(side) for side in boundary_sides}
+    if boundary & {"top", "bottom"}:
+        visible_sides = ["left", "right"]
+    elif boundary & {"left", "right"}:
+        visible_sides = ["top", "bottom"]
+    else:
+        visible_sides = ["left", "right", "top", "bottom"]
+    distances = {
+        "left": x,
+        "right": side_length - x,
+        "top": y,
+        "bottom": side_length - y,
+    }
+    return {
+        "paper_side_length": qsqrt2_to_mapping(side_length),
+        "visible_sides": visible_sides,
+        "distances": {
+            side: qsqrt2_to_mapping(distances[side])
+            for side in visible_sides
+        },
+    }
+
+
+def build_topology_point_start_candidates(
+    raw_report: Mapping[str, Any],
+    boundary_relations: Iterable[Mapping[str, Any]],
+    *,
+    maximum: float,
+    maximum_candidates: int = 24,
+) -> list[dict[str, Any]]:
+    """Expose useful observed diagonal points as first-step candidates."""
+
+    if maximum <= 0:
+        return []
+    gauges: list[Mapping[str, Any]] = []
+    seen_gauges: set[tuple[int, int, int]] = set()
+    for relation in boundary_relations:
+        gauge = relation.get("recommended_coordinate_gauge")
+        if not isinstance(gauge, Mapping):
+            continue
+        raw_side = gauge.get("side_length")
+        if not isinstance(raw_side, Mapping):
+            continue
+        try:
+            key = qsqrt2_canonical_coefficients(qsqrt2_from_mapping(raw_side))
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if key in seen_gauges:
+            continue
+        seen_gauges.add(key)
+        gauges.append(gauge)
+    if not gauges:
+        return []
+    gauges.sort(
+        key=lambda gauge: (
+            _finite_rank_number(gauge.get("score"), math.inf),
+            qsqrt2_complexity(qsqrt2_from_mapping(gauge["side_length"])),
+        )
+    )
+    try:
+        side_length = qsqrt2_from_mapping(gauges[0]["side_length"])
+    except (TypeError, ValueError, ZeroDivisionError):
+        return []
+
+    graph, _, _ = build_raw_crease_topology_graph(raw_report)
+    creases = [
+        entity for entity in graph.geometry_entities.values() if entity.kind == "crease"
+    ]
+    if not creases:
+        return []
+    propagation = {
+        "unresolved_crease_count": len(creases),
+        "unresolved_crease_entity_ids": [str(entity.id) for entity in creases],
+    }
+    ranked = _rank_next_topology_point_candidates(
+        graph,
+        propagation,
+        side_length,
+        maximum=maximum,
+    )
+    by_id = {
+        str(entity.id): entity
+        for entity in graph.geometry_entities.values()
+        if entity.kind == "point"
+    }
+    candidates: list[dict[str, Any]] = []
+    for candidate in ranked:
+        entity = by_id.get(str(candidate.get("id")))
+        if entity is None or not candidate.get("selectable"):
+            continue
+        directions: list[int] = []
+        for incident in graph.incident_entities(entity.id):
+            if incident.kind != "crease":
+                continue
+            try:
+                directions.append(int(incident.observed_geometry.get("direction_index")))
+            except (TypeError, ValueError):
+                continue
+        diagonal_directions = sorted({direction for direction in directions if direction % 2})
+        if not diagonal_directions:
+            continue
+        item = dict(candidate)
+        item.update(
+            {
+                "kind": "topology_point_start",
+                "label": (
+                    "对角线上的原图交点"
+                    if candidate.get("point_kind") == "line_intersection"
+                    else "对角线上的原图线端点"
+                ),
+                "candidate_group": "observed_diagonal_point",
+                "diagonal_direction_indices": diagonal_directions,
+                "recommended_coordinate_gauge": dict(gauges[0]),
+                "cross_segment_lengths": _cross_segment_lengths(
+                    item.get("project_coordinate") or [],
+                    side_length,
+                ),
+            }
+        )
+        candidates.append(item)
+    candidates.sort(
+        key=lambda item: (
+            -int(item.get("projected_new_crease_count", 0) or 0),
+            float(item.get("fit_residual_px", math.inf)),
+            int(item.get("algebraic_complexity", 10**9)),
+            str(item.get("id") or ""),
+        )
+    )
+    limited = candidates[: max(1, int(maximum_candidates))]
+    for priority, item in enumerate(limited, start=1):
+        item["next_priority"] = priority
+    return limited
 
 
 def _parent_ray_endpoint_evidence(
@@ -1945,6 +2109,7 @@ def _apply_single_core_reference(
         "observed_point_px": list(candidate["observed_point_px"]),
         "fitted_point_px": list(candidate["fitted_point_px"]),
         "coordinate_expression": list(candidate["coordinate_expression"]),
+        "cross_segment_lengths": dict(candidate.get("cross_segment_lengths") or {}),
         "fit_residual_px": candidate["fit_residual_px"],
         "independent_parameter_count": 1,
         **endpoint_evidence,
@@ -2354,9 +2519,23 @@ def build_guided_boundary_report(
     selection_steps, invalid_selection_steps = _selection_steps(selection)
     catalog = build_boundary_relation_catalog(result)
     selected_relations, missing_relation_ids = _selected_relations(catalog, selection)
+    start_point_catalog = [
+        dict(item)
+        for item in list(result.get("topology_point_start_candidates") or [])
+        if isinstance(item, Mapping)
+    ]
+    start_point_index = {
+        str(item.get("id") or ""): item for item in start_point_catalog
+    }
+    first_step = selection_steps[0] if selection_steps else None
+    selected_start_point = (
+        start_point_index.get(str(first_step.get("id") or ""))
+        if isinstance(first_step, Mapping) and first_step.get("kind") == "topology_point"
+        else None
+    )
     if (
         invalid_selection_steps
-        or not selected_relations
+        or (not selected_relations and selected_start_point is None)
         or missing_relation_ids
     ):
         return {
@@ -2366,10 +2545,18 @@ def build_guided_boundary_report(
             "invalid_selection_steps": invalid_selection_steps,
             "invalid_relation_ids": missing_relation_ids,
             "available_relation_ids": [item["id"] for item in catalog],
+            "available_topology_point_ids": [item["id"] for item in start_point_catalog],
         }
     selected_relation_ids = [str(item["id"]) for item in selected_relations]
     raster_fit_point_steps = [
-        step for step in selection_steps if step["kind"] == "topology_point"
+        step
+        for step in selection_steps
+        if step["kind"] == "topology_point"
+        and not (
+            selected_start_point is not None
+            and step is selection_steps[0]
+            and str(step["id"]) == str(selected_start_point.get("id"))
+        )
     ]
     if raster_fit_point_steps:
         return {
@@ -2384,7 +2571,8 @@ def build_guided_boundary_report(
                 "raster_coordinate_fit_can_seed_construction": False,
             },
         }
-    global_side_length_key = _relation_side_length_key(selected_relations[0])
+    first_scale_source = selected_relations[0] if selected_relations else selected_start_point
+    global_side_length_key = _relation_side_length_key(first_scale_source)
     incompatible_relation_ids = [
         str(item["id"])
         for item in selected_relations[1:]
@@ -2399,7 +2587,7 @@ def build_guided_boundary_report(
             "incompatible_relation_ids": incompatible_relation_ids,
         }
 
-    first_gauge = selected_relations[0].get("recommended_coordinate_gauge")
+    first_gauge = first_scale_source.get("recommended_coordinate_gauge")
     global_side_length = (
         dict(first_gauge.get("side_length"))
         if isinstance(first_gauge, Mapping)
@@ -2491,6 +2679,40 @@ def build_guided_boundary_report(
             continue
 
         assert exact_side_length is not None
+        if (
+            selection_round == 1
+            and selected_start_point is not None
+            and str(step["id"]) == str(selected_start_point.get("id"))
+        ):
+            point_operation = _add_guided_topology_point_operation(
+                graph,
+                details,
+                selected_start_point,
+                exact_side_length,
+                selection_round=selection_round,
+            )
+            selected_point_operations.append(point_operation)
+            selected_point_history.append(
+                {
+                    "selection_round": selection_round,
+                    "id": str(selected_start_point["id"]),
+                    "label": str(selected_start_point.get("label") or "原图对角线点"),
+                    "kind": "topology_point",
+                    "point_kind": selected_start_point.get("point_kind"),
+                    "candidate_group": selected_start_point.get("candidate_group"),
+                    "observed_point_px": list(selected_start_point["observed_point_px"]),
+                    "fitted_point_px": list(selected_start_point["fitted_point_px"]),
+                    "coordinate_expression": list(selected_start_point["coordinate_expression"]),
+                    "cross_segment_lengths": dict(
+                        selected_start_point.get("cross_segment_lengths") or {}
+                    ),
+                    "fit_residual_px": selected_start_point["fit_residual_px"],
+                    "direct_seed_crease_count": int(
+                        selected_start_point.get("projected_new_crease_count", 0)
+                    ),
+                }
+            )
+            continue
         prefix_propagation = propagate_exact_geometry(graph, maximum=maximum)
         propagation_reports.append(prefix_propagation)
         prefix_unexplained = int(
@@ -2567,6 +2789,9 @@ def build_guided_boundary_report(
                 "observed_point_px": list(selected_point["observed_point_px"]),
                 "fitted_point_px": list(selected_point["fitted_point_px"]),
                 "coordinate_expression": list(selected_point["coordinate_expression"]),
+                "cross_segment_lengths": dict(
+                    selected_point.get("cross_segment_lengths") or {}
+                ),
                 "fit_residual_px": selected_point["fit_residual_px"],
                 "direct_seed_crease_count": int(
                     selected_point.get("projected_new_crease_count", 0)
@@ -2650,7 +2875,11 @@ def build_guided_boundary_report(
     ]
     unexplained = int(geometry_propagation.get("unresolved_crease_count", 0) or 0)
     guided_candidates = sum(guided_candidate_counts)
-    if not guided_candidates:
+    guided_seed_count = guided_candidates + sum(
+        int(item.get("direct_seed_crease_count", 0) or 0)
+        for item in selected_point_history
+    )
+    if not guided_seed_count:
         status = "no_matching_observed_creases"
     elif not geometry_propagation.get("enabled"):
         status = "exact_propagation_unavailable"
@@ -2766,7 +2995,8 @@ def build_guided_boundary_report(
         "phase": phase,
         "observed_graph_source": observed_graph_source,
         "raw_topology": topology_report,
-        "selected_relation": selected_relations[-1],
+        "selected_relation": selected_relations[-1] if selected_relations else None,
+        "selected_start_point": selected_start_point,
         "selected_relations": selected_relations,
         "selected_relation_ids": selected_relation_ids,
         "selected_relation_history": selected_relation_history,
@@ -2987,6 +3217,7 @@ def build_guided_boundary_report_json(result_json: str, selection_json: str) -> 
 __all__ = [
     "build_boundary_relation_catalog",
     "build_boundary_relation_catalog_from_points",
+    "build_topology_point_start_candidates",
     "build_guided_boundary_report",
     "build_guided_boundary_report_json",
 ]

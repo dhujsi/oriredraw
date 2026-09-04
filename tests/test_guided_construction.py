@@ -8,6 +8,7 @@ from construction_search import ConstructionGraph, GeometryEntity
 from exact_qsqrt2 import Qsqrt2
 from guided_construction import (
     _apply_single_core_reference,
+    _cross_segment_lengths,
     _next_relation_rank_key,
     build_boundary_relation_catalog,
     build_guided_boundary_report,
@@ -45,6 +46,27 @@ class GuidedConstructionTest(unittest.TestCase):
                 _anchor(3, (90.0, 0.0), 90.0, "唯一纸边 a+b√2 种子"),
             ],
         }
+
+    def test_cross_segment_lengths_use_exact_qsqrt2_values_and_hide_paper_normal_on_edge(self):
+        side_length = Qsqrt2(3, 2)
+        point = [
+            qsqrt2_to_mapping(Qsqrt2(1, 1)),
+            qsqrt2_to_mapping(Qsqrt2(0, 1)),
+        ]
+
+        interior = _cross_segment_lengths(point, side_length)
+        self.assertEqual(interior["visible_sides"], ["left", "right", "top", "bottom"])
+        self.assertEqual(
+            [interior["distances"][side]["coefficients"] for side in interior["visible_sides"]],
+            [[1, 1, 1], [2, 1, 1], [0, 1, 1], [3, 1, 1]],
+        )
+
+        top_edge = _cross_segment_lengths(point, side_length, boundary_sides=["top"])
+        self.assertEqual(top_edge["visible_sides"], ["left", "right"])
+        self.assertEqual(
+            [top_edge["distances"][side]["coefficients"] for side in top_edge["visible_sides"]],
+            [[1, 1, 1], [2, 1, 1]],
+        )
 
     def test_catalog_lists_complete_boundary_relation_with_ranked_radical_points(self):
         catalog = build_boundary_relation_catalog(self.result)

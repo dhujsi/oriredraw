@@ -156,11 +156,12 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "boundary_relation_point" in app
     assert "observed_point_px" in app
     assert "guidedPointCoordinateExpressions" in app
-    assert "renderTopologyPointOverlay(guided, candidates, root)" in app
+    assert "renderTopologyPointOverlay" in app
     assert "showBoundaryPointPopover" in app
     assert "fitTopologyPointPopup" in app
-    assert "boundary_range_px" in app
-    assert "范围约" in app
+    assert "crossSegmentSummary" in app
+    assert "topology_point_start" in app
+    assert "到纸边" in app
     assert "这个点怎么开始？" in app
     assert "下面每个按钮是一种开始方式，选一个就行。" in app
     assert "已选起点" in app
