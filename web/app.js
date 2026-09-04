@@ -53,6 +53,7 @@ const boundaryRelationHistory = document.querySelector('#boundary-relation-histo
 const boundaryRelationHistoryList = document.querySelector('#boundary-relation-history-list');
 const boundaryRelationUndo = document.querySelector('#boundary-relation-undo');
 const topologyPointLayer = document.querySelector('#topology-point-layer');
+const topologyPointGuide = document.querySelector('#topology-point-guide');
 const topologyPointTooltip = document.querySelector('#topology-point-tooltip');
 const topologyPointPopover = document.querySelector('#topology-point-popover');
 const topologyPointConfirmation = document.querySelector('#topology-point-confirmation');
@@ -1133,6 +1134,7 @@ function renderBoundaryRelationHistory(report) {
 
 function clearTopologyPointConfirmation() {
   pendingTopologyPointId = '';
+  hideTopologyPointGuide();
   topologyPointConfirmation?.classList.add('hidden');
   topologyPointConfirmation?.classList.remove('leftward', 'below');
   resetTopologyPointPopupPosition(topologyPointConfirmation);
@@ -1209,6 +1211,112 @@ function crossSegmentSummary(point) {
     })
     .filter(Boolean)
     .join(' · ');
+}
+
+function topologyPointGuideSources(candidate) {
+  if (candidate?.kind === 'boundary_relation_point') {
+    const firstAssignment = Array.isArray(candidate.boundary_assignments)
+      ? candidate.boundary_assignments[0]
+      : null;
+    return firstAssignment ? [firstAssignment] : [];
+  }
+  return [candidate];
+}
+
+function topologyPointGuideDistances(candidate) {
+  const distances = new Map();
+  const allowedSides = new Set(['left', 'right', 'top', 'bottom']);
+  for (const source of topologyPointGuideSources(candidate)) {
+    const cross = source?.cross_segment_lengths;
+    const visible = Array.isArray(cross?.visible_sides) ? cross.visible_sides : [];
+    for (const side of visible) {
+      if (!allowedSides.has(side) || distances.has(side)) continue;
+      const expression = String(cross?.distances?.[side]?.expression || '').trim();
+      if (expression) distances.set(side, expression);
+    }
+  }
+  return distances;
+}
+
+function topologyPointGuideSegments(candidate, maximum) {
+  const point = Array.isArray(candidate?.observed_point_px)
+    ? candidate.observed_point_px
+    : [];
+  const rawX = Number(point[0]);
+  const rawY = Number(point[1]);
+  if (!Number.isFinite(rawX) || !Number.isFinite(rawY) || !Number.isFinite(maximum) || maximum <= 0) {
+    return [];
+  }
+  const x = Math.max(0, Math.min(maximum, rawX));
+  const y = Math.max(0, Math.min(maximum, rawY));
+  const endpoints = {
+    left: [0, y],
+    right: [maximum, y],
+    top: [x, 0],
+    bottom: [x, maximum],
+  };
+  return [...topologyPointGuideDistances(candidate)].map(([side, expression]) => {
+    const [x2, y2] = endpoints[side];
+    return { side, expression, x1: x, y1: y, x2, y2 };
+  });
+}
+
+function topologyPointGuideLabelPosition(segment, maximum, fontSize) {
+  const offset = Math.max(5, fontSize * 0.8);
+  const minimum = Math.max(3, fontSize * 0.9);
+  const maximumLabel = maximum - minimum;
+  if (segment.x1 === segment.x2) {
+    let x = segment.x1 > maximum * 0.72 ? segment.x1 - offset : segment.x1 + offset;
+    let y = (segment.y1 + segment.y2) / 2;
+    x = Math.max(minimum, Math.min(maximumLabel, x));
+    y = Math.max(minimum, Math.min(maximumLabel, y));
+    return { x, y };
+  }
+  let x = (segment.x1 + segment.x2) / 2;
+  let y = segment.y1 < maximum * 0.16 ? segment.y1 + offset : segment.y1 - offset;
+  if (segment.side === 'left' && x < minimum * 2) x = minimum * 2;
+  if (segment.side === 'right' && x > maximum - minimum * 2) x = maximum - minimum * 2;
+  x = Math.max(minimum, Math.min(maximumLabel, x));
+  y = Math.max(minimum, Math.min(maximumLabel, y));
+  return { x, y };
+}
+
+function hideTopologyPointGuide() {
+  topologyPointGuide?.replaceChildren();
+  topologyPointGuide?.classList.add('hidden');
+}
+
+function showTopologyPointGuide(candidate, report, root = null) {
+  if (!topologyPointGuide) return;
+  const maximum = guidedPointMaximum(report, root);
+  const segments = topologyPointGuideSegments(candidate, maximum);
+  topologyPointGuide.replaceChildren();
+  if (!segments.length) {
+    topologyPointGuide.classList.add('hidden');
+    return;
+  }
+  const fontSize = Math.max(8, Math.min(13, maximum * 0.024));
+  topologyPointGuide.setAttribute('viewBox', `0 0 ${maximum} ${maximum}`);
+  for (const segment of segments) {
+    const line = document.createElementNS(SVG_NAMESPACE, 'line');
+    line.classList.add('topology-point-guide-line');
+    line.setAttribute('x1', String(segment.x1));
+    line.setAttribute('y1', String(segment.y1));
+    line.setAttribute('x2', String(segment.x2));
+    line.setAttribute('y2', String(segment.y2));
+
+    const label = document.createElementNS(SVG_NAMESPACE, 'text');
+    const position = topologyPointGuideLabelPosition(segment, maximum, fontSize);
+    label.classList.add('topology-point-guide-label');
+    label.setAttribute('x', String(position.x));
+    label.setAttribute('y', String(position.y));
+    label.setAttribute('font-size', String(fontSize));
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('dominant-baseline', 'middle');
+    label.textContent = `${CROSS_SIDE_LABELS[segment.side] || segment.side}：${segment.expression}`;
+    topologyPointGuide.append(line, label);
+  }
+  topologyPointGuide.classList.remove('hidden');
 }
 
 function pointGeometrySummary(point) {
@@ -1314,6 +1422,7 @@ function anchorTopologyPointPopup(popup, candidate) {
 
 function showTopologyPointTooltip(candidate, report, root = null) {
   if (!topologyPointTooltip) return;
+  showTopologyPointGuide(candidate, report, root);
   resetTopologyPointPopupPosition(topologyPointTooltip);
   const point = Array.isArray(candidate.observed_point_px) ? candidate.observed_point_px : [0, 0];
   const maximum = guidedPointMaximum(report, root);
@@ -1351,6 +1460,7 @@ function showTopologyPointTooltip(candidate, report, root = null) {
 }
 
 function hideTopologyPointTooltip() {
+  hideTopologyPointGuide();
   topologyPointTooltip?.classList.add('hidden');
   resetTopologyPointPopupPosition(topologyPointTooltip);
 }
@@ -1457,6 +1567,7 @@ function stageTopologyPointConfirmation(candidate, report, root) {
   topologyPointConfirmation.classList.remove('hidden');
   fitTopologyPointPopup(topologyPointConfirmation);
   topologyPointConfirm?.focus({ preventScroll: true });
+  showTopologyPointGuide(candidate, report, root);
 }
 
 function bindGuidedPointTooltip(marker, candidate, report, root) {
@@ -1473,7 +1584,7 @@ function renderTopologyPointOverlay(
   initialTopologyPoints = [],
 ) {
   if (!topologyPointLayer || !topologyPointTooltip) return;
-  topologyPointLayer.replaceChildren();
+  topologyPointLayer.replaceChildren(...(topologyPointGuide ? [topologyPointGuide] : []));
   hideTopologyPointTooltip();
   clearBoundaryPointPopover();
   clearTopologyPointConfirmation();
@@ -1521,6 +1632,7 @@ function renderTopologyPointOverlay(
       marker.setAttribute('aria-disabled', candidate.selectable ? 'false' : 'true');
       marker.setAttribute('aria-label', `${candidate.label || '黄色补充点'}，点击查看是否要继续`);
     }
+    bindGuidedPointTooltip(marker, candidate, report, root);
     if (isBoundaryPoint) {
       marker.addEventListener('click', event => {
         event.preventDefault();
@@ -1528,7 +1640,6 @@ function renderTopologyPointOverlay(
         showBoundaryPointPopover(candidate, report, root);
       });
     } else {
-      bindGuidedPointTooltip(marker, candidate, report, root);
       marker.addEventListener('click', () => stageTopologyPointConfirmation(candidate, report, root));
     }
     topologyPointLayer.append(marker);

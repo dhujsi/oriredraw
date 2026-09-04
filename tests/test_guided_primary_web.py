@@ -184,11 +184,14 @@ def test_unresolved_topology_points_are_hoverable_but_need_explicit_confirmation
     assert "黄色点" in app
     assert "focus({ preventScroll: true })" in app
     assert 'id="topology-point-layer"' in html
+    assert 'id="topology-point-guide"' in html
     assert 'id="topology-point-tooltip"' in html
     assert 'id="topology-point-confirmation"' in html
     assert 'id="topology-point-confirm"' in html
     assert html.index('id="topology-point-confirmation"') < html.index('id="boundary-relations"')
     assert ".topology-point-marker" in style
+    assert ".topology-point-guide-line" in style
+    assert ".topology-point-guide-label" in style
 
 
 def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
@@ -203,6 +206,11 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "showBoundaryPointPopover" in app
     assert "fitTopologyPointPopup" in app
     assert "crossSegmentSummary" in app
+    assert "topologyPointGuideDistances" in app
+    assert "topologyPointGuideSegments" in app
+    assert "showTopologyPointGuide" in app
+    assert "hideTopologyPointGuide" in app
+    assert "visible_sides" in app
     assert "topology_point_start" in app
     assert "到纸边" in app
     assert "这个点怎么开始？" in app

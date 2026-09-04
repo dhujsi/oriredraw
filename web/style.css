@@ -221,6 +221,10 @@ body.corner-editor-open { overflow: hidden; }
 .preview-stage.guidance-hidden .topology-point-tooltip,
 .preview-stage.guidance-hidden .topology-point-popover,
 .preview-stage.guidance-hidden .topology-point-confirmation { display: none !important; }
+.topology-point-guide { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.topology-point-guide.hidden { display: none; }
+.topology-point-guide-line { fill: none; stroke: #6f8429; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; opacity: .95; }
+.topology-point-guide-label { fill: var(--ink); paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; font-family: ui-monospace, Consolas, monospace; font-weight: 700; pointer-events: none; }
 .topology-point-marker { position: absolute; width: 17px; height: 17px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 2px var(--ink); transform: translate(-50%, -50%); cursor: crosshair; pointer-events: auto; }
 .topology-point-marker.boundary-relation-point { width: 15px; height: 15px; background: #fff; border-color: var(--green); border-style: solid; cursor: pointer; }
 .topology-point-marker.topology-point-start { background: var(--acid); border-color: var(--green); cursor: pointer; }
