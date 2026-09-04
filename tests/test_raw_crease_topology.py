@@ -4,7 +4,11 @@ import unittest
 from exact_graph_propagation import propagate_exact_geometry
 from guided_construction import build_guided_boundary_report
 from qsqrt2_coordinates import qsqrt2_from_coefficients, qsqrt2_to_mapping
-from raw_crease_topology import apply_segment_line_type_evidence, build_raw_crease_topology_graph
+from raw_crease_topology import (
+    _parse_lines,
+    apply_segment_line_type_evidence,
+    build_raw_crease_topology_graph,
+)
 
 
 def _line(raw_id, orientation, offset, intervals):
@@ -76,6 +80,64 @@ def _point_near(graph, expected, tolerance=0.5):
 
 
 class RawCreaseTopologyTest(unittest.TestCase):
+    def test_verified_collinear_gap_creates_only_the_segment_between_intersections(self):
+        raw = _report(
+            [
+                _line("horizontal", 0, 50.0, [[10.0, 46.0], [54.0, 90.0]]),
+                _line("left-crossing", 4, -47.0, [[10.0, 90.0]]),
+                _line("right-crossing", 4, -53.0, [[10.0, 90.0]]),
+            ]
+        )
+        raw["collinear_gap_evidence"] = [
+            {
+                "id": "gap",
+                "source": "source_image_continuous_collinear_gap_evidence",
+                "line_id": "horizontal",
+                "start_t_px": 46.0,
+                "end_t_px": 54.0,
+                "bridge_coverage": 1.0,
+                "bridge_mean_confidence": 0.9,
+            }
+        ]
+
+        _, _, topology = build_raw_crease_topology_graph(raw)
+
+        recovered = [
+            item
+            for item in topology["segments"]
+            if item.get("source_verified_collinear_gap_ids") == ["gap"]
+        ]
+        self.assertEqual(len(recovered), 1)
+        self.assertAlmostEqual(recovered[0]["length_px"], 6.0, places=5)
+        self.assertTrue(
+            topology["invariants"][
+                "collinear_gap_segments_require_continuous_source_ink"
+            ]
+        )
+
+    def test_source_verified_collinear_gap_extends_only_its_observed_line_interval(self):
+        raw = _report([_line("horizontal", 0, 50.0, [[10.0, 40.0], [60.0, 90.0]])])
+        raw["collinear_gap_evidence"] = [
+            {
+                "id": "gap",
+                "source": "source_image_continuous_collinear_gap_evidence",
+                "line_id": "horizontal",
+                "start_t_px": 40.0,
+                "end_t_px": 60.0,
+                "bridge_coverage": 1.0,
+                "bridge_mean_confidence": 0.9,
+            }
+        ]
+
+        lines, size = _parse_lines(raw)
+
+        self.assertEqual(size, 101)
+        self.assertEqual(lines[0]["intervals"], [[10.0, 40.0], [60.0, 90.0]])
+        self.assertEqual(
+            [item["id"] for item in lines[0]["source_verified_collinear_gaps"]],
+            ["gap"],
+        )
+
     def test_trusted_source_color_evidence_follows_segment_id_into_topology(self):
         raw = _report([_line("horizontal", 0, 50.0, [[10.0, 90.0]])])
         raw["segment_line_type_evidence"] = {

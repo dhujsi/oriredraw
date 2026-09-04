@@ -836,6 +836,80 @@ def _source_verified_endpoint_connections(
     return records
 
 
+def _source_verified_collinear_gaps(
+    entities: list[dict[str, Any]],
+    confidence: np.ndarray,
+    evidence_distance_px: float,
+) -> list[dict[str, Any]]:
+    """Recover short missed spans only when source ink fills the whole gap.
+
+    The Hough stage can split one geometric crease where a very short colour
+    change sits between two intersections.  This records the bounded missing
+    interval on that same observed line; it does not extend either endpoint or
+    create a new supporting line.
+    """
+
+    maximum = float(min(confidence.shape[:2]) - 1)
+    maximum_gap = min(
+        maximum * 0.05,
+        float(np.clip(evidence_distance_px * 10.0, 12.0, 24.0)),
+    )
+    records: list[dict[str, Any]] = []
+    for line in entities:
+        intervals = [
+            [float(item[0]), float(item[1])]
+            for item in line.get("evidence_intervals_px", [])
+            if isinstance(item, (list, tuple)) and len(item) >= 2
+        ]
+        intervals.sort(key=lambda item: item[0])
+        for first, second in zip(intervals, intervals[1:]):
+            start_t = float(first[1])
+            end_t = float(second[0])
+            gap = end_t - start_t
+            if gap < 0.75 or gap > maximum_gap + 1e-9:
+                continue
+            bridge = _bridge_confidence(
+                confidence,
+                line,
+                start_t,
+                end_t,
+                band_radius=evidence_distance_px,
+            )
+            if (
+                bridge["coverage"] < 0.80
+                or bridge["mean_confidence"] < 0.16
+                or bridge["minimum_confidence"] < 0.04
+            ):
+                continue
+            direction = np.asarray(line["direction"], dtype=float)
+            normal = np.asarray(line["normal"], dtype=float)
+            offset = float(line["observed_offset_px"])
+            start = normal * offset + direction * start_t
+            end = normal * offset + direction * end_t
+            records.append(
+                {
+                    "id": f"source-collinear-gap:{len(records) + 1}",
+                    "source": "source_image_continuous_collinear_gap_evidence",
+                    "line_id": str(line["id"]),
+                    "start_t_px": round(start_t, 6),
+                    "end_t_px": round(end_t, 6),
+                    "start_px": [round(float(value), 6) for value in start],
+                    "end_px": [round(float(value), 6) for value in end],
+                    "gap_px": round(gap, 6),
+                    "bridge_coverage": round(float(bridge["coverage"]), 6),
+                    "bridge_mean_confidence": round(
+                        float(bridge["mean_confidence"]), 6
+                    ),
+                    "bridge_minimum_confidence": round(
+                        float(bridge["minimum_confidence"]), 6
+                    ),
+                    "bridge_sample_count": int(bridge["sample_count"]),
+                    "maximum_gap_px": round(maximum_gap, 6),
+                }
+            )
+    return records
+
+
 def classify_topology_segment_line_types(
     square: np.ndarray,
     topology: Mapping[str, Any],
@@ -1017,6 +1091,11 @@ def detect_raw_crease_entities_from_square(
         confidence,
         effective_settings.evidence_distance_px,
     )
+    collinear_gaps = _source_verified_collinear_gaps(
+        entities,
+        confidence,
+        effective_settings.evidence_distance_px,
+    )
     orientation_counts = {
         str(orientation): sum(
             int(entity["orientation"]) == orientation for entity in entities
@@ -1047,6 +1126,8 @@ def detect_raw_crease_entities_from_square(
         "lines": entities,
         "endpoint_connection_evidence": endpoint_connections,
         "endpoint_connection_count": len(endpoint_connections),
+        "collinear_gap_evidence": collinear_gaps,
+        "collinear_gap_count": len(collinear_gaps),
         "noncanonical_angle_observations": noncanonical_observations,
         "detector_stats": detector_stats,
         "pixel_agreement": _pixel_agreement(
@@ -1066,6 +1147,8 @@ def detect_raw_crease_entities_from_square(
             "endpoint_connection_requires_one_supported_line": True,
             "endpoint_connection_requires_continuous_source_ink": True,
             "two_extended_lines_may_not_create_a_junction": True,
+            "collinear_gap_requires_continuous_source_ink": True,
+            "collinear_gap_creates_no_supporting_line": True,
         },
         "extraction_duration_ms": round(
             (time.perf_counter() - started) * 1000.0, 3

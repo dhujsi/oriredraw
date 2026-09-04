@@ -78,7 +78,10 @@ def _endpoint_is_proved(
     if (
         detail.get("target_kind") == "known_paper_boundary_intersection"
         and detail.get("source")
-        == "selected_exact_crease_known_paper_boundary_intersection"
+        in {
+            "selected_exact_crease_known_paper_boundary_intersection",
+            "selected_exact_crease_source_verified_near_paper_boundary",
+        }
     ):
         return True
     if (

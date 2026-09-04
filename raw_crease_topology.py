@@ -1,6 +1,7 @@
 """Planar topology from finite raw-image crease evidence.
 
-Only observed line identities and their finite visible intervals are inputs.
+Only observed line identities, finite visible intervals, and short collinear
+gaps verified by continuous source ink are inputs.
 Two infinite supporting lines are never connected merely because their
 mathematical extensions cross: both lines must carry interval evidence at the
 candidate point.  The result is the same ``ConstructionGraph`` used by exact
@@ -93,6 +94,32 @@ def _parse_lines(report: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
     raw_lines = [
         item for item in list(report.get("lines") or []) if isinstance(item, Mapping)
     ]
+    verified_gaps_by_line: dict[str, list[dict[str, Any]]] = {}
+    for item in list(report.get("collinear_gap_evidence") or []):
+        if (
+            not isinstance(item, Mapping)
+            or item.get("source")
+            != "source_image_continuous_collinear_gap_evidence"
+        ):
+            continue
+        line_id = str(item.get("line_id") or "")
+        try:
+            first, second = sorted(
+                (float(item.get("start_t_px")), float(item.get("end_t_px")))
+            )
+            coverage = float(item.get("bridge_coverage", 0.0) or 0.0)
+            mean_confidence = float(item.get("bridge_mean_confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            line_id
+            and math.isfinite(first)
+            and math.isfinite(second)
+            and second - first >= 0.5
+            and coverage >= 0.80
+            and mean_confidence >= 0.16
+        ):
+            verified_gaps_by_line.setdefault(line_id, []).append(dict(item))
     ordered = sorted(raw_lines, key=_raw_line_sort_key)
     for target_id, raw in enumerate(ordered):
         try:
@@ -102,6 +129,7 @@ def _parse_lines(report: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
             continue
         if not 0 <= orientation < 8 or not math.isfinite(offset):
             continue
+        raw_id = str(raw.get("id") or f"raw-crease:{target_id}")
         direction, normal = _line_basis(orientation)
         intervals: list[list[float]] = []
         for item in list(raw.get("evidence_intervals_px") or []):
@@ -126,6 +154,7 @@ def _parse_lines(report: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
                 except (TypeError, ValueError):
                     continue
                 intervals.append([min(first, second), max(first, second)])
+        verified_gaps = verified_gaps_by_line.get(raw_id, [])
         hits = _boundary_hits(offset, orientation, size)
         if len(hits) < 2:
             continue
@@ -140,7 +169,6 @@ def _parse_lines(report: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
         )
         if not intervals:
             continue
-        raw_id = str(raw.get("id") or f"raw-crease:{target_id}")
         parsed.append(
             {
                 "target_id": target_id,
@@ -155,6 +183,7 @@ def _parse_lines(report: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
                 "support_fraction": float(raw.get("support_fraction", 0.0) or 0.0),
                 "mean_confidence": float(raw.get("mean_confidence", 0.0) or 0.0),
                 "source": dict(raw),
+                "source_verified_collinear_gaps": verified_gaps,
             }
         )
     return parsed, size
@@ -669,6 +698,10 @@ def _segments_for_graph(
     line_residual_tolerance: float,
     line_type_evidence: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
+    point_record_by_id = {
+        str(point_id): record
+        for point_id, record in zip(point_ids, point_records)
+    }
     by_line: dict[int, list[tuple[float, Hashable]]] = {
         int(line["target_id"]): [] for line in lines
     }
@@ -688,16 +721,39 @@ def _segments_for_graph(
                 continue
             ordered.append((value, point_id))
         line_segment_ids: list[str] = []
+        support_intervals = _merge_intervals(
+            [
+                *line["intervals"],
+                *[
+                    [float(item["start_t_px"]), float(item["end_t_px"])]
+                    for item in line.get("source_verified_collinear_gaps", [])
+                ],
+            ]
+        )
         for segment_index, ((first_t, first_id), (second_t, second_id)) in enumerate(
             zip(ordered, ordered[1:])
         ):
             length = second_t - first_t
             if length < 0.75:
                 continue
-            overlap = _interval_overlap(line["intervals"], first_t, second_t)
+            base_overlap = _interval_overlap(
+                line["intervals"], first_t, second_t
+            )
+            overlap = _interval_overlap(support_intervals, first_t, second_t)
             coverage = min(1.0, overlap / length)
             unsupported = max(0.0, length - overlap)
             if coverage < 0.80 or unsupported > line_residual_tolerance:
+                continue
+            base_coverage = min(1.0, base_overlap / length)
+            uses_verified_gap = (
+                base_coverage < 0.80
+                or length - base_overlap > line_residual_tolerance
+            )
+            if uses_verified_gap and any(
+                point_record_by_id.get(str(point_id), {}).get("point_kind")
+                != "line_intersection"
+                for point_id in (first_id, second_id)
+            ):
                 continue
             segment_id = f"raw-segment:{target_id}:{segment_index}"
             line_segment_ids.append(segment_id)
@@ -716,6 +772,20 @@ def _segments_for_graph(
                 "visible_coverage": round(coverage, 6),
                 "unsupported_length_px": round(unsupported, 6),
             }
+            verified_gap_ids = [
+                str(item.get("id") or "")
+                for item in line.get("source_verified_collinear_gaps", [])
+                if _interval_overlap(
+                    [[float(item["start_t_px"]), float(item["end_t_px"])]],
+                    first_t,
+                    second_t,
+                )
+                > 1e-9
+            ]
+            if uses_verified_gap and verified_gap_ids:
+                segment["source_verified_collinear_gap_ids"] = sorted(
+                    item for item in verified_gap_ids if item
+                )
             segments.append(segment)
             for point_id in (first_id, second_id):
                 point = graph.geometry_entity(point_id)
@@ -1017,6 +1087,9 @@ def build_raw_crease_topology_graph(
         "cluster_count": len(clusters),
         "cluster_merge_rejection_count": rejected_merges,
         "absorbed_detector_terminal_count": absorbed_terminal_count,
+        "source_verified_collinear_gap_count": sum(
+            len(line.get("source_verified_collinear_gaps", [])) for line in lines
+        ),
         "tolerances": {
             "incidence_margin_px": round(incidence_margin, 6),
             "boundary_margin_px": round(boundary_margin, 6),
@@ -1031,6 +1104,7 @@ def build_raw_crease_topology_graph(
             "two_extended_lines_may_not_create_a_junction": True,
             "boundary_contact_requires_finite_evidence_interval": True,
             "segments_join_consecutive_incident_points_only": True,
+            "collinear_gap_segments_require_continuous_source_ink": True,
             "point_cluster_merge_requires_shared_raw_line": True,
             "point_incidence_requires_candidate_line_evidence": True,
             "detector_terminals_are_not_absorbed_by_proximity": True,

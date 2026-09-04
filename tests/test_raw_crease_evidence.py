@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 
 from raw_crease_evidence import (
+    _source_verified_collinear_gaps,
     _source_verified_endpoint_connections,
     classify_topology_segment_line_types,
     detect_raw_crease_entities_from_square,
@@ -17,6 +18,31 @@ def _white_square(size: int = 121) -> np.ndarray:
 
 
 class RawCreaseEvidenceTest(unittest.TestCase):
+    def test_collinear_gap_requires_continuous_source_ink(self):
+        entities = [
+            {
+                "id": "horizontal",
+                "orientation": 0,
+                "direction": [1.0, 0.0],
+                "normal": [0.0, 1.0],
+                "observed_offset_px": 50.0,
+                "evidence_intervals_px": [[10.0, 40.0], [45.0, 90.0]],
+            }
+        ]
+        blank = np.zeros((101, 101), dtype=np.float32)
+        connected = blank.copy()
+        cv2.line(connected, (40, 50), (45, 50), 1.0, 2)
+
+        rejected = _source_verified_collinear_gaps(entities, blank, 1.75)
+        accepted = _source_verified_collinear_gaps(entities, connected, 1.75)
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(accepted[0]["line_id"], "horizontal")
+        self.assertEqual(accepted[0]["start_t_px"], 40.0)
+        self.assertEqual(accepted[0]["end_t_px"], 45.0)
+        self.assertEqual(accepted[0]["bridge_coverage"], 1.0)
+
     def test_endpoint_connection_requires_continuous_source_ink(self):
         entities = [
             {

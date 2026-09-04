@@ -106,6 +106,58 @@ def _report(entities, segments):
 
 
 class FiniteEndpointClosureTest(unittest.TestCase):
+    def test_observed_middle_stroke_binds_both_ends_to_proved_bracketing_nodes(self):
+        report = _report(
+            [
+                _point("fuzzy-start", None, (42, 50)),
+                _point("fuzzy-end", None, (58, 50)),
+                _point("left-node", (_q(2, 5), _q(1, 2)), (40, 50)),
+                _point("right-node", (_q(3, 5), _q(1, 2)), (60, 50)),
+                _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+            ],
+            [
+                _segment(
+                    "middle-stroke",
+                    "horizontal",
+                    "fuzzy-start",
+                    "fuzzy-end",
+                    0,
+                    16,
+                )
+            ],
+        )
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        segment = closed["segments"][0]
+        self.assertEqual(segment["start_point_id"], "left-node")
+        self.assertEqual(segment["end_point_id"], "right-node")
+        self.assertEqual(closed["endpoint_closure"]["suppressed_unanchored_segment_count"], 0)
+        self.assertEqual(closed["endpoint_closure"]["unresolved_endpoint_occurrence_count"], 0)
+        self.assertEqual(
+            segment["endpoint_closure"]["start"]["source"],
+            "observed_segment_endpoint_near_proved_exact_node",
+        )
+
+    def test_exact_three_line_concurrence_without_finite_incidence_is_rejected(self):
+        half = _q(1, 2)
+        report = _report(
+            [
+                _point("left", (_q(1, 5), half), (20, 50)),
+                _point("terminal", None, (78, 50)),
+                _crease("horizontal", (Qsqrt2(), half), 0),
+                _crease("vertical", (_q(4, 5), Qsqrt2()), 4),
+                _crease("diagonal", (_q(4, 5), half), 2),
+            ],
+            [_segment("segment", "horizontal", "left", "terminal", 0, 58)],
+        )
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["endpoint_closure"]["status"], "partial")
+        self.assertEqual(closed["endpoint_closure"]["derived_endpoint_binding_count"], 0)
+        self.assertEqual(closed["segments"][0]["end_point_id"], "terminal")
+
     def test_missing_endpoint_is_derived_from_proved_crease_intersection(self):
         horizontal = _with_observed_line(
             _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
@@ -408,7 +460,7 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             ["top-terminal"],
         )
 
-    def test_near_boundary_endpoint_without_observed_side_is_not_extended(self):
+    def test_near_boundary_observed_terminal_uses_exact_paper_edge(self):
         report = _report(
             [
                 _point("top-terminal", None, (39, 3)),
@@ -420,13 +472,13 @@ class FiniteEndpointClosureTest(unittest.TestCase):
 
         closed = build_finite_endpoint_closed_topology(report)
 
-        self.assertEqual(closed["endpoint_closure"]["status"], "partial")
-        self.assertEqual(closed["endpoint_closure"]["bindings"], [])
-        unresolved = closed["endpoint_closure"]["unresolved_endpoint_occurrences"]
-        self.assertEqual(len(unresolved), 1)
+        self.assertEqual(closed["endpoint_closure"]["status"], "complete")
+        binding = closed["endpoint_closure"]["bindings"][0]
+        self.assertEqual(binding["target_kind"], "known_paper_boundary_intersection")
+        self.assertTrue(binding["boundary_side_inferred"])
         self.assertEqual(
-            unresolved[0]["reason"],
-            "no_existing_exact_node_within_gap_limit",
+            binding["source"],
+            "selected_exact_crease_source_verified_near_paper_boundary",
         )
         self.assertEqual(
             closed["endpoint_closure"]["invariants"]["generated_point_count"],
@@ -443,7 +495,8 @@ class FiniteEndpointClosureTest(unittest.TestCase):
             segment_line_types={"segment": 2},
         )
         blocker_codes = {item["code"] for item in contract["blockers"]}
-        self.assertIn("unresolved_finite_segment_endpoints", blocker_codes)
+        self.assertNotIn("unresolved_finite_segment_endpoints", blocker_codes)
+        self.assertNotIn("untrusted_finite_endpoint_overrides", blocker_codes)
 
     def test_dangling_split_terminal_does_not_move_existing_crease(self):
         p31_exact = (_q(12, 25), _q(49, 100))
