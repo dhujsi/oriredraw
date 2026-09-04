@@ -1727,6 +1727,9 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
       root.phase = report.phase || report.status || root.phase;
       syncGuidedOutputState(root, report);
       renderBoundaryRelations(root);
+      document.dispatchEvent(new CustomEvent('oriredraw:guided-result', {
+        detail: { root },
+      }));
     }
   } catch (error) {
     if (currentResult === root) {

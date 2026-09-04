@@ -111,6 +111,18 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     assert "剩余时间无法预估" in worker
 
 
+def test_guided_result_rebuilds_a_playable_observed_to_derived_trace():
+    app = _source("web/app.js")
+    playback = _source("web/playback.js")
+
+    assert "oriredraw:guided-result" in app
+    assert "guidedPlaybackTrace" in playback
+    assert "selected_guided_operations" in playback
+    assert "guided_observed_raw_topology" in playback
+    assert "guided_boundary_relation_ray" in playback
+    assert "rebuildTrace();" in playback
+
+
 def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
     app = _source("web/app.js")
     html = _source("web/index.html")

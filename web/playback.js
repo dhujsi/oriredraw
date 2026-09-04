@@ -168,7 +168,7 @@
           step: (current, total) => `${current + 1} / ${total + 1}`,
         }
       : {
-          tab: '推演播放',
+          tab: '推导过程重现',
           play: '播放推演',
           pause: '暂停推演',
           underlay: '重构 CP 底图',
@@ -206,11 +206,59 @@
       && Number(anchor.generation) >= 0;
   }
 
+  function cpPointToPixel(point, size) {
+    if (!Array.isArray(point) || point.length < 2) return null;
+    const values = point.slice(0, 2).map(Number);
+    if (!values.every(Number.isFinite)) return null;
+    return values.map(value => (value + 200) * size / 400);
+  }
+
+  function guidedPlaybackTrace(root) {
+    const report = root?.shadow_search?.guided_boundary;
+    const candidates = report?.cp_output_contract?.candidate_segments;
+    if (!report || !Array.isArray(candidates) || !candidates.length) return [];
+    const size = analysisSize(root);
+    const guidedIds = new Set(
+      (report.selected_guided_operations || [])
+        .map(operation => String(operation?.outputs?.[0] || ''))
+        .filter(Boolean),
+    );
+    const trace = [];
+    for (const segment of candidates) {
+      const start = cpPointToPixel(segment.start_cp, size);
+      const end = cpPointToPixel(segment.end_cp, size);
+      if (!start || !end) continue;
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      if (Math.hypot(dx, dy) <= 1e-6) continue;
+      const orientation = Number(segment.orientation);
+      const angle = Number.isFinite(orientation)
+        ? orientation * 22.5
+        : Math.atan2(dy, dx) * 180 / Math.PI;
+      const radians = angle * Math.PI / 180;
+      const normal = [-Math.sin(radians), Math.cos(radians)];
+      const guided = guidedIds.has(String(segment.crease_entity_id));
+      trace.push({
+        angle,
+        line_offset_px: normal[0] * start[0] + normal[1] * start[1],
+        anchor_point_px: start,
+        generation: guided ? 1 : 0,
+        source: guided ? 'guided_boundary_relation_ray' : 'guided_observed_raw_topology',
+        formed_segments_px: [{ start, end }],
+      });
+    }
+    return trace;
+  }
+
   function traceAnchors() {
     const trace = Array.isArray(state.root?.playback_trace)
+      && state.root.playback_trace.length
+      ? state.root.playback_trace
+      : guidedPlaybackTrace(state.root);
+    const fallback = Array.isArray(state.root?.playback_trace)
       ? state.root.playback_trace
       : (state.root?.anchors || []);
-    return trace.filter(isValidAnchor);
+    return (trace.length ? trace : fallback).filter(isValidAnchor);
   }
 
   function formedSegments(anchor) {
@@ -296,6 +344,17 @@
     state.finalImageUri = '';
     rebuildTrace();
   }
+
+  document.addEventListener('oriredraw:guided-result', event => {
+    const root = event.detail?.root;
+    if (!root) return;
+    state.root = root;
+    state.version = root;
+    state.versionIndex = 0;
+    state.finalImage = null;
+    state.finalImageUri = '';
+    rebuildTrace();
+  });
 
   document.addEventListener('click', event => {
     const versionButton = event.target.closest?.('#version-tabs button[data-version]');
