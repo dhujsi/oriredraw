@@ -158,8 +158,8 @@ def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
     assert 'id="mv-brush-valley"' not in html
     assert 'id="mv-next-unassigned"' not in html
     assert 'id="mv-apply"' not in html
-    assert 'line-legend' in html
-    assert '红线：原图为红色，或无色线按红色输出' in html
+    assert 'line-legend' not in html
+    assert '线条颜色说明' not in html
     assert ".mv-segment[data-line-type=\"2\"]" in style
     assert ".mv-segment[data-line-type=\"3\"]" in style
     assert ".mv-segment { pointer-events: none; }" in style
@@ -206,7 +206,12 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "topology_point_start" in app
     assert "到纸边" in app
     assert "这个点怎么开始？" in app
-    assert "下面每个按钮是一种开始方式，选一个就行。" in app
+    assert "同一个纸边点对应" in app
+    assert "boundaryAssignmentTitle" in app
+    assert "observedPointKey" in app
+    assert "boundaryPointKeys" in app
+    assert "精确取点方案" in app
+    assert "沿上边的精确取点关系" not in app
     assert "已选起点" in app
     assert "boundary-relation-coordinates" in app
     assert ".topology-point-marker.boundary-relation-point" in style
@@ -231,7 +236,7 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     assert "原图线条" not in html
     assert "initialRawSelection" in app
     assert "下面是可选的补充方式，不选也可以" not in app
-    assert "红线：原图为红色，或无色线按红色输出" in html
+    assert 'line-legend' not in html
     assert "灰线" not in html
     assert "选择开始方式后即可下载当前 .cp 草稿" in app
     assert "finite_segment_direction_mismatch" in app

@@ -216,11 +216,6 @@ body.corner-editor-open { overflow: hidden; }
 .mv-segment-visible { fill: none; stroke: #d53d35; stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .mv-segment[data-line-type="2"] .mv-segment-visible { stroke: #d53d35; stroke-width: 3; }
 .mv-segment[data-line-type="3"] .mv-segment-visible { stroke: #2878d0; stroke-width: 3; }
-.line-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.45; }
-.line-legend span { display: inline-flex; align-items: center; gap: 5px; }
-.line-legend-swatch { display: inline-block; width: 22px; height: 3px; border-radius: 2px; }
-.line-legend-swatch.red { background: #d53d35; }
-.line-legend-swatch.blue { background: #2878d0; }
 .topology-point-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .preview-stage.guidance-hidden .topology-point-layer,
 .preview-stage.guidance-hidden .topology-point-tooltip,

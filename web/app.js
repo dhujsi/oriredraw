@@ -55,7 +55,6 @@ const boundaryRelationUndo = document.querySelector('#boundary-relation-undo');
 const topologyPointLayer = document.querySelector('#topology-point-layer');
 const topologyPointTooltip = document.querySelector('#topology-point-tooltip');
 const topologyPointPopover = document.querySelector('#topology-point-popover');
-const lineLegend = document.querySelector('#line-legend');
 const topologyPointConfirmation = document.querySelector('#topology-point-confirmation');
 const topologyPointConfirmationTitle = document.querySelector('#topology-point-confirmation-title');
 const topologyPointConfirmationCoordinate = document.querySelector('#topology-point-confirmation-coordinate');
@@ -643,7 +642,6 @@ function isRawPrimaryResult(data) {
 
 function configureResultView({ rawPrimary }) {
   previewFigure?.classList.remove('playback-active');
-  lineLegend?.classList.toggle('hidden', !rawPrimary);
 }
 
 function renderRawPrimaryStats(data) {
@@ -1120,6 +1118,8 @@ function renderBoundaryRelationHistory(report) {
     if (expression) chip.title = `根号二坐标：${expression.trim().replace(/^≈\s*/, '')}`;
     const label = isPoint
       ? (entry.label || '图上的黄色点')
+      : entry.side
+      ? boundaryRelationDisplayLabel(entry, Number(entry.selection_round || 1) - 1)
       : (entry.label || '起点方式');
     chip.textContent = isPoint ? `补充点：${label}` : `起点方式：${label}`;
     boundaryRelationHistoryList.append(chip);
@@ -1167,6 +1167,34 @@ function guidedPointCoordinateExpressions(point) {
 }
 
 const CROSS_SIDE_LABELS = { left: '左', right: '右', top: '上', bottom: '下' };
+const BOUNDARY_SIDE_LABELS = { left: '左边', right: '右边', top: '上边', bottom: '下边' };
+
+function observedPointKey(point) {
+  const observed = Array.isArray(point)
+    ? point
+    : Array.isArray(point?.observed_point_px)
+    ? point.observed_point_px
+    : point?.point_px;
+  if (!Array.isArray(observed) || observed.length < 2) return '';
+  const x = Number(observed[0]);
+  const y = Number(observed[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return '';
+  return `${x.toFixed(6)}:${y.toFixed(6)}`;
+}
+
+function boundaryAssignmentTitle(assignment, index = 0) {
+  const side = BOUNDARY_SIDE_LABELS[String(assignment?.boundarySide || '')];
+  return `${side ? `纸张${side}的` : ''}精确取点方案 ${index + 1}`;
+}
+
+function boundaryRelationDisplayLabel(relation, index = 0) {
+  const rawPriority = Number(relation?.next_priority ?? relation?.priority);
+  const priority = Number.isFinite(rawPriority) && rawPriority > 0
+    ? rawPriority
+    : index + 1;
+  const side = BOUNDARY_SIDE_LABELS[String(relation?.side || '')];
+  return `${side ? `纸张${side}的` : ''}精确取点方案 ${priority}`;
+}
 
 function crossSegmentSummary(point) {
   const cross = point?.cross_segment_lengths;
@@ -1194,10 +1222,12 @@ function buildBoundaryRelationPointCandidates(relations) {
     const relationId = String(relation?.id || relation?.label || 'boundary-relation');
     const relationLabel = String(relation?.label || '边界关系');
     const relationPriority = relation?.next_priority ?? relation?.priority;
+    const relationSide = String(relation?.side || '');
+    const relationPoints = Array.isArray(relation?.points) ? relation.points : [];
     const sideLength = String(
       relation?.recommended_coordinate_gauge?.side_length?.expression || '',
     );
-    for (const point of Array.isArray(relation?.points) ? relation.points : []) {
+    for (const point of relationPoints) {
       const observed = Array.isArray(point?.observed_point_px)
         ? point.observed_point_px
         : point?.point_px;
@@ -1234,6 +1264,8 @@ function buildBoundaryRelationPointCandidates(relations) {
         relationId,
         relationLabel,
         relationPriority,
+        boundarySide: relationSide,
+        relationPointCount: relationPoints.length,
         coordinate_expression: coordinateExpression,
         sideLength,
         boundary_range_px: boundaryRangePx,
@@ -1291,9 +1323,11 @@ function showTopologyPointTooltip(candidate, report, root = null) {
     const assignments = Array.isArray(candidate.boundary_assignments)
       ? candidate.boundary_assignments
       : [];
-    const more = assignments.length > 4 ? `，另有 ${assignments.length - 4} 种方案` : '';
+    const more = assignments.length > 1
+      ? `；这个点有 ${assignments.length} 个精确取点方案，请点选一个`
+      : '；这个点有 1 个精确取点方案，请点选它';
     const geometry = pointGeometrySummary(assignments[0]);
-    topologyPointTooltip.textContent = `绿色起点，再选一种开始方式${more}${geometry ? `；${geometry}` : ''}`;
+    topologyPointTooltip.textContent = `纸边起点${more}${geometry ? `；${geometry}` : ''}`;
   } else {
     const expression = Array.isArray(candidate.coordinate_expression)
       ? candidate.coordinate_expression.join(', ')
@@ -1330,8 +1364,14 @@ function clearBoundaryPointPopover() {
 }
 
 function boundaryAssignmentDetail(assignment) {
+  const details = [];
   const summary = pointGeometrySummary(assignment);
-  return summary ? `（${summary}）` : '';
+  if (summary) details.push(summary);
+  const pointCount = Number(assignment?.relationPointCount);
+  if (Number.isFinite(pointCount) && pointCount > 1) {
+    details.push(`方案包含 ${pointCount} 个取点`);
+  }
+  return details.length ? `（${details.join('；')}）` : '';
 }
 
 function showBoundaryPointPopover(candidate, report, root) {
@@ -1350,25 +1390,14 @@ function showBoundaryPointPopover(candidate, report, root) {
   title.textContent = '这个点怎么开始？';
   const note = document.createElement('small');
   note.textContent = assignments.length > 1
-    ? '下面每个按钮是一种开始方式，选一个就行。'
-    : '点下面的按钮就开始，也可以暂时不选。';
+    ? `同一个纸边点对应 ${assignments.length} 个精确取点方案；请选择一个。`
+    : '这个纸边点只有一个精确取点方案；请选择它开始。';
   const choices = document.createElement('div');
   choices.className = 'topology-point-popover-choices';
-  const relationLabelCounts = new Map();
-  for (const assignment of assignments) {
-    const label = String(assignment?.relationLabel || '');
-    relationLabelCounts.set(label, (relationLabelCounts.get(label) || 0) + 1);
-  }
-  for (const assignment of assignments) {
+  for (const [index, assignment] of assignments.entries()) {
     const choice = document.createElement('button');
     choice.type = 'button';
-    const relationLabel = assignment.relationLabel
-      ? `按“${assignment.relationLabel}”开始`
-      : '用这个方式开始';
-    const detail = relationLabelCounts.get(String(assignment?.relationLabel || '')) > 1
-      ? boundaryAssignmentDetail(assignment)
-      : '';
-    choice.textContent = `${relationLabel}${detail}`;
+    choice.textContent = `${boundaryAssignmentTitle(assignment, index)}${boundaryAssignmentDetail(assignment)}`;
     choice.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
@@ -1451,11 +1480,22 @@ function renderTopologyPointOverlay(
   const topologyCandidates = Array.isArray(report?.next_topology_point_candidates)
     ? report.next_topology_point_candidates
     : [];
+  const boundaryCandidates = buildBoundaryRelationPointCandidates(boundaryRelations);
+  const boundaryPointKeys = new Set(
+    boundaryCandidates.map(observedPointKey).filter(Boolean),
+  );
+  const visibleInitialTopologyPoints = (Array.isArray(initialTopologyPoints)
+    ? initialTopologyPoints
+    : [])
+    .filter(candidate => {
+      const key = observedPointKey(candidate);
+      return !key || !boundaryPointKeys.has(key);
+    });
   const candidates = topologyCandidates.length
     ? topologyCandidates
     : [
-      ...buildBoundaryRelationPointCandidates(boundaryRelations),
-      ...(Array.isArray(initialTopologyPoints) ? initialTopologyPoints : []),
+      ...boundaryCandidates,
+      ...visibleInitialTopologyPoints,
     ];
   topologyPointLayer.classList.toggle('hidden', candidates.length === 0);
   if (!candidates.length) return;
@@ -1633,7 +1673,7 @@ function renderBoundaryRelations(root) {
     const heading = document.createElement('div');
     heading.className = 'boundary-relation-heading';
     const title = document.createElement('strong');
-    title.textContent = `${continuing ? '可选补充方式' : '可能的开始方式'}：${relation.label || '开始方式'}`;
+    title.textContent = `${continuing ? '可选补充方式' : '可能的开始方式'}：${boundaryRelationDisplayLabel(relation)}`;
     const meta = document.createElement('small');
     const projection = Number(relation.projected_new_crease_count || 0);
     meta.textContent = continuing

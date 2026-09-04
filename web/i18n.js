@@ -278,8 +278,6 @@ const exactEnglish = new Map(Object.entries({
   '当前 .cp 可以直接下载；继续取线后，下载内容会随结果更新。': 'The current .cp can be downloaded now; continuing will update its contents.',
   '红线和蓝线按原图颜色输出；无色、黑色或无法判断的折痕按红色输出。': 'Red and blue creases keep their source colours. Uncoloured, black, or unclear creases are exported as red.',
   '没有找到可用的起点。请检查纸张边缘和线条是否完整、清楚。': 'No usable start was found. Check that the paper edge and lines are complete and clear.',
-  '红线：原图为红色，或无色线按红色输出': 'Red: red in the source image, or an uncoloured crease exported as red',
-  '蓝线：原图标为蓝色': 'Blue: marked blue in the source image',
   '选择这个点的开始方式': 'Choose how to start from this point',
   '要不要用这个黄色点补线？': 'Use this yellow point to add lines?',
   '用这个点': 'Use this point',
