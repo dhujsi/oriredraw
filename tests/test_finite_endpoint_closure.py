@@ -60,6 +60,16 @@ def _crease(entity_id, through_xy, direction):
     }
 
 
+def _with_observed_line(crease, *, offset, intervals):
+    crease["observed_geometry"].update(
+        {
+            "line_offset_px": offset,
+            "evidence_intervals_px": [list(item) for item in intervals],
+        }
+    )
+    return crease
+
+
 def _segment(segment_id, crease_id, start_id, end_id, orientation, length):
     return {
         "id": segment_id,
@@ -96,6 +106,100 @@ def _report(entities, segments):
 
 
 class FiniteEndpointClosureTest(unittest.TestCase):
+    def test_missing_endpoint_is_derived_from_proved_crease_intersection(self):
+        horizontal = _with_observed_line(
+            _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+            offset=50.0,
+            intervals=((20.0, 75.0),),
+        )
+        vertical = _with_observed_line(
+            _crease("vertical", (_q(4, 5), Qsqrt2()), 4),
+            offset=-80.0,
+            intervals=((20.0, 80.0),),
+        )
+        report = _report(
+            [
+                _point("left", (_q(1, 5), _q(1, 2)), (20, 50)),
+                _point("terminal", None, (77, 50)),
+                horizontal,
+                vertical,
+            ],
+            [_segment("segment", "horizontal", "left", "terminal", 0, 57)],
+        )
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["endpoint_closure"]["status"], "complete")
+        self.assertEqual(
+            closed["endpoint_closure"]["derived_endpoint_binding_count"], 1
+        )
+        segment = closed["segments"][0]
+        expected = [qsqrt2_to_mapping(_q(4, 5)), qsqrt2_to_mapping(_q(1, 2))]
+        self.assertEqual(segment["end_exact_project_coordinate"], expected)
+        detail = segment["endpoint_closure"]["end"]
+        self.assertEqual(detail["target_kind"], "proved_exact_crease_intersection")
+        self.assertEqual(
+            detail["parent_entity_ids"], ["horizontal", "vertical"]
+        )
+
+        report["finite_topology"] = closed
+        contract = build_guided_cp_output_contract(
+            report,
+            segment_line_types={"segment": 2},
+        )
+        self.assertEqual(contract["draft_observed_endpoint_fallback_count"], 0)
+        self.assertEqual(contract["candidate_internal_segment_count"], 1)
+        self.assertNotIn(
+            "untrusted_finite_endpoint_overrides", contract["blocker_counts"]
+        )
+        self.assertNotIn(
+            "unresolved_finite_segment_endpoints", contract["blocker_counts"]
+        )
+
+    def test_two_unproved_endpoints_suppress_detached_raster_fragment(self):
+        horizontal = _with_observed_line(
+            _crease("horizontal", (Qsqrt2(), _q(1, 2)), 0),
+            offset=50.0,
+            intervals=((20.0, 30.0),),
+        )
+        report = _report(
+            [
+                _point("start", None, (20, 50)),
+                _point("end", None, (30, 50)),
+                horizontal,
+            ],
+            [_segment("detached", "horizontal", "start", "end", 0, 10)],
+        )
+
+        closed = build_finite_endpoint_closed_topology(report)
+
+        self.assertEqual(closed["segments"], [])
+        closure = closed["endpoint_closure"]
+        self.assertEqual(closure["suppressed_unanchored_segment_count"], 1)
+        self.assertEqual(closure["unresolved_endpoint_occurrence_count"], 0)
+        self.assertEqual(
+            closure["suppressed_unanchored_segments"],
+            [
+                {
+                    "id": "detached",
+                    "reason": "no_construction_proved_endpoint",
+                    "observed_start_point_id": "start",
+                    "observed_end_point_id": "end",
+                    "length_px": 10,
+                }
+            ],
+        )
+
+        report["finite_topology"] = closed
+        contract = build_guided_cp_output_contract(
+            report,
+            segment_line_types={"detached": 2},
+        )
+        self.assertEqual(contract["suppressed_unanchored_segment_ids"], ["detached"])
+        self.assertNotIn(
+            "unknown_segment_line_type_assignments", contract["blocker_counts"]
+        )
+
     def test_missing_detector_endpoint_binds_to_existing_exact_node_on_crease(self):
         report = _report(
             [

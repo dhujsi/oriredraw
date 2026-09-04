@@ -621,7 +621,7 @@ def build_guided_cp_output_contract(
         and isinstance(endpoint_closure, Mapping)
         and endpoint_closure.get("enabled", False)
     )
-    trusted_boundary_override_point_ids = {
+    trusted_endpoint_override_point_ids = {
         str(item.get("observed_point_id") or "")
         for item in (
             endpoint_closure.get("bindings", [])
@@ -630,9 +630,20 @@ def build_guided_cp_output_contract(
         )
         if (
             isinstance(item, Mapping)
-            and item.get("target_kind") == "known_paper_boundary_intersection"
-            and item.get("source")
-            == "selected_exact_crease_known_paper_boundary_intersection"
+            and (
+                (
+                    item.get("target_kind")
+                    == "known_paper_boundary_intersection"
+                    and item.get("source")
+                    == "selected_exact_crease_known_paper_boundary_intersection"
+                )
+                or (
+                    item.get("target_kind")
+                    == "proved_exact_crease_intersection"
+                    and item.get("source")
+                    == "proved_exact_crease_intersection_near_observed_endpoint"
+                )
+            )
             and str(item.get("observed_point_id") or "")
         )
     }
@@ -663,10 +674,24 @@ def build_guided_cp_output_contract(
         )
         if isinstance(item, Mapping)
     }
+    suppressed_unanchored_segment_ids = {
+        str(item.get("id") or "")
+        for item in (
+            endpoint_closure.get("suppressed_unanchored_segments", [])
+            if isinstance(endpoint_closure, Mapping)
+            else []
+        )
+        if isinstance(item, Mapping)
+    }
     unknown_assignment_ids = sorted(
         str(item)
         for item in assignments
-        if str(item) not in raw_segment_ids | collapsed_segment_ids
+        if str(item)
+        not in (
+            raw_segment_ids
+            | collapsed_segment_ids
+            | suppressed_unanchored_segment_ids
+        )
     )
     if unknown_assignment_ids:
         block(
@@ -699,6 +724,32 @@ def build_guided_cp_output_contract(
     finite_segment_exact_points: list[ExactPoint] = []
     endpoint_cp_overrides: dict[tuple[str, str], tuple[float, float]] = {}
     observed_cp_points: dict[str, tuple[float, float]] = {}
+    proved_crease_ids = {
+        str(item)
+        for item in construction_proof.get("proved_crease_ids", [])
+        if str(item)
+    }
+
+    def proved_parent_contains(
+        point: ExactPoint | None,
+        parent_id: str,
+    ) -> bool:
+        if point is None:
+            return False
+        exact = entities.get(parent_id, {}).get("exact_geometry")
+        if not isinstance(exact, Mapping):
+            return False
+        through = _exact_point(exact.get("through_point_project"))
+        try:
+            direction = int(exact.get("direction_index"))
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            through is not None
+            and 0 <= direction < 8
+            and _on_exact_line(point, through, direction)
+        )
+
     for entity_id, entity in entities.items():
         if entity.get("kind") != "point":
             continue
@@ -771,16 +822,43 @@ def build_guided_cp_output_contract(
                 if isinstance(endpoint_closure_detail, Mapping)
                 else None
             )
-            if (
-                override_point is None
-                or side_length is None
-                or not _on_boundary(override_point, side_length)
-                or not isinstance(detail, Mapping)
-                or detail.get("target_kind")
-                != "known_paper_boundary_intersection"
-                or detail.get("source")
-                != "selected_exact_crease_known_paper_boundary_intersection"
-            ):
+            boundary_override_is_valid = bool(
+                override_point is not None
+                and side_length is not None
+                and _on_boundary(override_point, side_length)
+                and isinstance(detail, Mapping)
+                and detail.get("target_kind")
+                == "known_paper_boundary_intersection"
+                and detail.get("source")
+                == "selected_exact_crease_known_paper_boundary_intersection"
+            )
+            parent_ids = {
+                str(item)
+                for item in (
+                    detail.get("parent_entity_ids", [])
+                    if isinstance(detail, Mapping)
+                    else []
+                )
+                if str(item)
+            }
+            intersection_override_is_valid = bool(
+                override_point is not None
+                and side_length is not None
+                and _inside_paper(override_point, side_length)
+                and isinstance(detail, Mapping)
+                and detail.get("target_kind")
+                == "proved_exact_crease_intersection"
+                and detail.get("source")
+                == "proved_exact_crease_intersection_near_observed_endpoint"
+                and crease_id in parent_ids
+                and len(parent_ids) >= 2
+                and parent_ids <= proved_crease_ids
+                and all(
+                    proved_parent_contains(override_point, parent_id)
+                    for parent_id in parent_ids
+                )
+            )
+            if not (boundary_override_is_valid or intersection_override_is_valid):
                 untrusted_endpoint_override_segment_ids.add(segment_id)
         if start is None:
             start = exact_points_by_id.get(start_id)
@@ -832,7 +910,7 @@ def build_guided_cp_output_contract(
                 continue
             if (
                 residual > max(0.0, float(max_endpoint_residual_px)) + 1e-9
-                and point_id not in trusted_boundary_override_point_ids
+                and point_id not in trusted_endpoint_override_point_ids
             ):
                 endpoint_residual_failures.append(
                     {
@@ -1161,6 +1239,9 @@ def build_guided_cp_output_contract(
         "draft_skipped_internal_segment_ids": draft[
             "skipped_internal_segment_ids"
         ],
+        "suppressed_unanchored_segment_ids": sorted(
+            suppressed_unanchored_segment_ids
+        ),
         "boundary_segment_count": draft["boundary_segment_count"],
         "boundary_segment_counts_by_side": draft[
             "boundary_segment_counts_by_side"
@@ -1192,6 +1273,9 @@ def build_guided_cp_output_contract(
             "boundary_geometry_source": "known_square_paper",
             "finite_topology_mode": topology_mode,
             "collapsed_detector_linehead_count": len(collapsed_segment_ids),
+            "suppressed_unanchored_segment_count": len(
+                suppressed_unanchored_segment_ids
+            ),
             "crease_placement_repair_count": len(crease_exact_overrides),
             "observation_and_construction_topology_separated": True,
         },

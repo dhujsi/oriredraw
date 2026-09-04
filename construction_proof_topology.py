@@ -62,7 +62,8 @@ def _endpoint_is_proved(
     segment: Mapping[str, Any],
     endpoint: str,
     proved_points: set[str],
-    crease_is_proved: bool,
+    proved_creases: set[str],
+    crease_id: str,
 ) -> bool:
     point_id = str(segment.get(f"{endpoint}_point_id") or "")
     if point_id in proved_points:
@@ -70,14 +71,30 @@ def _endpoint_is_proved(
     override = segment.get(f"{endpoint}_exact_project_coordinate")
     details = segment.get("endpoint_closure")
     detail = details.get(endpoint) if isinstance(details, Mapping) else None
-    return bool(
-        crease_is_proved
-        and override is not None
-        and isinstance(detail, Mapping)
-        and detail.get("target_kind") == "known_paper_boundary_intersection"
+    if crease_id not in proved_creases or override is None or not isinstance(
+        detail, Mapping
+    ):
+        return False
+    if (
+        detail.get("target_kind") == "known_paper_boundary_intersection"
         and detail.get("source")
         == "selected_exact_crease_known_paper_boundary_intersection"
-    )
+    ):
+        return True
+    if (
+        detail.get("target_kind") == "proved_exact_crease_intersection"
+        and detail.get("source")
+        == "proved_exact_crease_intersection_near_observed_endpoint"
+    ):
+        parents = {
+            str(item) for item in detail.get("parent_entity_ids", []) if str(item)
+        }
+        return (
+            crease_id in parents
+            and len(parents) >= 2
+            and parents <= proved_creases
+        )
+    return False
 
 
 def build_construction_proof_topology(
@@ -228,10 +245,10 @@ def build_construction_proof_topology(
         crease_id = str(segment.get("crease_entity_id") or "")
         crease_is_proved = crease_id in proved_creases
         start_is_proved = _endpoint_is_proved(
-            segment, "start", proved_points, crease_is_proved
+            segment, "start", proved_points, proved_creases, crease_id
         )
         end_is_proved = _endpoint_is_proved(
-            segment, "end", proved_points, crease_is_proved
+            segment, "end", proved_points, proved_creases, crease_id
         )
         reasons: list[str] = []
         if not crease_is_proved:
@@ -281,6 +298,7 @@ def build_construction_proof_topology(
             "observation_topology_is_not_mutated": True,
             "raster_coordinate_fit_is_not_a_proof_root": True,
             "derived_fact_requires_all_parent_facts_proved": True,
+            "derived_segment_endpoint_requires_proved_parent_creases": True,
             "paper_boundary_is_the_only_parentless_geometric_constraint": True,
             "single_core_reference_limit_respected": len(single_core_reference_ids) <= 1,
             "single_core_reference_has_one_independent_parameter": all(

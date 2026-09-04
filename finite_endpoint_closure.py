@@ -1,11 +1,13 @@
-"""Close detector endpoints onto existing exact nodes or known paper edges.
+"""Close detector endpoints onto construction-proved exact geometry.
 
 The raw topology intentionally records where the line detector stopped.  A
 detector terminal can sit a few pixels before an already evidenced exact
 intersection or paper-boundary contact.  This module resolves that discrepancy
 per finite segment endpoint; it never merges the observed point globally,
-creates a point, creates or moves a crease, chooses a direction, or infers a
-paper-boundary contact that was not observed.
+creates a graph point, creates or moves a crease, chooses a direction, or
+infers a paper-boundary contact that was not observed. A segment with one
+proved endpoint may close onto the exact intersection of proved creases; a
+detached raster fragment with no proved endpoint is not promoted.
 """
 
 from __future__ import annotations
@@ -73,6 +75,75 @@ def _cross(first: ExactPoint, second: ExactPoint) -> Qsqrt2:
 def _on_exact_line(point: ExactPoint, through: ExactPoint, direction_index: int) -> bool:
     delta = (point[0] - through[0], point[1] - through[1])
     return _cross(delta, _direction_vector(direction_index)) == Qsqrt2()
+
+
+def _exact_line_intersection(
+    first: tuple[ExactPoint, int],
+    second: tuple[ExactPoint, int],
+) -> ExactPoint | None:
+    first_point, first_direction_index = first
+    second_point, second_direction_index = second
+    first_direction = _direction_vector(first_direction_index)
+    second_direction = _direction_vector(second_direction_index)
+    denominator = _cross(first_direction, second_direction)
+    if denominator == Qsqrt2():
+        return None
+    delta = (
+        second_point[0] - first_point[0],
+        second_point[1] - first_point[1],
+    )
+    parameter = _cross(delta, second_direction) / denominator
+    return (
+        first_point[0] + parameter * first_direction[0],
+        first_point[1] + parameter * first_direction[1],
+    )
+
+
+def _interval_distance(intervals: Any, value: float) -> float:
+    distances: list[float] = []
+    for raw in intervals or []:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+            continue
+        try:
+            first, second = sorted((float(raw[0]), float(raw[1])))
+        except (TypeError, ValueError):
+            continue
+        distances.append(
+            0.0
+            if first - 1e-9 <= value <= second + 1e-9
+            else min(abs(value - first), abs(value - second))
+        )
+    return min(distances, default=math.inf)
+
+
+def _observed_crease_supports_point(
+    entity: Mapping[str, Any],
+    point_px: tuple[float, float],
+    *,
+    incidence_margin: float,
+    line_residual_tolerance: float,
+) -> bool:
+    observed = entity.get("observed_geometry")
+    if not isinstance(observed, Mapping):
+        return False
+    try:
+        direction_index = int(observed.get("direction_index"))
+        offset = float(observed.get("line_offset_px"))
+    except (TypeError, ValueError):
+        return False
+    if not 0 <= direction_index < 8:
+        return False
+    angle = direction_index * math.pi / 8.0
+    direction = (math.cos(angle), math.sin(angle))
+    normal = (-direction[1], direction[0])
+    residual = abs(normal[0] * point_px[0] + normal[1] * point_px[1] - offset)
+    if residual > line_residual_tolerance + 1e-9:
+        return False
+    parameter = direction[0] * point_px[0] + direction[1] * point_px[1]
+    return (
+        _interval_distance(observed.get("evidence_intervals_px"), parameter)
+        <= incidence_margin + 1e-9
+    )
 
 
 def _project_to_pixel(
@@ -198,13 +269,15 @@ def build_finite_endpoint_closed_topology(
     *,
     max_target_residual_px: float = 3.2,
 ) -> dict[str, Any]:
-    """Rebind each finite segment endpoint to an existing exact graph point.
+    """Rebind finite segment endpoints to construction-proved exact locations.
 
     A non-boundary target is eligible only when it is an existing raw-evidence
     exact point with direct observed incidence to this same finite crease. A
     boundary target additionally requires an explicit observed boundary side.
-    Its projected location must remain within both the paper-scale and local
-    segment-evidence limits. Near ties are rejected instead of guessed.
+    A segment whose opposite endpoint is proved may use the nearby exact
+    intersection of proved creases. Its projected location must remain within
+    both the paper-scale and local segment-evidence limits. Near ties are
+    rejected instead of guessed.
     """
 
     graph = guided_report.get("geometry_graph")
@@ -333,6 +406,8 @@ def build_finite_endpoint_closed_topology(
     retained_segments: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     collapsed_segments: list[dict[str, Any]] = []
+    suppressed_unanchored_segments: list[dict[str, Any]] = []
+    derived_endpoint_binding_count = 0
     unresolved_occurrences: list[dict[str, Any]] = []
     changed_observed_ids: set[str] = set()
     boundary_resolved_observed_ids: set[str] = set()
@@ -566,6 +641,167 @@ def build_finite_endpoint_closed_topology(
             bindings.append(binding)
             closure_details[endpoint_name] = {"status": "rebound", **binding}
 
+        def resolved_exact(endpoint_name: str) -> ExactPoint | None:
+            override = _exact_point(
+                segment.get(f"{endpoint_name}_exact_project_coordinate")
+            )
+            return override or exact_points.get(resolved_ids[endpoint_name])
+
+        unresolved_names = [
+            name
+            for name in ("start", "end")
+            if resolved_exact(name) is None
+        ]
+        # A raster segment may acquire one missing endpoint from the exact
+        # intersection of already proved creases, but only after its opposite
+        # endpoint is construction-proved.  This prevents a detached two-ended
+        # raster fragment from becoming a crease merely because nearby exact
+        # supporting lines happen to cross it.
+        if len(unresolved_names) == 1:
+            endpoint_name = unresolved_names[0]
+            other_name = "end" if endpoint_name == "start" else "start"
+            if resolved_exact(other_name) is not None and line is not None:
+                observed_id = original_ids[endpoint_name]
+                endpoint_px = _observed_point(entities.get(observed_id, {}))
+                other_px = _observed_point(entities.get(original_ids[other_name], {}))
+                gap_limit = _endpoint_gap_limit(
+                    segment,
+                    maximum=maximum,
+                    incidence_margin=incidence_margin,
+                    line_residual_tolerance=line_residual_tolerance,
+                )
+                grouped: dict[
+                    tuple[tuple[int, int, int], ...], dict[str, Any]
+                ] = {}
+                if endpoint_px is not None:
+                    for other_crease_id, other_line in exact_lines.items():
+                        if other_crease_id == crease_id:
+                            continue
+                        candidate_point = _exact_line_intersection(line, other_line)
+                        if candidate_point is None or not all(
+                            -1e-9 <= float(value) <= float(side_length) + 1e-9
+                            for value in candidate_point
+                        ):
+                            continue
+                        candidate_px = _project_to_pixel(
+                            candidate_point, side_length, maximum
+                        )
+                        gap = math.dist(endpoint_px, candidate_px)
+                        if gap > gap_limit + 1e-9 or not _same_endpoint_ray(
+                            endpoint_px,
+                            other_px,
+                            candidate_px,
+                            tolerance=incidence_margin,
+                        ):
+                            continue
+                        key = _point_key(candidate_point)
+                        item = grouped.setdefault(
+                            key,
+                            {
+                                "_exact_point": candidate_point,
+                                "projected_point_px": candidate_px,
+                                "gap_px": gap,
+                                "parent_entity_ids": {crease_id},
+                                "source_supported_parent_ids": set(),
+                            },
+                        )
+                        item["parent_entity_ids"].add(other_crease_id)
+                        if _observed_crease_supports_point(
+                            entities.get(other_crease_id, {}),
+                            candidate_px,
+                            incidence_margin=incidence_margin,
+                            line_residual_tolerance=line_residual_tolerance,
+                        ):
+                            item["source_supported_parent_ids"].add(other_crease_id)
+
+                candidates: list[dict[str, Any]] = []
+                for item in grouped.values():
+                    parents = sorted(item["parent_entity_ids"])
+                    source_supported = sorted(item["source_supported_parent_ids"])
+                    # Two proved creases suffice when the other crease visibly
+                    # reaches the intersection.  Otherwise require exact
+                    # concurrence of at least three independently proved lines.
+                    if len(parents) < 3 and not source_supported:
+                        continue
+                    candidates.append(
+                        {
+                            **item,
+                            "parent_entity_ids": parents,
+                            "source_supported_parent_ids": source_supported,
+                        }
+                    )
+                candidates.sort(
+                    key=lambda item: (
+                        float(item["gap_px"]),
+                        -len(item["parent_entity_ids"]),
+                        item["parent_entity_ids"],
+                    )
+                )
+                unambiguous = bool(candidates) and (
+                    len(candidates) == 1
+                    or float(candidates[1]["gap_px"])
+                    - float(candidates[0]["gap_px"])
+                    > ambiguity_margin + 1e-9
+                )
+                if unambiguous:
+                    selected = candidates[0]
+                    point = selected["_exact_point"]
+                    segment[f"{endpoint_name}_exact_project_coordinate"] = [
+                        qsqrt2_to_mapping(point[0]),
+                        qsqrt2_to_mapping(point[1]),
+                    ]
+                    unresolved_occurrences = [
+                        item
+                        for item in unresolved_occurrences
+                        if not (
+                            item.get("segment_id") == segment_id
+                            and item.get("endpoint") == endpoint_name
+                        )
+                    ]
+                    binding = {
+                        "segment_id": segment_id,
+                        "endpoint": endpoint_name,
+                        "reason": "missing_exact_endpoint",
+                        "observed_point_id": observed_id,
+                        "resolved_point_id": observed_id,
+                        "target_kind": "proved_exact_crease_intersection",
+                        "observed_point_px": [round(value, 6) for value in endpoint_px],
+                        "resolved_projected_point_px": [
+                            round(value, 6)
+                            for value in selected["projected_point_px"]
+                        ],
+                        "gap_px": round(float(selected["gap_px"]), 6),
+                        "endpoint_gap_limit_px": round(gap_limit, 6),
+                        "source": "proved_exact_crease_intersection_near_observed_endpoint",
+                        "parent_entity_ids": selected["parent_entity_ids"],
+                        "source_supported_parent_entity_ids": selected[
+                            "source_supported_parent_ids"
+                        ],
+                    }
+                    bindings.append(binding)
+                    closure_details[endpoint_name] = {
+                        "status": "rebound",
+                        **binding,
+                    }
+                    derived_endpoint_binding_count += 1
+
+        if all(resolved_exact(name) is None for name in ("start", "end")):
+            unresolved_occurrences = [
+                item
+                for item in unresolved_occurrences
+                if item.get("segment_id") != segment_id
+            ]
+            suppressed_unanchored_segments.append(
+                {
+                    "id": segment_id,
+                    "reason": "no_construction_proved_endpoint",
+                    "observed_start_point_id": original_ids["start"],
+                    "observed_end_point_id": original_ids["end"],
+                    "length_px": segment.get("length_px"),
+                }
+            )
+            continue
+
         segment["start_point_id"] = resolved_ids["start"]
         segment["end_point_id"] = resolved_ids["end"]
         segment["endpoint_closure"] = closure_details
@@ -640,7 +876,11 @@ def build_finite_endpoint_closed_topology(
         "source_segment_count": len(source_segments),
         "retained_segment_count": len(retained_segments),
         "binding_count": len(bindings),
+        "derived_endpoint_binding_count": derived_endpoint_binding_count,
         "collapsed_segment_count": len(collapsed_segments),
+        "suppressed_unanchored_segment_count": len(
+            suppressed_unanchored_segments
+        ),
         "unresolved_endpoint_occurrence_count": len(unresolved_occurrences),
         "unresolved_endpoint_point_count": len(unresolved_point_ids),
         "unresolved_endpoint_point_ids": unresolved_point_ids,
@@ -652,6 +892,7 @@ def build_finite_endpoint_closed_topology(
         ),
         "bindings": bindings,
         "collapsed_segments": collapsed_segments,
+        "suppressed_unanchored_segments": suppressed_unanchored_segments,
         "unresolved_endpoint_occurrences": unresolved_occurrences,
         "crease_placement_repair_count": 0,
         "crease_placement_repairs": [],
@@ -676,6 +917,9 @@ def build_finite_endpoint_closed_topology(
             "boundary_targets_are_exact_crease_boundary_intersections": True,
             "targets_lie_on_selected_exact_crease": True,
             "closure_is_per_segment_endpoint": True,
+            "derived_endpoint_requires_opposite_proved_endpoint": True,
+            "derived_endpoint_requires_proved_parent_creases": True,
+            "two_unproved_endpoints_cannot_promote_a_raster_segment": True,
             "target_requires_direct_observed_crease_incidence": True,
             "boundary_target_requires_explicit_observed_side": True,
             "crease_placement_repair_allowed": False,
