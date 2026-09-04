@@ -210,7 +210,7 @@
         </div>
 
         <div id="loading" class="loading hidden" aria-live="polite">
-              <span></span><p id="loading-stage" data-i18n="loadingInitial">正在读取原图折痕和交点…</p><small id="loading-note" data-i18n="loadingSlow">先显示原图和绿色起点；你只需选择一个起点。</small>
+              <span></span><p id="loading-stage" data-i18n="loadingInitial">正在读取图像和交点…</p><small id="loading-note" data-i18n="loadingSlow">先显示原图和绿色起点；你只需选择一个起点。</small>
           <div class="progress-block">
             <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重绘进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
             <b id="loading-progress-value">0%</b>
@@ -228,18 +228,20 @@
 
           <div class="version-tabs hidden" id="version-tabs" role="tablist" aria-label="构造版本"></div>
 
-          <div class="view-tabs" role="tablist" aria-label="预览方式">
-            <button class="active" data-view="overlay" role="tab" aria-selected="true" data-i18n="overlay">叠加检查</button>
-            <button data-view="clean" role="tab" aria-selected="false" data-i18n="clean">纯重绘</button>
-          </div>
           <div class="line-legend hidden" id="line-legend" aria-label="线条颜色说明">
             <span><i class="line-legend-swatch red" aria-hidden="true"></i>红线：原图为红色，或无色线按红色输出</span>
             <span><i class="line-legend-swatch blue" aria-hidden="true"></i>蓝线：原图标为蓝色</span>
           </div>
           <div class="result-visuals">
             <figure class="preview">
+              <fieldset class="layer-toggles" aria-label="显示图层">
+                <legend data-i18n="layerLegend">显示</legend>
+                <label><input type="checkbox" id="layer-redraw" checked><span data-i18n="layerRedraw">重绘</span></label>
+                <label><input type="checkbox" id="layer-source" checked><span data-i18n="layerSource">原图</span></label>
+              </fieldset>
               <div class="preview-stage" id="preview-stage">
                 <svg class="mv-segment-layer hidden" id="mv-segment-layer" viewBox="-200 -200 400 400" preserveAspectRatio="xMidYMid meet" aria-label="逐段山谷线标注层"></svg>
+                <img id="source-image" class="source-image" alt="原图">
                 <img id="preview-image" alt="折痕重绘预览">
                 <div class="topology-point-layer hidden" id="topology-point-layer" aria-label="图上的可选点"></div>
                 <div class="topology-point-tooltip hidden" id="topology-point-tooltip" role="status"></div>
@@ -256,6 +258,7 @@
                   </div>
                 </div>
               </div>
+              <div class="view-tabs" role="tablist" aria-label="结果工具"></div>
             </figure>
             <aside class="core-point-card" id="core-point-card">
               <span>CORE POINT</span>

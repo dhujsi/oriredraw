@@ -190,14 +190,21 @@ body.corner-editor-open { overflow: hidden; }
 .version-tabs { display: flex; gap: 6px; margin-top: 20px; overflow-x: auto; padding-bottom: 3px; }
 .version-tabs button { flex: 0 0 auto; border: 1px solid var(--line); background: #fff; padding: 7px 10px; cursor: pointer; font-size: 11px; }
 .version-tabs button.active { border-color: var(--ink); background: var(--acid); font-weight: 700; }
-.view-tabs { display: flex; gap: 4px; margin: 22px 0 10px; }
+.view-tabs { display: flex; gap: 4px; margin: 10px 0 0; }
+.view-tabs:empty { display: none; }
 .view-tabs button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); }
 .view-tabs button.active { color: var(--ink); border-color: var(--green); font-weight: 700; }
 .result-visuals { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 10px; align-items: start; }
 #result-content.raw-primary .result-visuals { grid-template-columns: minmax(0, 1fr); }
 .preview { margin: 0; background: #fff; border: 1px solid var(--line); display: grid; place-items: center; min-height: 420px; overflow: hidden; }
 .preview-stage { position: relative; width: min(100%, 680px); aspect-ratio: 1; }
-.preview img { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+.preview img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+.source-image { z-index: 0; }
+#preview-image { z-index: 1; }
+.layer-toggles { display: flex; align-items: center; gap: 11px; width: fit-content; margin: 0 0 8px; padding: 5px 8px; border: 1px solid var(--line); color: var(--muted); font: 700 10px/1.2 ui-monospace, Consolas, monospace; }
+.layer-toggles legend { padding: 0 4px; color: var(--ink); }
+.layer-toggles label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.layer-toggles input { margin: 0; accent-color: var(--green); }
 .mv-segment-layer { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; pointer-events: none; }
 .mv-segment { pointer-events: none; }
 .mv-segment-visible { fill: none; stroke: #d53d35; stroke-width: 3; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }

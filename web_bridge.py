@@ -26,6 +26,8 @@ _PUBLIC_RESULT_KEYS = (
     "id",
     "label",
     "constructions",
+    "source_data_uri",
+    "redraw_data_uri",
     "variants",
     "overlay_data_uri",
     "reconstruction_data_uri",
@@ -322,6 +324,8 @@ def reconstruct_for_web(
         "id": "strict",
         "label": "严格 22.5°",
         "constructions": [],
+        "source_data_uri": "",
+        "redraw_data_uri": "",
         "variants": [],
         "playback_trace": [],
     }

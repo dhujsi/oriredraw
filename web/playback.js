@@ -86,7 +86,7 @@
 
   const style = document.createElement('style');
   style.textContent = `
-    .preview.playback-active #preview-image { display: none; }
+    .preview.playback-active .source-image, .preview.playback-active #preview-image { display: none; }
     .oriredraw-playback { display: none; width: 100%; }
     .preview.playback-active .oriredraw-playback { display: block; }
     .oriredraw-playback-stage { position: relative; width: 100%; aspect-ratio: 1; background: #fff; border: 1px solid var(--line, #d7d5cc); overflow: hidden; }

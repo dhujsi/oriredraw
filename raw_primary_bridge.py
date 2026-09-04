@@ -34,6 +34,7 @@ from reconstructor import (
     Settings,
     _decode_image,
     _png_data_uri,
+    _transparent_preview_data_uri,
     prepare_paper_square,
     validate_white_line_art,
 )
@@ -72,7 +73,7 @@ def _render_raw_primary_previews(
     raw_report: Mapping[str, Any],
     topology: Mapping[str, Any],
     candidates: list[dict[str, Any]],
-) -> tuple[str, str]:
+) -> tuple[str, str, str, str]:
     """Render an observed-source overlay and a clean finite-topology preview."""
 
     overlay_lines = square.copy()
@@ -131,7 +132,12 @@ def _render_raw_primary_previews(
     maximum = int(square.shape[0] - 1)
     cv2.rectangle(clean, (0, 0), (maximum, maximum), (23, 23, 20), 1, cv2.LINE_AA)
     overlay = cv2.addWeighted(square, 0.68, overlay_lines, 0.32, 0)
-    return _png_data_uri(overlay), _png_data_uri(clean)
+    return (
+        _png_data_uri(square),
+        _png_data_uri(overlay),
+        _png_data_uri(clean),
+        _transparent_preview_data_uri(clean),
+    )
 
 
 def analyze_raw_primary_from_square(
@@ -193,7 +199,7 @@ def analyze_raw_primary_from_square(
     )
 
     report(90, "正在绘制原图折痕…")
-    overlay_uri, topology_uri = _render_raw_primary_previews(
+    source_uri, overlay_uri, topology_uri, redraw_uri = _render_raw_primary_previews(
         square,
         raw_report,
         topology,
@@ -250,6 +256,8 @@ def analyze_raw_primary_from_square(
         "cp_available": False,
         "cp": None,
         "cp_draft": draft_diagnostics,
+        "source_data_uri": source_uri,
+        "redraw_data_uri": redraw_uri,
         "overlay_data_uri": overlay_uri,
         "reconstruction_data_uri": topology_uri,
         "warnings": warnings,

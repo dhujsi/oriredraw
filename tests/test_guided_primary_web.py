@@ -179,7 +179,13 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     assert "请直接点图上的绿色点；开始方式会出现在点旁边。" not in app
     assert "唯一的起点" in app
     assert "不再要求选择第二个起点" in app
-    assert "自动取线已结束" in app
+    assert "重绘已结束" in app
+    assert 'id="layer-redraw"' in html
+    assert 'id="layer-source"' in html
+    assert 'data-view="overlay"' not in html
+    assert 'data-view="clean"' not in html
+    assert "原图折痕" not in html
+    assert "原图线条" not in html
     assert "initialRawSelection" in app
     assert "下面是可选的补充方式，不选也可以" not in app
     assert "红线：原图为红色，或无色线按红色输出" in html

@@ -44,6 +44,8 @@ class RawPrimaryBridgeTest(unittest.TestCase):
         self.assertFalse(payload["invariants"]["cp_is_current_draft"])
         self.assertTrue(payload["invariants"]["unsafe_raw_draft_suppressed"])
         self.assertNotIn("cp", payload["cp_draft"])
+        self.assertTrue(payload["source_data_uri"].startswith("data:image/png;base64,"))
+        self.assertTrue(payload["redraw_data_uri"].startswith("data:image/png;base64,"))
         self.assertTrue(payload["overlay_data_uri"].startswith("data:image/png;base64,"))
         self.assertTrue(
             payload["reconstruction_data_uri"].startswith("data:image/png;base64,")

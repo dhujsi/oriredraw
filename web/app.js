@@ -5,7 +5,10 @@ const dropZone = document.querySelector('#drop-zone');
 const emptyState = document.querySelector('#empty-state');
 const loading = document.querySelector('#loading');
 const resultContent = document.querySelector('#result-content');
+const sourcePreview = document.querySelector('#source-image');
 const preview = document.querySelector('#preview-image');
+const redrawLayerToggle = document.querySelector('#layer-redraw');
+const sourceLayerToggle = document.querySelector('#layer-source');
 const warnings = document.querySelector('#warnings');
 const stats = document.querySelector('#stats');
 const anchorTable = document.querySelector('#anchor-table');
@@ -529,6 +532,22 @@ function setResultAvailability(cpAvailable, projectAvailable = Boolean(currentRe
   }));
 }
 
+function syncPreviewLayers() {
+  if (!sourcePreview || !preview) return;
+  const showSource = sourceLayerToggle?.checked !== false;
+  const showRedraw = redrawLayerToggle?.checked !== false;
+  sourcePreview.classList.toggle('hidden', !showSource);
+  preview.classList.toggle('hidden', !showRedraw);
+  sourcePreview.setAttribute('aria-hidden', String(!showSource));
+  preview.setAttribute('aria-hidden', String(!showRedraw));
+}
+
+function setPreviewAssets(sourceUri, redrawUri) {
+  if (sourcePreview) sourcePreview.src = sourceUri || '';
+  if (preview) preview.src = redrawUri || '';
+  syncPreviewLayers();
+}
+
 function beginImageFlow() {
   emptyState.classList.add('hidden');
   resultContent.classList.add('hidden');
@@ -583,17 +602,6 @@ function isRawPrimaryResult(data) {
 function configureResultView({ rawPrimary }) {
   previewFigure?.classList.remove('playback-active');
   lineLegend?.classList.toggle('hidden', !rawPrimary);
-  const overlayButton = document.querySelector('.view-tabs button[data-view="overlay"]');
-  const cleanButton = document.querySelector('.view-tabs button[data-view="clean"]');
-  const playbackButton = document.querySelector('.view-tabs button[data-view="playback"]');
-  if (overlayButton) overlayButton.textContent = rawPrimary ? '原图折痕' : '叠加检查';
-  if (cleanButton) cleanButton.textContent = rawPrimary ? '原图线条' : '纯重绘';
-  playbackButton?.classList.toggle('hidden', rawPrimary);
-  document.querySelectorAll('.view-tabs button').forEach(button => {
-    const active = button.dataset.view === 'overlay';
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
 }
 
 function renderRawPrimaryStats(data) {
@@ -644,8 +652,8 @@ function updateRawPrimaryGuidedCopy(root, report) {
   const blockerLabels = [...new Set((report.cp_output_contract?.blockers || [])
     .map(item => guidedBlockerLabel(item?.code))
     .filter(Boolean))];
-  resultEyebrow.textContent = '自动取线';
-  resultTitle.textContent = '自动取线已结束';
+  resultEyebrow.textContent = '重绘';
+  resultTitle.textContent = '重绘已结束';
   const messages = [
     `程序已从唯一的起点自动检验合法方向，并加入 ${canonicalAdded} 条有连续原图证据的 22.5° 系折痕。`,
     ...(unresolved > 0 ? [`仍有 ${unresolved} 条观测线无法由当前证明链确定。`] : []),
@@ -665,9 +673,10 @@ function renderRawPrimaryResult(data) {
   resultEyebrow.textContent = '原图分析';
   resultTitle.textContent = '请先选一个起点';
   configureResultView({ rawPrimary: true });
-  preview.src = data.overlay_data_uri;
-  preview.dataset.overlay = data.overlay_data_uri;
-  preview.dataset.clean = data.reconstruction_data_uri;
+  setPreviewAssets(
+    data.source_data_uri || data.overlay_data_uri,
+    data.redraw_data_uri || data.reconstruction_data_uri,
+  );
   warnings.innerHTML = rawPrimaryWarnings(data).map(message => `<p>${escapeHtml(message)}</p>`).join('');
   renderRawPrimaryStats(data);
   versionTabs.classList.add('hidden');
@@ -716,9 +725,10 @@ function renderResult(data) {
 }
 
 function renderVersion(version, root) {
-  preview.src = version.overlay_data_uri;
-  preview.dataset.overlay = version.overlay_data_uri;
-  preview.dataset.clean = version.reconstruction_data_uri;
+  setPreviewAssets(
+    root.source_data_uri || version.source_data_uri || version.overlay_data_uri,
+    version.redraw_data_uri || version.reconstruction_data_uri,
+  );
 
   warnings.innerHTML = (version.warnings || root.warnings || []).map(message => `<p>${escapeHtml(message)}</p>`).join('');
   const data = version.stats ? version : root;
@@ -1554,9 +1564,6 @@ function renderBoundaryRelations(root) {
     boundaryRelationIntro.classList.toggle('hidden', completed);
     if (completed) {
       boundaryRelationIntro.textContent = '';
-    } else if (isStartPoint) {
-      marker.setAttribute('aria-disabled', candidate.selectable ? 'false' : 'true');
-      marker.setAttribute('aria-label', `${candidate.label || '对角线起点'}，点击确认是否使用`);
     } else {
       boundaryRelationIntro.textContent = isRawPrimaryResult(root)
         ? '点一个绿色点，在点旁边选择开始方式。'
@@ -1791,16 +1798,8 @@ function renderCorePoint(anchors) {
   corePointCoordinate.textContent = `x = ${expressionX} · y = ${expressionY}`;
 }
 
-document.querySelectorAll('.view-tabs button').forEach(button => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('.view-tabs button').forEach(item => {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-selected', String(active));
-    });
-    preview.src = button.dataset.view === 'overlay' ? preview.dataset.overlay : preview.dataset.clean;
-  });
-});
+redrawLayerToggle?.addEventListener('change', syncPreviewLayers);
+sourceLayerToggle?.addEventListener('change', syncPreviewLayers);
 
 downloadButton.addEventListener('click', () => {
   if (

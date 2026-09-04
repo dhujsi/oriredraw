@@ -7980,6 +7980,7 @@ def _build_exact_construction_variants(
                 "stats": variant_stats,
                 "warnings": variant_warnings,
                 "constructions": constructions,
+                "redraw_data_uri": _transparent_preview_data_uri(reconstruction),
                 "overlay_data_uri": _png_data_uri(overlay),
                 "reconstruction_data_uri": _png_data_uri(reconstruction),
             }
@@ -8395,6 +8396,14 @@ def _png_data_uri(image: np.ndarray) -> str:
     if not success:
         raise ReconstructionError("生成预览图失败。")
     return "data:image/png;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
+def _transparent_preview_data_uri(image: np.ndarray) -> str:
+    """Encode a white-backed preview as a transparent redraw layer."""
+    rgba = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    white = np.all(image >= 245, axis=2)
+    rgba[:, :, 3] = np.where(white, 0, 255).astype(np.uint8)
+    return _png_data_uri(rgba)
 
 
 def reconstruct(
@@ -8853,6 +8862,8 @@ def reconstruct(
         "anchors": anchors,
         "warnings": warnings,
         "constructions": [],
+        "source_data_uri": _png_data_uri(square),
+        "redraw_data_uri": _transparent_preview_data_uri(reconstruction),
         "variants": variants,
         "overlay_data_uri": _png_data_uri(overlay),
         "reconstruction_data_uri": _png_data_uri(reconstruction),
