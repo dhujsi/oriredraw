@@ -95,6 +95,22 @@ def test_guided_boundary_ui_stops_after_one_reversible_initial_relation():
     assert 'id="boundary-relation-undo"' in html
 
 
+def test_guided_boundary_reports_progress_while_calculating_after_start_selection():
+    app = _source("web/app.js")
+    html = _source("web/index.html")
+    worker = _source("web/pyodide-worker.js")
+
+    assert 'id="guided-progress"' in html
+    assert 'id="guided-progress-track"' in html
+    assert "updateGuidedProgress" in app
+    assert "beginGuidedProgress();" in app
+    assert "endGuidedProgress();" in app
+    assert "data.stage === 'guided-boundary'" in app
+    assert "async function guidedBoundaryInBrowser(result, selection, id)" in worker
+    assert "announce('guided-boundary'" in worker
+    assert "剩余时间无法预估" in worker
+
+
 def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
     app = _source("web/app.js")
     html = _source("web/index.html")

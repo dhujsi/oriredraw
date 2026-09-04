@@ -42,8 +42,8 @@ const WEB_ENGINE_VERSION = '20260903-topology-anchored-rays-v1';
 let pyodide;
 let readyPromise;
 
-function announce(stage, message, percent = null, id = null) {
-  self.postMessage({ type: 'status', stage, message, percent, id });
+function announce(stage, message, percent = null, id = null, indeterminate = false) {
+  self.postMessage({ type: 'status', stage, message, percent, id, indeterminate });
 }
 
 async function initialize() {
@@ -127,17 +127,21 @@ analyze_raw_primary_json(Path("${inputPath}").read_bytes(), _oriredraw_raw_setti
   }
 }
 
-async function guidedBoundaryInBrowser(result, selection) {
+async function guidedBoundaryInBrowser(result, selection, id) {
   await ensureReady();
+  announce('guided-boundary', '正在准备本次起点推导…', 8, id);
   pyodide.globals.set('_oriredraw_guided_result_json', JSON.stringify(result));
   pyodide.globals.set('_oriredraw_guided_selection_json', JSON.stringify(selection));
+  announce('guided-boundary', '正在根据起点计算折痕，剩余时间无法预估…', 35, id, true);
   try {
-    return pyodide.runPython(`
+    const json = pyodide.runPython(`
 build_guided_boundary_report_json(
     _oriredraw_guided_result_json,
     _oriredraw_guided_selection_json,
 )
     `);
+    announce('guided-boundary', '正在整理推导结果…', 96, id);
+    return json;
   } finally {
     pyodide.globals.delete('_oriredraw_guided_result_json');
     pyodide.globals.delete('_oriredraw_guided_selection_json');
@@ -168,7 +172,7 @@ self.onmessage = async event => {
       return;
     }
     if (type === 'guided-boundary') {
-      const json = await guidedBoundaryInBrowser(event.data.result, event.data.selection);
+      const json = await guidedBoundaryInBrowser(event.data.result, event.data.selection, id);
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
       return;
     }

@@ -228,6 +228,14 @@
 
           <div class="version-tabs hidden" id="version-tabs" role="tablist" aria-label="构造版本"></div>
 
+          <div class="guided-progress hidden" id="guided-progress" aria-live="polite">
+            <p id="guided-progress-stage">正在根据起点计算折痕…</p>
+            <div class="progress-block">
+              <div class="progress-track" id="guided-progress-track" role="progressbar" aria-label="推导进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="正在计算"><i></i></div>
+              <b id="guided-progress-value">0%</b>
+            </div>
+          </div>
+
           <div class="line-legend hidden" id="line-legend" aria-label="线条颜色说明">
             <span><i class="line-legend-swatch red" aria-hidden="true"></i>红线：原图为红色，或无色线按红色输出</span>
             <span><i class="line-legend-swatch blue" aria-hidden="true"></i>蓝线：原图标为蓝色</span>

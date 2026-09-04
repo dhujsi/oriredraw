@@ -65,6 +65,10 @@ const loadingStage = document.querySelector('#loading-stage');
 const loadingNote = document.querySelector('#loading-note');
 const loadingProgress = document.querySelector('#loading-progress');
 const loadingProgressValue = document.querySelector('#loading-progress-value');
+const guidedProgress = document.querySelector('#guided-progress');
+const guidedProgressTrack = document.querySelector('#guided-progress-track');
+const guidedProgressStage = document.querySelector('#guided-progress-stage');
+const guidedProgressValue = document.querySelector('#guided-progress-value');
 const corePointCanvas = document.querySelector('#core-point-canvas');
 const corePointCard = document.querySelector('#core-point-card');
 const corePointTitle = document.querySelector('#core-point-title');
@@ -106,6 +110,14 @@ worker.addEventListener('message', event => {
       updateProgress(Number(data.percent ?? 0), data.message);
       return;
     }
+    if (data.stage === 'guided-boundary') {
+      updateGuidedProgress(
+        Number(data.percent ?? 0),
+        data.message,
+        Boolean(data.indeterminate),
+      );
+      return;
+    }
     setEngineStatus(data.stage === 'ready' ? 'ready' : 'loading', data.message);
     return;
   }
@@ -135,6 +147,31 @@ function updateProgress(percent, message) {
   loadingProgress.querySelector('i').style.width = `${value}%`;
   loadingProgressValue.textContent = `${value}%`;
   loadingStage.textContent = message || '正在处理…';
+}
+
+function updateGuidedProgress(percent, message, indeterminate = false) {
+  if (!guidedProgress || !guidedProgressTrack) return;
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  guidedProgressTrack.setAttribute('aria-valuenow', String(value));
+  guidedProgressTrack.setAttribute(
+    'aria-valuetext',
+    indeterminate ? '正在计算，剩余时间无法预估' : `${value}%`,
+  );
+  guidedProgressTrack.querySelector('i').style.width = `${value}%`;
+  guidedProgressValue.textContent = indeterminate ? '计算中' : `${value}%`;
+  guidedProgressStage.textContent = message || '正在计算折痕…';
+  guidedProgress.classList.toggle('indeterminate', indeterminate);
+}
+
+function beginGuidedProgress() {
+  if (!guidedProgress) return;
+  updateGuidedProgress(8, '正在准备本次起点推导…');
+  guidedProgress.classList.remove('hidden');
+}
+
+function endGuidedProgress() {
+  guidedProgress?.classList.add('hidden');
+  guidedProgress?.classList.remove('indeterminate');
 }
 
 function cleanWorkerError(message) {
@@ -1666,6 +1703,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
     ? guidedMvAssignments(root)
     : normalizeGuidedMvAssignments(segmentLineTypes);
   setBoundaryRelationBusy(true);
+  beginGuidedProgress();
   boundaryRelationStatus.textContent = '正在根据你的选择更新结果，请稍候…';
   try {
     const report = await callWorker('guided-boundary', {
@@ -1695,6 +1733,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
       boundaryRelationStatus.textContent = `更新失败：${cleanWorkerError(error.message)}`;
     }
   } finally {
+    endGuidedProgress();
     if (currentResult === root) {
       setBoundaryRelationBusy(false);
       window.scrollTo(0, previousScrollY);
