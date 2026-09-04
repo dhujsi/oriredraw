@@ -123,6 +123,21 @@ def test_guided_result_rebuilds_a_playable_observed_to_derived_trace():
     assert "rebuildTrace();" in playback
 
 
+def test_guided_selection_has_a_persistent_guide_layer_and_hides_replay_until_start():
+    app = _source("web/app.js")
+    html = _source("web/index.html")
+    playback = _source("web/playback.js")
+    style = _source("web/style.css")
+
+    assert 'id="layer-guidance"' in html
+    assert "guidanceLayerToggle" in app
+    assert "data-guidance-visible" in app
+    assert "guidance-hidden" in style
+    assert "syncPlaybackTabVisibility" in playback
+    assert "guided_raw_primary_v1" in playback
+    assert "playbackTab.classList.toggle('hidden', awaitingStart)" in playback
+
+
 def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():
     app = _source("web/app.js")
     html = _source("web/index.html")

@@ -240,13 +240,14 @@
             <span><i class="line-legend-swatch red" aria-hidden="true"></i>红线：原图为红色，或无色线按红色输出</span>
             <span><i class="line-legend-swatch blue" aria-hidden="true"></i>蓝线：原图标为蓝色</span>
           </div>
+          <fieldset class="layer-toggles" aria-label="显示图层">
+            <legend data-i18n="layerLegend">显示</legend>
+            <label><input type="checkbox" id="layer-redraw" checked><span data-i18n="layerRedraw">重绘</span></label>
+            <label><input type="checkbox" id="layer-source" checked><span data-i18n="layerSource">原图</span></label>
+            <label><input type="checkbox" id="layer-guidance" checked><span data-i18n="layerGuidance">选点与长度标注</span></label>
+          </fieldset>
           <div class="result-visuals">
             <figure class="preview">
-              <fieldset class="layer-toggles" aria-label="显示图层">
-                <legend data-i18n="layerLegend">显示</legend>
-                <label><input type="checkbox" id="layer-redraw" checked><span data-i18n="layerRedraw">重绘</span></label>
-                <label><input type="checkbox" id="layer-source" checked><span data-i18n="layerSource">原图</span></label>
-              </fieldset>
               <div class="preview-stage" id="preview-stage">
                 <svg class="mv-segment-layer hidden" id="mv-segment-layer" viewBox="-200 -200 400 400" preserveAspectRatio="xMidYMid meet" aria-label="逐段山谷线标注层"></svg>
                 <img id="source-image" class="source-image" alt="原图">
@@ -327,8 +328,8 @@
     </div>
   </dialog>
 
-  <script type="module" src="./i18n.js"></script>
-  <script src="./playback.js?v=20260904-replay-v1"></script>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./i18n.js?v=20260904-selection-layers-v1"></script>
+  <script src="./playback.js?v=20260904-selection-layers-v1"></script>
+  <script type="module" src="./app.js?v=20260904-selection-layers-v1"></script>
 </body>
 </html>

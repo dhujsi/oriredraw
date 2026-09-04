@@ -207,6 +207,7 @@ body.corner-editor-open { overflow: hidden; }
 .source-image { z-index: 0; }
 #preview-image { z-index: 1; }
 .layer-toggles { display: flex; align-items: center; gap: 11px; width: fit-content; margin: 0 0 8px; padding: 5px 8px; border: 1px solid var(--line); color: var(--muted); font: 700 10px/1.2 ui-monospace, Consolas, monospace; }
+.result-content > .layer-toggles { margin-top: 12px; }
 .layer-toggles legend { padding: 0 4px; color: var(--ink); }
 .layer-toggles label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
 .layer-toggles input { margin: 0; accent-color: var(--green); }
@@ -221,6 +222,10 @@ body.corner-editor-open { overflow: hidden; }
 .line-legend-swatch.red { background: #d53d35; }
 .line-legend-swatch.blue { background: #2878d0; }
 .topology-point-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.preview-stage.guidance-hidden .topology-point-layer,
+.preview-stage.guidance-hidden .topology-point-tooltip,
+.preview-stage.guidance-hidden .topology-point-popover,
+.preview-stage.guidance-hidden .topology-point-confirmation { display: none !important; }
 .topology-point-marker { position: absolute; width: 17px; height: 17px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: var(--acid); box-shadow: 0 0 0 2px var(--ink); transform: translate(-50%, -50%); cursor: crosshair; pointer-events: auto; }
 .topology-point-marker.boundary-relation-point { width: 15px; height: 15px; background: #fff; border-color: var(--green); border-style: solid; cursor: pointer; }
 .topology-point-marker.topology-point-start { background: var(--acid); border-color: var(--green); cursor: pointer; }

@@ -7,8 +7,10 @@ const loading = document.querySelector('#loading');
 const resultContent = document.querySelector('#result-content');
 const sourcePreview = document.querySelector('#source-image');
 const preview = document.querySelector('#preview-image');
+const previewStage = document.querySelector('#preview-stage');
 const redrawLayerToggle = document.querySelector('#layer-redraw');
 const sourceLayerToggle = document.querySelector('#layer-source');
+const guidanceLayerToggle = document.querySelector('#layer-guidance');
 const warnings = document.querySelector('#warnings');
 const stats = document.querySelector('#stats');
 const anchorTable = document.querySelector('#anchor-table');
@@ -573,10 +575,13 @@ function syncPreviewLayers() {
   if (!sourcePreview || !preview) return;
   const showSource = sourceLayerToggle?.checked !== false;
   const showRedraw = redrawLayerToggle?.checked !== false;
+  const showGuidance = guidanceLayerToggle?.checked !== false;
   sourcePreview.classList.toggle('hidden', !showSource);
   preview.classList.toggle('hidden', !showRedraw);
   sourcePreview.setAttribute('aria-hidden', String(!showSource));
   preview.setAttribute('aria-hidden', String(!showRedraw));
+  previewStage?.classList.toggle('guidance-hidden', !showGuidance);
+  previewStage?.setAttribute('data-guidance-visible', String(showGuidance));
 }
 
 function setPreviewAssets(sourceUri, redrawUri) {
@@ -1842,6 +1847,7 @@ function renderCorePoint(anchors) {
 
 redrawLayerToggle?.addEventListener('change', syncPreviewLayers);
 sourceLayerToggle?.addEventListener('change', syncPreviewLayers);
+guidanceLayerToggle?.addEventListener('change', syncPreviewLayers);
 
 downloadButton.addEventListener('click', () => {
   if (

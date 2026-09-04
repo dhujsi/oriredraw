@@ -34,6 +34,7 @@
           state.root = payload;
           state.versionIndex = 0;
           state.version = payload;
+          syncPlaybackTabVisibility();
           rebuildTrace();
           state.restoring = false;
         }
@@ -118,6 +119,13 @@
   playbackTab.setAttribute('role', 'tab');
   playbackTab.setAttribute('aria-selected', 'false');
   viewTabs.append(playbackTab);
+
+  function syncPlaybackTabVisibility() {
+    const awaitingStart = state.root?.mode === 'guided_raw_primary_v1'
+      && !(state.root.shadow_search?.guided_boundary?.selection_steps || []).length;
+    playbackTab.classList.toggle('hidden', awaitingStart);
+  }
+  syncPlaybackTabVisibility();
 
   const panel = document.createElement('div');
   panel.className = 'oriredraw-playback';
@@ -353,6 +361,7 @@
     state.versionIndex = 0;
     state.finalImage = null;
     state.finalImageUri = '';
+    syncPlaybackTabVisibility();
     rebuildTrace();
   });
 
