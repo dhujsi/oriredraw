@@ -212,7 +212,7 @@
         <div id="loading" class="loading hidden" aria-live="polite">
               <span></span><p id="loading-stage" data-i18n="loadingInitial">正在读取图像和交点…</p><small id="loading-note" data-i18n="loadingSlow">先显示原图和绿色起点；你只需选择一个起点。</small>
           <div class="progress-block">
-            <div class="progress-track" id="loading-progress" role="progressbar" aria-label="重绘进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+            <div class="progress-track" id="loading-progress" role="progressbar" aria-label="图像分析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
             <b id="loading-progress-value">0%</b>
           </div>
         </div>
@@ -228,11 +228,11 @@
 
           <div class="version-tabs hidden" id="version-tabs" role="tablist" aria-label="构造版本"></div>
 
-          <div class="guided-progress hidden" id="guided-progress" aria-live="polite">
+          <div class="guided-progress hidden" id="guided-progress" aria-live="polite" aria-busy="false">
             <p id="guided-progress-stage">正在根据起点计算折痕…</p>
             <div class="progress-block">
-              <div class="progress-track" id="guided-progress-track" role="progressbar" aria-label="推导进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="正在计算"><i></i></div>
-              <b id="guided-progress-value">0%</b>
+              <div class="progress-track" id="guided-progress-track" role="progressbar" aria-label="折痕计算状态" aria-valuemin="0" aria-valuemax="100" aria-valuetext="正在计算"><i></i></div>
+              <b id="guided-progress-value">计算中</b>
             </div>
           </div>
 
@@ -326,8 +326,8 @@
     </div>
   </dialog>
 
-  <script type="module" src="./i18n.js?v=20260904-guide-hover-v3"></script>
-  <script src="./playback.js?v=20260904-guide-hover-v3"></script>
-  <script type="module" src="./app.js?v=20260904-guide-hover-v3"></script>
+  <script type="module" src="./i18n.js?v=20260905-flow-timing-v1"></script>
+  <script src="./playback.js?v=20260905-flow-timing-v1"></script>
+  <script type="module" src="./app.js?v=20260905-flow-timing-v1"></script>
 </body>
 </html>

@@ -17,6 +17,7 @@
     worker: null,
     projectRestorePayload: null,
     restoring: false,
+    playbackControlsReady: false,
   };
 
   class ObservedWorker extends NativeWorker {
@@ -34,8 +35,8 @@
           state.root = payload;
           state.versionIndex = 0;
           state.version = payload;
-          syncPlaybackTabVisibility();
           rebuildTrace();
+          syncPlaybackTabVisibility();
           state.restoring = false;
         }
       });
@@ -123,7 +124,17 @@
   function syncPlaybackTabVisibility() {
     const awaitingStart = state.root?.mode === 'guided_raw_primary_v1'
       && !(state.root.shadow_search?.guided_boundary?.selection_steps || []).length;
-    playbackTab.classList.toggle('hidden', awaitingStart);
+    const available = Boolean(state.root) && !awaitingStart && state.groups.length > 0;
+    playbackTab.classList.toggle('hidden', !available);
+    viewTabs.classList.toggle('hidden', !available);
+    playbackTab.setAttribute('aria-hidden', String(!available));
+    if (!available && state.playbackControlsReady) {
+      state.active = false;
+      previewFigure.classList.remove('playback-active');
+      stopPlayback();
+      playbackTab.classList.remove('active');
+      playbackTab.setAttribute('aria-selected', 'false');
+    }
   }
   syncPlaybackTabVisibility();
 
@@ -156,6 +167,8 @@
   const underlayLabel = panel.querySelector('.oriredraw-playback-underlay span');
   const caption = panel.querySelector('.oriredraw-playback-caption');
   const context = canvas.getContext('2d');
+  state.playbackControlsReady = true;
+  syncPlaybackTabVisibility();
 
   function isEnglish() {
     return document.documentElement.lang.toLowerCase().startsWith('en');
@@ -351,6 +364,7 @@
     state.finalImage = null;
     state.finalImageUri = '';
     rebuildTrace();
+    syncPlaybackTabVisibility();
   }
 
   document.addEventListener('oriredraw:guided-result', event => {
@@ -361,8 +375,8 @@
     state.versionIndex = 0;
     state.finalImage = null;
     state.finalImageUri = '';
-    syncPlaybackTabVisibility();
     rebuildTrace();
+    syncPlaybackTabVisibility();
   });
 
   document.addEventListener('click', event => {

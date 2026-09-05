@@ -105,6 +105,8 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     assert "updateGuidedProgress" in app
     assert "beginGuidedProgress();" in app
     assert "endGuidedProgress();" in app
+    assert "updateGuidedProgress(0, '正在准备本次起点推导…', true);" in app
+    assert "removeAttribute('aria-valuenow')" in app
     assert "data.stage === 'guided-boundary'" in app
     assert "async function guidedBoundaryInBrowser(result, selection, id)" in worker
     assert "announce('guided-boundary'" in worker
@@ -135,7 +137,9 @@ def test_guided_selection_has_a_persistent_guide_layer_and_hides_replay_until_st
     assert "guidance-hidden" in style
     assert "syncPlaybackTabVisibility" in playback
     assert "guided_raw_primary_v1" in playback
-    assert "playbackTab.classList.toggle('hidden', awaitingStart)" in playback
+    assert "const available = Boolean(state.root) && !awaitingStart && state.groups.length > 0;" in playback
+    assert "playbackTab.classList.toggle('hidden', !available)" in playback
+    assert "state.playbackControlsReady" in playback
 
 
 def test_guided_mv_output_is_read_only_and_has_no_gray_line_editor():

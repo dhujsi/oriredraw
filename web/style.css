@@ -182,7 +182,7 @@ body.corner-editor-open { overflow: hidden; }
 .progress-track { height: 10px; overflow: hidden; border: 1px solid var(--ink); background: #fff; }
 .progress-track i { display: block; width: 0; height: 100%; background: var(--acid); transition: width .25s ease; }
 .progress-block b { font: 700 12px ui-monospace, monospace; text-align: right; }
-.guided-progress { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--ink); background: #f5f5ef; }
+.guided-progress { position: sticky; top: 10px; z-index: 12; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--ink); background: #f5f5ef; box-shadow: 3px 3px 0 rgba(23, 23, 20, .12); }
 .guided-progress p { margin: 0; font-size: 11px; font-weight: 700; }
 .guided-progress .progress-block { width: min(440px, 100%); margin-top: 10px; }
 .guided-progress.indeterminate .progress-track i { width: 34%; animation: progress-indeterminate 1.2s ease-in-out infinite; }

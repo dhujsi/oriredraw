@@ -37,7 +37,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260903-topology-anchored-rays-v1';
+const WEB_ENGINE_VERSION = '20260905-flow-timing-v1';
 
 let pyodide;
 let readyPromise;
@@ -129,10 +129,10 @@ analyze_raw_primary_json(Path("${inputPath}").read_bytes(), _oriredraw_raw_setti
 
 async function guidedBoundaryInBrowser(result, selection, id) {
   await ensureReady();
-  announce('guided-boundary', '正在准备本次起点推导…', 8, id);
+  announce('guided-boundary', '正在准备本次起点推导…', null, id, true);
   pyodide.globals.set('_oriredraw_guided_result_json', JSON.stringify(result));
   pyodide.globals.set('_oriredraw_guided_selection_json', JSON.stringify(selection));
-  announce('guided-boundary', '正在根据起点计算折痕，剩余时间无法预估…', 35, id, true);
+  announce('guided-boundary', '正在根据起点计算折痕，剩余时间无法预估…', null, id, true);
   try {
     const json = pyodide.runPython(`
 build_guided_boundary_report_json(
@@ -140,7 +140,7 @@ build_guided_boundary_report_json(
     _oriredraw_guided_selection_json,
 )
     `);
-    announce('guided-boundary', '正在整理推导结果…', 96, id);
+    announce('guided-boundary', '正在整理推导结果…', null, id, true);
     return json;
   } finally {
     pyodide.globals.delete('_oriredraw_guided_result_json');

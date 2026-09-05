@@ -80,7 +80,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260903-topology-anchored-rays-v1';
+const WEB_ENGINE_VERSION = '20260905-flow-timing-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -154,12 +154,15 @@ function updateProgress(percent, message) {
 function updateGuidedProgress(percent, message, indeterminate = false) {
   if (!guidedProgress || !guidedProgressTrack) return;
   const value = Math.max(0, Math.min(100, Math.round(percent)));
-  guidedProgressTrack.setAttribute('aria-valuenow', String(value));
-  guidedProgressTrack.setAttribute(
-    'aria-valuetext',
-    indeterminate ? '正在计算，剩余时间无法预估' : `${value}%`,
-  );
-  guidedProgressTrack.querySelector('i').style.width = `${value}%`;
+  if (indeterminate) {
+    guidedProgressTrack.removeAttribute('aria-valuenow');
+    guidedProgressTrack.setAttribute('aria-valuetext', '正在计算，剩余时间无法预估');
+    guidedProgressTrack.querySelector('i').style.width = '';
+  } else {
+    guidedProgressTrack.setAttribute('aria-valuenow', String(value));
+    guidedProgressTrack.setAttribute('aria-valuetext', `${value}%`);
+    guidedProgressTrack.querySelector('i').style.width = `${value}%`;
+  }
   guidedProgressValue.textContent = indeterminate ? '计算中' : `${value}%`;
   guidedProgressStage.textContent = message || '正在计算折痕…';
   guidedProgress.classList.toggle('indeterminate', indeterminate);
@@ -167,11 +170,13 @@ function updateGuidedProgress(percent, message, indeterminate = false) {
 
 function beginGuidedProgress() {
   if (!guidedProgress) return;
-  updateGuidedProgress(8, '正在准备本次起点推导…');
+  guidedProgress.setAttribute('aria-busy', 'true');
+  updateGuidedProgress(0, '正在准备本次起点推导…', true);
   guidedProgress.classList.remove('hidden');
 }
 
 function endGuidedProgress() {
+  guidedProgress?.setAttribute('aria-busy', 'false');
   guidedProgress?.classList.add('hidden');
   guidedProgress?.classList.remove('indeterminate');
 }
