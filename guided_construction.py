@@ -14,7 +14,7 @@ from collections import Counter
 import hashlib
 import json
 import math
-from typing import Any, Hashable, Iterable, Mapping
+from typing import Any, Callable, Hashable, Iterable, Mapping
 
 from boundary_relations import detect_boundary_ratio_relations
 from constrained_angle_candidates import build_constrained_angle_candidates
@@ -2489,6 +2489,7 @@ def _next_relation_rank_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
 def build_guided_boundary_report(
     result: Mapping[str, Any],
     selection: Mapping[str, Any] | None,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
     """Propagate an ordered human selection history on one observed graph.
 
@@ -2498,6 +2499,11 @@ def build_guided_boundary_report(
     shorter step list; no parallel reconstruction state is retained.
     """
 
+    def emit_progress(percent: int, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(int(percent), str(message))
+
+    emit_progress(2, "正在读取本次起点和原图拓扑…")
     raw_report = result.get("raw_crease_evidence")
     raw_available = (
         isinstance(raw_report, Mapping)
@@ -2519,6 +2525,7 @@ def build_guided_boundary_report(
     selection_steps, invalid_selection_steps = _selection_steps(selection)
     catalog = build_boundary_relation_catalog(result)
     selected_relations, missing_relation_ids = _selected_relations(catalog, selection)
+    emit_progress(16, "正在检查起点关系和精确坐标…")
     start_point_catalog = [
         dict(item)
         for item in list(result.get("topology_point_start_candidates") or [])
@@ -2635,6 +2642,7 @@ def build_guided_boundary_report(
         graph, _, anchors, details = _legacy_trace_graph(trace)
         graph, suppressed_roots = _constrain_initial_sources(graph, details)
         observed_graph_source = "playback_trace"
+    emit_progress(32, "原图拓扑已建立，开始应用起点关系…")
     maximum = float(_analysis_size(result) - 1)
     relation_index = {str(item.get("id") or ""): item for item in catalog}
     relation_operations: list[ConstructionOperation] = []
@@ -2643,6 +2651,7 @@ def build_guided_boundary_report(
     selected_point_operations: list[ConstructionOperation] = []
     selected_point_history: list[dict[str, Any]] = []
     propagation_reports: list[Mapping[str, Any]] = []
+    selection_total = max(1, len(selection_steps))
     for selection_round, step in enumerate(selection_steps, start=1):
         if step["kind"] == "boundary_relation":
             relation = relation_index[step["id"]]
@@ -2675,6 +2684,10 @@ def build_guided_boundary_report(
                     "side": relation.get("side"),
                     "direct_seed_crease_count": int(guided_candidates),
                 }
+            )
+            emit_progress(
+                40 + int(20 * selection_round / selection_total),
+                f"正在应用第 {selection_round}/{len(selection_steps)} 个起点关系…",
             )
             continue
 
@@ -2711,6 +2724,10 @@ def build_guided_boundary_report(
                         selected_start_point.get("projected_new_crease_count", 0)
                     ),
                 }
+            )
+            emit_progress(
+                40 + int(20 * selection_round / selection_total),
+                f"正在应用第 {selection_round}/{len(selection_steps)} 个起点关系…",
             )
             continue
         prefix_propagation = propagate_exact_geometry(graph, maximum=maximum)
@@ -2798,6 +2815,10 @@ def build_guided_boundary_report(
                 ),
             }
         )
+        emit_progress(
+            40 + int(20 * selection_round / selection_total),
+            f"正在应用第 {selection_round}/{len(selection_steps)} 个起点关系…",
+        )
 
     automatic_point_operations: list[ConstructionOperation] = []
     automatic_point_history: list[dict[str, Any]] = []
@@ -2805,6 +2826,7 @@ def build_guided_boundary_report(
     core_reference_history: list[dict[str, Any]] = []
     initial_propagation = propagate_exact_geometry(graph, maximum=maximum)
     propagation_reports.append(initial_propagation)
+    emit_progress(68, "正在沿精确节点传播已有折痕…")
     core_reference_report: dict[str, Any] = {
         "enabled": False,
         "status": "not_available_without_raw_topology",
@@ -2831,6 +2853,7 @@ def build_guided_boundary_report(
             core_reference_history.append(core_history)
         if core_propagation is not None:
             propagation_reports.append(core_propagation)
+    emit_progress(78, "正在整理传播结果和检查未解释线段…")
     geometry_propagation = _combine_propagation_reports(propagation_reports)
     relation_summaries = [
         _operation_summary(operation, details)
@@ -2956,6 +2979,7 @@ def build_guided_boundary_report(
         geometry_snapshot,
         topology_report,
     )
+    emit_progress(88, "正在生成推导过程和拓扑证明记录…")
     output_note = (
         "本阶段只解释原图已有有限折痕，尚未生成 CP；不会把缺少的三等分点或折痕自动补造出来。"
         if raw_available
@@ -3201,14 +3225,19 @@ def build_guided_boundary_report(
     else:
         report["phase"] = "proof_frontier_stalled"
     report["next_selection_required"] = False
+    emit_progress(100, "起点推导完成")
     return report
 
 
-def build_guided_boundary_report_json(result_json: str, selection_json: str) -> str:
+def build_guided_boundary_report_json(
+    result_json: str,
+    selection_json: str,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> str:
     result = json.loads(result_json or "{}")
     selection = json.loads(selection_json or "{}")
     return json.dumps(
-        build_guided_boundary_report(result, selection),
+        build_guided_boundary_report(result, selection, progress_callback),
         ensure_ascii=False,
         separators=(",", ":"),
     )

@@ -105,12 +105,13 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     assert "updateGuidedProgress" in app
     assert "beginGuidedProgress();" in app
     assert "endGuidedProgress();" in app
-    assert "updateGuidedProgress(0, '正在准备本次起点推导…', true);" in app
-    assert "removeAttribute('aria-valuenow')" in app
+    assert "updateGuidedProgress(0, '正在准备本次起点推导…');" in app
+    assert "formatProgressDuration" in app
+    assert "预计剩余" in app
     assert "data.stage === 'guided-boundary'" in app
     assert "async function guidedBoundaryInBrowser(result, selection, id)" in worker
     assert "announce('guided-boundary'" in worker
-    assert "剩余时间无法预估" in worker
+    assert "_oriredraw_guided_progress" in worker
 
 
 def test_guided_result_rebuilds_a_playable_observed_to_derived_trace():

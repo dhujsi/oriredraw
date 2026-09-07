@@ -129,22 +129,26 @@ analyze_raw_primary_json(Path("${inputPath}").read_bytes(), _oriredraw_raw_setti
 
 async function guidedBoundaryInBrowser(result, selection, id) {
   await ensureReady();
-  announce('guided-boundary', '正在准备本次起点推导…', null, id, true);
+  announce('guided-boundary', '正在准备本次起点推导…', 0, id, false);
   pyodide.globals.set('_oriredraw_guided_result_json', JSON.stringify(result));
   pyodide.globals.set('_oriredraw_guided_selection_json', JSON.stringify(selection));
-  announce('guided-boundary', '正在根据起点计算折痕，剩余时间无法预估…', null, id, true);
+  pyodide.globals.set('_oriredraw_guided_progress', (percent, message) => {
+    announce('guided-boundary', String(message), Number(percent), id, false);
+  });
   try {
     const json = pyodide.runPython(`
 build_guided_boundary_report_json(
     _oriredraw_guided_result_json,
     _oriredraw_guided_selection_json,
+    _oriredraw_guided_progress,
 )
     `);
-    announce('guided-boundary', '正在整理推导结果…', null, id, true);
+    announce('guided-boundary', '正在整理推导结果…', 96, id, false);
     return json;
   } finally {
     pyodide.globals.delete('_oriredraw_guided_result_json');
     pyodide.globals.delete('_oriredraw_guided_selection_json');
+    pyodide.globals.delete('_oriredraw_guided_progress');
   }
 }
 

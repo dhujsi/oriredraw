@@ -96,6 +96,9 @@ let cornerView = { x0: 0, y0: 0, x1: 1, y1: 1 };
 let currentVariant = null;
 let pendingTopologyPointId = '';
 let openBoundaryPointId = '';
+let guidedProgressTimer = null;
+let guidedProgressStartedAt = 0;
+let guidedProgressPercent = 0;
 
 function callWorker(type, payload = {}, transfer = []) {
   const id = ++requestId;
@@ -154,31 +157,54 @@ function updateProgress(percent, message) {
 function updateGuidedProgress(percent, message, indeterminate = false) {
   if (!guidedProgress || !guidedProgressTrack) return;
   const value = Math.max(0, Math.min(100, Math.round(percent)));
-  if (indeterminate) {
-    guidedProgressTrack.removeAttribute('aria-valuenow');
-    guidedProgressTrack.setAttribute('aria-valuetext', '正在计算，剩余时间无法预估');
-    guidedProgressTrack.querySelector('i').style.width = '';
-  } else {
-    guidedProgressTrack.setAttribute('aria-valuenow', String(value));
-    guidedProgressTrack.setAttribute('aria-valuetext', `${value}%`);
-    guidedProgressTrack.querySelector('i').style.width = `${value}%`;
-  }
-  guidedProgressValue.textContent = indeterminate ? '计算中' : `${value}%`;
+  guidedProgressPercent = value;
+  guidedProgressTrack.setAttribute('aria-valuenow', String(value));
+  guidedProgressTrack.querySelector('i').style.width = `${value}%`;
   guidedProgressStage.textContent = message || '正在计算折痕…';
-  guidedProgress.classList.toggle('indeterminate', indeterminate);
+  guidedProgress.classList.remove('indeterminate');
+  refreshGuidedProgressEstimate();
+}
+
+function formatProgressDuration(milliseconds) {
+  const seconds = Math.max(1, Math.round(milliseconds / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分 ${seconds % 60} 秒`;
+}
+
+function refreshGuidedProgressEstimate() {
+  if (!guidedProgressValue || !guidedProgressTrack || !guidedProgressStartedAt) return;
+  const elapsed = Math.max(0, performance.now() - guidedProgressStartedAt);
+  const percent = guidedProgressPercent;
+  let summary = `已用 ${formatProgressDuration(elapsed)}`;
+  if (percent >= 10 && percent < 100) {
+    const estimatedTotal = elapsed * 100 / percent;
+    summary += ` · 预计剩余 ${formatProgressDuration(estimatedTotal - elapsed)}`;
+  } else if (percent < 100) {
+    summary += ' · 正在建立预计时间';
+  }
+  guidedProgressValue.textContent = `${percent}% · ${summary}`;
+  guidedProgressTrack.setAttribute('aria-valuetext', `${percent}% · ${summary}`);
 }
 
 function beginGuidedProgress() {
   if (!guidedProgress) return;
   guidedProgress.setAttribute('aria-busy', 'true');
-  updateGuidedProgress(0, '正在准备本次起点推导…', true);
+  guidedProgressStartedAt = performance.now();
+  guidedProgressPercent = 0;
+  clearInterval(guidedProgressTimer);
+  guidedProgressTimer = setInterval(refreshGuidedProgressEstimate, 250);
+  updateGuidedProgress(0, '正在准备本次起点推导…');
   guidedProgress.classList.remove('hidden');
 }
 
 function endGuidedProgress() {
+  clearInterval(guidedProgressTimer);
+  guidedProgressTimer = null;
   guidedProgress?.setAttribute('aria-busy', 'false');
   guidedProgress?.classList.add('hidden');
   guidedProgress?.classList.remove('indeterminate');
+  guidedProgressStartedAt = 0;
 }
 
 function cleanWorkerError(message) {
