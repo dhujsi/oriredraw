@@ -35,8 +35,10 @@
           state.root = payload;
           state.versionIndex = 0;
           state.version = payload;
+          state.active = false;
           rebuildTrace();
           syncPlaybackTabVisibility();
+          if (state.playbackControlsReady) selectView('preview');
           state.restoring = false;
         }
       });
@@ -111,35 +113,54 @@
 
   const viewTabs = document.querySelector('.view-tabs');
   const previewFigure = document.querySelector('.preview');
+  const previewStage = document.querySelector('#preview-stage');
   const previewImage = document.querySelector('#preview-image');
-  if (!viewTabs || !previewFigure || !previewImage) return;
+  if (!viewTabs || !previewFigure || !previewStage || !previewImage) return;
+
+  const previewTab = document.createElement('button');
+  previewTab.type = 'button';
+  previewTab.id = 'preview-tab';
+  previewTab.dataset.view = 'preview';
+  previewTab.setAttribute('role', 'tab');
+  previewTab.setAttribute('aria-selected', 'true');
+  previewTab.setAttribute('aria-controls', 'preview-stage');
+  previewTab.className = 'active';
+  viewTabs.append(previewTab);
 
   const playbackTab = document.createElement('button');
   playbackTab.type = 'button';
+  playbackTab.id = 'playback-tab';
   playbackTab.dataset.view = 'playback';
   playbackTab.setAttribute('role', 'tab');
   playbackTab.setAttribute('aria-selected', 'false');
+  playbackTab.setAttribute('aria-controls', 'playback-panel');
+  playbackTab.setAttribute('aria-hidden', 'true');
+  playbackTab.classList.add('hidden');
   viewTabs.append(playbackTab);
+
+  previewStage.setAttribute('role', 'tabpanel');
+  previewStage.setAttribute('aria-labelledby', 'preview-tab');
+  previewStage.tabIndex = 0;
 
   function syncPlaybackTabVisibility() {
     const awaitingStart = state.root?.mode === 'guided_raw_primary_v1'
       && !(state.root.shadow_search?.guided_boundary?.selection_steps || []).length;
     const available = Boolean(state.root) && !awaitingStart && state.groups.length > 0;
     playbackTab.classList.toggle('hidden', !available);
-    viewTabs.classList.toggle('hidden', !available);
+    viewTabs.classList.toggle('hidden', !state.root);
     playbackTab.setAttribute('aria-hidden', String(!available));
     if (!available && state.playbackControlsReady) {
-      state.active = false;
-      previewFigure.classList.remove('playback-active');
-      stopPlayback();
-      playbackTab.classList.remove('active');
-      playbackTab.setAttribute('aria-selected', 'false');
+      selectView('preview');
     }
   }
   syncPlaybackTabVisibility();
 
   const panel = document.createElement('div');
+  panel.id = 'playback-panel';
   panel.className = 'oriredraw-playback';
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', 'playback-tab');
+  panel.hidden = true;
   panel.innerHTML = `
     <div class="oriredraw-playback-stage">
       <canvas aria-label="最终重绘结果的构造推演"></canvas>
@@ -167,6 +188,27 @@
   const underlayLabel = panel.querySelector('.oriredraw-playback-underlay span');
   const caption = panel.querySelector('.oriredraw-playback-caption');
   const context = canvas.getContext('2d');
+
+  function selectView(view) {
+    const playback = view === 'playback'
+      && !playbackTab.classList.contains('hidden')
+      && state.groups.length > 0;
+    state.active = playback;
+    previewTab.classList.toggle('active', !playback);
+    playbackTab.classList.toggle('active', playback);
+    previewTab.setAttribute('aria-selected', String(!playback));
+    playbackTab.setAttribute('aria-selected', String(playback));
+    previewStage.hidden = playback;
+    panel.hidden = !playback;
+    previewFigure.classList.toggle('playback-active', playback);
+    if (!playback) {
+      stopPlayback();
+      return;
+    }
+    resizeCanvas();
+    renderStep(false);
+  }
+
   state.playbackControlsReady = true;
   syncPlaybackTabVisibility();
 
@@ -204,6 +246,7 @@
 
   function updateLanguage() {
     const text = copy();
+    previewTab.textContent = isEnglish() ? 'Result' : '结果图';
     playbackTab.textContent = text.tab;
     toggle.setAttribute('aria-label', state.timer ? text.pause : text.play);
     underlayLabel.textContent = text.underlay;
@@ -365,6 +408,7 @@
     state.finalImageUri = '';
     rebuildTrace();
     syncPlaybackTabVisibility();
+    selectView('preview');
   }
 
   document.addEventListener('oriredraw:guided-result', event => {
@@ -375,8 +419,10 @@
     state.versionIndex = 0;
     state.finalImage = null;
     state.finalImageUri = '';
+    state.active = false;
     rebuildTrace();
     syncPlaybackTabVisibility();
+    selectView('preview');
   });
 
   document.addEventListener('click', event => {
@@ -388,14 +434,24 @@
 
     const viewButton = event.target.closest?.('.view-tabs button[data-view]');
     if (!viewButton) return;
-    const playback = viewButton.dataset.view === 'playback';
-    state.active = playback;
-    previewFigure.classList.toggle('playback-active', playback);
-    if (!playback) stopPlayback();
-    else {
-      resizeCanvas();
-      renderStep(false);
-    }
+    selectView(viewButton.dataset.view);
+  });
+
+  viewTabs.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const tabs = [...viewTabs.querySelectorAll('button[role="tab"]')]
+      .filter(button => !button.classList.contains('hidden'));
+    if (!tabs.length) return;
+    const current = tabs.indexOf(document.activeElement);
+    const offset = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+      ? tabs.length - 1
+      : (current + offset + tabs.length) % tabs.length;
+    event.preventDefault();
+    tabs[nextIndex].focus();
+    selectView(tabs[nextIndex].dataset.view);
   });
 
   range.addEventListener('input', () => {

@@ -135,10 +135,16 @@ def test_guided_selection_has_a_persistent_guide_layer_and_hides_replay_until_st
     assert "guidanceLayerToggle" in app
     assert "data-guidance-visible" in app
     assert "guidance-hidden" in style
+    assert "redraw-hidden" in app
+    assert ".preview-stage.redraw-hidden .mv-segment-layer" in style
     assert "syncPlaybackTabVisibility" in playback
     assert "guided_raw_primary_v1" in playback
     assert "const available = Boolean(state.root) && !awaitingStart && state.groups.length > 0;" in playback
     assert "playbackTab.classList.toggle('hidden', !available)" in playback
+    assert "const previewTab = document.createElement('button');" in playback
+    assert "previewStage.setAttribute('role', 'tabpanel');" in playback
+    assert "panel.setAttribute('role', 'tabpanel');" in playback
+    assert "selectView(viewButton.dataset.view);" in playback
     assert "state.playbackControlsReady" in playback
 
 

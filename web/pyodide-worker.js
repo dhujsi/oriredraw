@@ -37,7 +37,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260905-flow-timing-v1';
+const WEB_ENGINE_VERSION = '20260907-result-tabs-v1';
 
 let pyodide;
 let readyPromise;

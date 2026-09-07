@@ -80,7 +80,7 @@ const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260905-flow-timing-v1';
+const WEB_ENGINE_VERSION = '20260907-result-tabs-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -585,6 +585,8 @@ function syncPreviewLayers() {
   preview.classList.toggle('hidden', !showRedraw);
   sourcePreview.setAttribute('aria-hidden', String(!showSource));
   preview.setAttribute('aria-hidden', String(!showRedraw));
+  previewStage?.classList.toggle('redraw-hidden', !showRedraw);
+  previewStage?.setAttribute('data-redraw-visible', String(showRedraw));
   previewStage?.classList.toggle('guidance-hidden', !showGuidance);
   previewStage?.setAttribute('data-guidance-visible', String(showGuidance));
 }
