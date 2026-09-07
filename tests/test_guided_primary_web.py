@@ -123,6 +123,8 @@ def test_guided_result_rebuilds_a_playable_observed_to_derived_trace():
     assert "selected_guided_operations" in playback
     assert "guided_observed_raw_topology" in playback
     assert "guided_boundary_relation_ray" in playback
+    assert "playback_step" in playback
+    assert "guidedTrace.length" in playback
     assert "rebuildTrace();" in playback
 
 

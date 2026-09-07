@@ -277,16 +277,20 @@
     return values.map(value => (value + 200) * size / 400);
   }
 
-  function guidedPlaybackTrace(root) {
+      function guidedPlaybackTrace(root) {
     const report = root?.shadow_search?.guided_boundary;
     const candidates = report?.cp_output_contract?.candidate_segments;
     if (!report || !Array.isArray(candidates) || !candidates.length) return [];
     const size = analysisSize(root);
-    const guidedIds = new Set(
-      (report.selected_guided_operations || [])
-        .map(operation => String(operation?.outputs?.[0] || ''))
-        .filter(Boolean),
-    );
+    const guidedOrder = new Map();
+    (report.selected_guided_operations || []).forEach((operation, index) => {
+      const id = String(operation?.outputs?.[0] || '');
+      if (!id) return;
+      guidedOrder.set(id, {
+        step: index + 1,
+        selectionRound: Number(operation?.selection_round || 0),
+      });
+    });
     const trace = [];
     for (const segment of candidates) {
       const start = cpPointToPixel(segment.start_cp, size);
@@ -301,12 +305,17 @@
         : Math.atan2(dy, dx) * 180 / Math.PI;
       const radians = angle * Math.PI / 180;
       const normal = [-Math.sin(radians), Math.cos(radians)];
-      const guided = guidedIds.has(String(segment.crease_entity_id));
+      const guided = guidedOrder.has(String(segment.crease_entity_id));
+      const guidedMeta = guidedOrder.get(String(segment.crease_entity_id));
       trace.push({
         angle,
         line_offset_px: normal[0] * start[0] + normal[1] * start[1],
         anchor_point_px: start,
         generation: guided ? 1 : 0,
+        playback_step: guided ? guidedMeta.step : 0,
+        playback_label: guided
+          ? `已选起点关系 ${guidedMeta.selectionRound || 1}：加入第 ${guidedMeta.step} 条推导线`
+          : '原图中已识别的折痕',
         source: guided ? 'guided_boundary_relation_ray' : 'guided_observed_raw_topology',
         formed_segments_px: [{ start, end }],
       });
@@ -315,10 +324,12 @@
   }
 
   function traceAnchors() {
+    const guidedTrace = guidedPlaybackTrace(state.root);
+    if (guidedTrace.length) return guidedTrace.filter(isValidAnchor);
     const trace = Array.isArray(state.root?.playback_trace)
       && state.root.playback_trace.length
       ? state.root.playback_trace
-      : guidedPlaybackTrace(state.root);
+      : [];
     const fallback = Array.isArray(state.root?.playback_trace)
       ? state.root.playback_trace
       : (state.root?.anchors || []);
@@ -364,15 +375,33 @@
   function rebuildTrace() {
     stopPlayback();
     const anchors = traceAnchors();
-    const byGeneration = new Map();
-    for (const anchor of anchors) {
-      const generation = Number(anchor.generation);
-      if (!byGeneration.has(generation)) byGeneration.set(generation, []);
-      byGeneration.get(generation).push(anchor);
+    const byPlaybackStep = new Map();
+    const hasPlaybackSteps = anchors.some(anchor => Number.isFinite(Number(anchor.playback_step)));
+    if (hasPlaybackSteps) {
+      for (const anchor of anchors) {
+        const step = Math.max(0, Number(anchor.playback_step) || 0);
+        if (!byPlaybackStep.has(step)) byPlaybackStep.set(step, []);
+        byPlaybackStep.get(step).push(anchor);
+      }
+      state.groups = [...byPlaybackStep.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([step, lines]) => ({
+          kind: 'rays',
+          generation: step,
+          lines,
+          label: lines.find(line => line.playback_label)?.playback_label || '',
+        }));
+    } else {
+      const byGeneration = new Map();
+      for (const anchor of anchors) {
+        const generation = Number(anchor.generation);
+        if (!byGeneration.has(generation)) byGeneration.set(generation, []);
+        byGeneration.get(generation).push(anchor);
+      }
+      state.groups = [...byGeneration.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([generation, lines]) => ({ kind: 'rays', generation, lines }));
     }
-    state.groups = [...byGeneration.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([generation, lines]) => ({ kind: 'rays', generation, lines }));
 
     const additions = variantSegments();
     if (additions.length) state.groups.push({ kind: 'segments', segments: additions });
@@ -584,7 +613,7 @@
     const current = state.groups[state.step];
     caption.textContent = current.kind === 'segments'
       ? copy().variant
-      : (current.generation === 0 ? copy().seeds : copy().generation(current.generation));
+      : current.label || (current.generation === 0 ? copy().seeds : copy().generation(current.generation));
 
     if (!animateCurrent) {
       drawConstruction(state.step, 1);
