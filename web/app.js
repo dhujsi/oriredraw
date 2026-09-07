@@ -1708,7 +1708,10 @@ function renderBoundaryRelations(root) {
       .filter(step => step.kind === 'boundary_relation')
       .map(step => String(step.id)),
   );
-  const selectedBoundaryRelations = allCandidates.filter(relation =>
+  const reportedRelations = Array.isArray(guided?.selected_relations)
+    ? guided.selected_relations
+    : [];
+  const selectedBoundaryRelations = (reportedRelations.length ? reportedRelations : allCandidates).filter(relation =>
     selectedRelationIds.has(String(relation?.id || '')),
   );
   const selectedTopologyPointIds = new Set(
@@ -1716,9 +1719,14 @@ function renderBoundaryRelations(root) {
       .filter(step => step.kind === 'topology_point')
       .map(step => String(step.id)),
   );
-  const selectedTopologyPoints = initialTopologyPoints.filter(point =>
-    selectedTopologyPointIds.has(String(point?.id || '')),
-  );
+  const reportedStartPoint = guided?.selected_start_point
+    ? [{ ...guided.selected_start_point, kind: 'topology_point_start', selectable: false }]
+    : [];
+  const selectedTopologyPoints = [...initialTopologyPoints, ...reportedStartPoint]
+    .filter((point, index, all) => {
+      if (!selectedTopologyPointIds.has(String(point?.id || ''))) return false;
+      return all.findIndex(item => String(item?.id || '') === String(point?.id || '')) === index;
+    });
   boundaryRelations.classList.toggle(
     'hidden',
     initialRawSelection || (allCandidates.length === 0 && selectedSteps.length === 0),
