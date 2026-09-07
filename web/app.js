@@ -587,6 +587,7 @@ function syncPreviewLayers() {
   preview.setAttribute('aria-hidden', String(!showRedraw));
   previewStage?.classList.toggle('redraw-hidden', !showRedraw);
   previewStage?.setAttribute('data-redraw-visible', String(showRedraw));
+  previewStage?.classList.toggle('source-hidden', !showSource);
   previewStage?.classList.toggle('guidance-hidden', !showGuidance);
   previewStage?.setAttribute('data-guidance-visible', String(showGuidance));
 }
@@ -1617,12 +1618,16 @@ function renderTopologyPointOverlay(
       const key = observedPointKey(candidate);
       return !key || !boundaryPointKeys.has(key);
     });
-  const candidates = topologyCandidates.length
-    ? topologyCandidates
-    : [
-      ...boundaryCandidates,
-      ...visibleInitialTopologyPoints,
-    ];
+  const candidates = [
+    ...boundaryCandidates,
+    ...visibleInitialTopologyPoints,
+    ...topologyCandidates,
+  ].filter((candidate, index, all) => {
+    const id = String(candidate?.id || '');
+    if (id) return all.findIndex(item => String(item?.id || '') === id) === index;
+    const key = observedPointKey(candidate);
+    return !key || all.findIndex(item => observedPointKey(item) === key) === index;
+  });
   topologyPointLayer.classList.toggle('hidden', candidates.length === 0);
   if (!candidates.length) return;
   const maximum = guidedPointMaximum(report, root);
@@ -1735,6 +1740,22 @@ function renderBoundaryRelations(root) {
   const completed = continuing;
   const rawPrimary = isRawPrimaryResult(root);
   const initialRawSelection = rawPrimary && selectedSteps.length === 0;
+  const selectedRelationIds = new Set(
+    selectedSteps
+      .filter(step => step.kind === 'boundary_relation')
+      .map(step => String(step.id)),
+  );
+  const selectedBoundaryRelations = allCandidates.filter(relation =>
+    selectedRelationIds.has(String(relation?.id || '')),
+  );
+  const selectedTopologyPointIds = new Set(
+    selectedSteps
+      .filter(step => step.kind === 'topology_point')
+      .map(step => String(step.id)),
+  );
+  const selectedTopologyPoints = initialTopologyPoints.filter(point =>
+    selectedTopologyPointIds.has(String(point?.id || '')),
+  );
   boundaryRelations.classList.toggle(
     'hidden',
     initialRawSelection || (allCandidates.length === 0 && selectedSteps.length === 0),
@@ -1742,9 +1763,9 @@ function renderBoundaryRelations(root) {
   renderBoundaryRelationHistory(guided);
   renderTopologyPointOverlay(
     guided,
-    candidates,
+    continuing ? selectedBoundaryRelations : candidates,
     root,
-    selectedSteps.length ? [] : initialTopologyPoints,
+    selectedSteps.length ? selectedTopologyPoints : initialTopologyPoints,
   );
   renderGuidedMvOverlay(root, guided);
   if (!allCandidates.length && !selectedSteps.length) {

@@ -207,6 +207,8 @@ body.corner-editor-open { overflow: hidden; }
 .source-image { z-index: 0; }
 #preview-image { z-index: 1; }
 .preview-stage.redraw-hidden .mv-segment-layer { display: none !important; }
+.preview-stage.redraw-hidden #preview-image { display: none !important; }
+.preview-stage.source-hidden .source-image { display: none !important; }
 .layer-toggles { display: flex; align-items: center; gap: 11px; width: fit-content; margin: 0 0 8px; padding: 5px 8px; border: 1px solid var(--line); color: var(--muted); font: 700 10px/1.2 ui-monospace, Consolas, monospace; }
 .result-content > .layer-toggles { margin-top: 12px; }
 .layer-toggles legend { padding: 0 4px; color: var(--ink); }
