@@ -223,8 +223,8 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "visible_sides" in app
     assert "topology_point_start" in app
     assert "到纸边" in app
-    assert "这个点怎么开始？" in app
-    assert "同一个纸边点对应" in app
+    assert "chooseBoundaryAssignment" in app
+    assert "点击后自动开始" in app
     assert "boundaryAssignmentTitle" in app
     assert "observedPointKey" in app
     assert "boundaryPointKeys" in app

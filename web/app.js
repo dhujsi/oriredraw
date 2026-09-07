@@ -1437,42 +1437,9 @@ function anchorTopologyPointPopup(popup, candidate) {
 }
 
 function showTopologyPointTooltip(candidate, report, root = null) {
-  if (!topologyPointTooltip) return;
   showTopologyPointGuide(candidate, report, root);
+  topologyPointTooltip?.classList.add('hidden');
   resetTopologyPointPopupPosition(topologyPointTooltip);
-  const point = Array.isArray(candidate.observed_point_px) ? candidate.observed_point_px : [0, 0];
-  const maximum = guidedPointMaximum(report, root);
-  const left = Math.max(2, Math.min(98, Number(point[0]) / maximum * 100));
-  const top = Math.max(2, Math.min(98, Number(point[1]) / maximum * 100));
-  if (candidate.kind === 'boundary_relation_point') {
-    const assignments = Array.isArray(candidate.boundary_assignments)
-      ? candidate.boundary_assignments
-      : [];
-    const more = assignments.length > 1
-      ? `；这个点有 ${assignments.length} 个精确取点方案，请点选一个`
-      : '；这个点有 1 个精确取点方案，请点选它';
-    const geometry = pointGeometrySummary(assignments[0]);
-    topologyPointTooltip.textContent = `纸边起点${more}${geometry ? `；${geometry}` : ''}`;
-  } else {
-    const expression = Array.isArray(candidate.coordinate_expression)
-      ? candidate.coordinate_expression.join(', ')
-      : '—';
-    const selectableNote = candidate.selectable
-      ? `黄色补充点：可能补上 ${Number(candidate.projected_new_crease_count || 0)} 条线；点一下查看，确认后才会使用`
-      : '这个黄色点暂时不能使用';
-    const geometry = pointGeometrySummary(candidate);
-    const coordinateNote = geometry
-      ? `；${geometry}`
-      : expression !== '—' ? `；根号二坐标 (${expression})` : '';
-    topologyPointTooltip.textContent = `${selectableNote}${coordinateNote}`;
-  }
-  topologyPointTooltip.style.left = `${left}%`;
-  topologyPointTooltip.style.top = `${top}%`;
-  anchorTopologyPointPopup(topologyPointTooltip, candidate);
-  topologyPointTooltip.classList.toggle('leftward', left > 62);
-  topologyPointTooltip.classList.toggle('below', top < 25);
-  topologyPointTooltip.classList.remove('hidden');
-  fitTopologyPointPopup(topologyPointTooltip);
 }
 
 function hideTopologyPointTooltip() {
@@ -1500,58 +1467,28 @@ function boundaryAssignmentDetail(assignment) {
   return details.length ? `（${details.join('；')}）` : '';
 }
 
-function showBoundaryPointPopover(candidate, report, root) {
-  if (!topologyPointPopover) return;
-  resetTopologyPointPopupPosition(topologyPointPopover);
-  const point = Array.isArray(candidate?.observed_point_px) ? candidate.observed_point_px : [0, 0];
-  const maximum = guidedPointMaximum(report, root);
-  if (!Number.isFinite(Number(point[0])) || !Number.isFinite(Number(point[1])) || maximum <= 0) return;
+function chooseBoundaryAssignment(candidate) {
   const assignments = Array.isArray(candidate.boundary_assignments)
     ? candidate.boundary_assignments
     : [];
-  openBoundaryPointId = String(candidate.id || '');
-  topologyPointPopover.replaceChildren();
+  return [...assignments].sort((left, right) => {
+    const leftPriority = Number(left?.relationPriority);
+    const rightPriority = Number(right?.relationPriority);
+    const priorityDelta = (Number.isFinite(leftPriority) ? leftPriority : Number.POSITIVE_INFINITY)
+      - (Number.isFinite(rightPriority) ? rightPriority : Number.POSITIVE_INFINITY);
+    if (priorityDelta) return priorityDelta;
+    const residualDelta = Number(left?.imageResidualPx || 0) - Number(right?.imageResidualPx || 0);
+    if (residualDelta) return residualDelta;
+    const pointCountDelta = Number(right?.relationPointCount || 0) - Number(left?.relationPointCount || 0);
+    if (pointCountDelta) return pointCountDelta;
+    return String(left?.relationId || '').localeCompare(String(right?.relationId || ''));
+  })[0] || null;
+}
 
-  const title = document.createElement('strong');
-  title.textContent = '这个点怎么开始？';
-  const note = document.createElement('small');
-  note.textContent = assignments.length > 1
-    ? `同一个纸边点对应 ${assignments.length} 个精确取点方案；请选择一个。`
-    : '这个纸边点只有一个精确取点方案；请选择它开始。';
-  const choices = document.createElement('div');
-  choices.className = 'topology-point-popover-choices';
-  for (const [index, assignment] of assignments.entries()) {
-    const choice = document.createElement('button');
-    choice.type = 'button';
-    choice.textContent = `${boundaryAssignmentTitle(assignment, index)}${boundaryAssignmentDetail(assignment)}`;
-    choice.addEventListener('click', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      clearBoundaryPointPopover();
-      evaluateBoundaryRelation(assignment.relationId);
-    });
-    choices.append(choice);
-  }
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'topology-point-popover-close';
-  close.textContent = '暂时不选';
-  close.addEventListener('click', event => {
-    event.preventDefault();
-    event.stopPropagation();
-    clearBoundaryPointPopover();
-  });
-  topologyPointPopover.append(title, note, choices, close);
-
-  const left = Math.max(2, Math.min(98, Number(point[0]) / maximum * 100));
-  const top = Math.max(2, Math.min(98, Number(point[1]) / maximum * 100));
-  topologyPointPopover.style.left = `${left}%`;
-  topologyPointPopover.style.top = `${top}%`;
-  anchorTopologyPointPopup(topologyPointPopover, candidate);
-  topologyPointPopover.classList.toggle('leftward', left > 62);
-  topologyPointPopover.classList.toggle('below', top < 25);
-  topologyPointPopover.classList.remove('hidden');
-  fitTopologyPointPopup(topologyPointPopover);
+function showBoundaryPointPopover(candidate) {
+  const assignment = chooseBoundaryAssignment(candidate);
+  clearBoundaryPointPopover();
+  if (assignment?.relationId) evaluateBoundaryRelation(assignment.relationId);
 }
 
 function stageTopologyPointConfirmation(candidate, report, root) {
@@ -1646,7 +1583,7 @@ function renderTopologyPointOverlay(
       marker.setAttribute('aria-haspopup', 'dialog');
       marker.setAttribute(
         'aria-label',
-        '绿色起点，点击选择开始方式',
+        '绿色起点，点击后自动开始',
       );
     } else {
       marker.setAttribute('aria-disabled', candidate.selectable ? 'false' : 'true');
