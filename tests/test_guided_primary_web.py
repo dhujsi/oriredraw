@@ -99,6 +99,7 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     app = _source("web/app.js")
     html = _source("web/index.html")
     worker = _source("web/pyodide-worker.js")
+    style = _source("web/style.css")
 
     assert 'id="guided-progress"' in html
     assert 'id="guided-progress-track"' in html
@@ -112,6 +113,8 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     assert "async function guidedBoundaryInBrowser(result, selection, id)" in worker
     assert "announce('guided-boundary'" in worker
     assert "_oriredraw_guided_progress" in worker
+    assert "grid-template-columns: minmax(180px, 1fr) max-content" in style
+    assert ".guided-progress .progress-block b" in style
 
 
 def test_guided_result_rebuilds_a_playable_observed_to_derived_trace():

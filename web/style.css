@@ -184,7 +184,17 @@ body.corner-editor-open { overflow: hidden; }
 .progress-block b { font: 700 12px ui-monospace, monospace; text-align: right; }
 .guided-progress { position: sticky; top: 10px; z-index: 12; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--ink); background: #f5f5ef; box-shadow: 3px 3px 0 rgba(23, 23, 20, .12); }
 .guided-progress p { margin: 0; font-size: 11px; font-weight: 700; }
-.guided-progress .progress-block { width: min(440px, 100%); margin-top: 10px; }
+.guided-progress .progress-block {
+  width: 100%;
+  max-width: none;
+  margin-top: 10px;
+  grid-template-columns: minmax(180px, 1fr) max-content;
+}
+.guided-progress .progress-block b {
+  min-width: 0;
+  white-space: nowrap;
+  line-height: 1.35;
+}
 .guided-progress.indeterminate .progress-track i { width: 34%; animation: progress-indeterminate 1.2s ease-in-out infinite; }
 @keyframes progress-indeterminate { 0% { transform: translateX(-110%); } 100% { transform: translateX(320%); } }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -342,6 +352,8 @@ body.corner-editor-open { overflow: hidden; }
   .drop-zone { min-height: 165px; }
   .result-head { align-items: flex-end; gap: 12px; }
   .download { padding: 0 12px; }
+  .guided-progress .progress-block { grid-template-columns: 1fr; }
+  .guided-progress .progress-block b { text-align: left; white-space: normal; }
   .preview { min-height: 260px; }
   .topology-point-marker { width: 20px; height: 20px; }
   .topology-point-confirmation-actions { width: 100%; }
