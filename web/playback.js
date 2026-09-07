@@ -2,6 +2,7 @@
   'use strict';
 
   const NativeWorker = window.Worker;
+  const PLAYBACK_UI_HIDDEN = true;
   const state = {
     root: null,
     version: null,
@@ -145,9 +146,12 @@
   function syncPlaybackTabVisibility() {
     const awaitingStart = state.root?.mode === 'guided_raw_primary_v1'
       && !(state.root.shadow_search?.guided_boundary?.selection_steps || []).length;
-    const available = Boolean(state.root) && !awaitingStart && state.groups.length > 0;
+    const available = !PLAYBACK_UI_HIDDEN
+      && Boolean(state.root)
+      && !awaitingStart
+      && state.groups.length > 0;
     playbackTab.classList.toggle('hidden', !available);
-    viewTabs.classList.toggle('hidden', !state.root);
+    viewTabs.classList.toggle('hidden', PLAYBACK_UI_HIDDEN || !state.root);
     playbackTab.setAttribute('aria-hidden', String(!available));
     if (!available && state.playbackControlsReady) {
       selectView('preview');
