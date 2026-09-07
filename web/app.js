@@ -597,6 +597,13 @@ function setPreviewAssets(sourceUri, redrawUri) {
   syncPreviewLayers();
 }
 
+function resetPreviewLayerDefaults() {
+  [redrawLayerToggle, sourceLayerToggle, guidanceLayerToggle].forEach(toggle => {
+    if (toggle) toggle.checked = true;
+  });
+  syncPreviewLayers();
+}
+
 function beginImageFlow() {
   emptyState.classList.add('hidden');
   resultContent.classList.add('hidden');
@@ -721,6 +728,7 @@ function renderRawPrimaryResult(data) {
   resultEyebrow.textContent = '原图分析';
   resultTitle.textContent = '请先选一个起点';
   configureResultView({ rawPrimary: true });
+  resetPreviewLayerDefaults();
   setPreviewAssets(
     data.source_data_uri || data.overlay_data_uri,
     data.redraw_data_uri || data.reconstruction_data_uri,
