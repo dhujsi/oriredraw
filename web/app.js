@@ -1240,6 +1240,26 @@ function boundaryRelationDisplayLabel(relation, index = 0) {
   return `${side ? `纸张${side}的` : ''}精确取点方案 ${priority}`;
 }
 
+function guidedSideLengthKey(value) {
+  const sideLength = value?.recommended_coordinate_gauge?.side_length
+    || value?.global_side_length;
+  const coefficients = sideLength?.coefficients;
+  if (Array.isArray(coefficients) && coefficients.length === 3) {
+    return coefficients.map(Number).join(':');
+  }
+  const expression = String(sideLength?.expression || '').trim();
+  return expression;
+}
+
+function eligibleGuidedBoundaryRelations(relations, report) {
+  const selectedKey = guidedSideLengthKey(report);
+  if (!selectedKey) return Array.isArray(relations) ? relations : [];
+  return (Array.isArray(relations) ? relations : []).filter(relation => {
+    const candidateKey = guidedSideLengthKey(relation);
+    return !candidateKey || candidateKey === selectedKey;
+  });
+}
+
 function crossSegmentSummary(point) {
   const cross = point?.cross_segment_lengths;
   const visible = Array.isArray(cross?.visible_sides) ? cross.visible_sides : [];
@@ -1727,6 +1747,13 @@ function renderBoundaryRelations(root) {
       if (!selectedTopologyPointIds.has(String(point?.id || ''))) return false;
       return all.findIndex(item => String(item?.id || '') === String(point?.id || '')) === index;
     });
+  const eligibleRecommendedRelations = eligibleGuidedBoundaryRelations(allCandidates, guided);
+  const retainedBoundaryRelations = continuing
+    ? [...eligibleRecommendedRelations, ...selectedBoundaryRelations]
+    : candidates;
+  const retainedTopologyPoints = continuing
+    ? [...initialTopologyPoints, ...reportedStartPoint]
+    : (selectedSteps.length ? selectedTopologyPoints : initialTopologyPoints);
   boundaryRelations.classList.toggle(
     'hidden',
     initialRawSelection || (allCandidates.length === 0 && selectedSteps.length === 0),
@@ -1734,9 +1761,9 @@ function renderBoundaryRelations(root) {
   renderBoundaryRelationHistory(guided);
   renderTopologyPointOverlay(
     guided,
-    continuing ? selectedBoundaryRelations : candidates,
+    retainedBoundaryRelations,
     root,
-    selectedSteps.length ? selectedTopologyPoints : initialTopologyPoints,
+    retainedTopologyPoints,
   );
   renderGuidedMvOverlay(root, guided);
   if (!allCandidates.length && !selectedSteps.length) {

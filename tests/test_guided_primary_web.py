@@ -239,6 +239,15 @@ def test_boundary_relation_points_share_the_guided_coordinate_tooltip_layer():
     assert "width: 15px; height: 15px" in style
 
 
+def test_guided_result_retains_eligible_recommendations_for_point_overlay():
+    app = _source("web/app.js")
+
+    assert "function eligibleGuidedBoundaryRelations" in app
+    assert "const retainedBoundaryRelations = continuing" in app
+    assert "const retainedTopologyPoints = continuing" in app
+    assert "eligibleRecommendedRelations" in app
+
+
 def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional():
     app = _source("web/app.js")
     html = _source("web/index.html")
