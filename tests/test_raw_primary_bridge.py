@@ -1,4 +1,5 @@
 import json
+import base64
 import unittest
 
 import cv2
@@ -16,6 +17,14 @@ def _boundary_trisection_square(size: int = 161) -> np.ndarray:
         cv2.line(square, (x, 1), (x, 145), (0, 0, 255), 2)
     cv2.line(square, (10, 100), (150, 100), (255, 0, 0), 2)
     return square
+
+
+def _decode_data_uri(uri: str) -> np.ndarray:
+    encoded = uri.split(',', 1)[1]
+    decoded = base64.b64decode(encoded)
+    image = cv2.imdecode(np.frombuffer(decoded, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    assert image is not None
+    return image
 
 
 class RawPrimaryBridgeTest(unittest.TestCase):
@@ -50,6 +59,9 @@ class RawPrimaryBridgeTest(unittest.TestCase):
         self.assertTrue(
             payload["reconstruction_data_uri"].startswith("data:image/png;base64,")
         )
+        redraw = _decode_data_uri(payload["redraw_data_uri"])
+        self.assertEqual(redraw.shape[2], 4)
+        self.assertEqual(int(redraw[:, :, 3].max()), 0)
         self.assertEqual(progress[-1][0], 100)
 
         shadow = payload["shadow_search"]

@@ -74,7 +74,7 @@ def _render_raw_primary_previews(
     topology: Mapping[str, Any],
     candidates: list[dict[str, Any]],
 ) -> tuple[str, str, str, str]:
-    """Render an observed-source overlay and a clean finite-topology preview."""
+    """Render source diagnostics separately from the still-empty redraw layer."""
 
     overlay_lines = square.copy()
     clean = np.full_like(square, 255)
@@ -132,11 +132,12 @@ def _render_raw_primary_previews(
     maximum = int(square.shape[0] - 1)
     cv2.rectangle(clean, (0, 0), (maximum, maximum), (23, 23, 20), 1, cv2.LINE_AA)
     overlay = cv2.addWeighted(square, 0.68, overlay_lines, 0.32, 0)
+    empty_redraw = np.full_like(square, 255)
     return (
         _png_data_uri(square),
         _png_data_uri(overlay),
         _png_data_uri(clean),
-        _transparent_preview_data_uri(clean),
+        _transparent_preview_data_uri(empty_redraw),
     )
 
 
