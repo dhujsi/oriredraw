@@ -4,6 +4,11 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 
 ## [Unreleased]
 
+### Fixed
+- Paper-frame detection now searches both sides of the detected crease component, avoiding inward clipping when a photograph's dark background disconnects the thin frame.
+- Detector-truncated corner strokes can share the known paper corner only when each stroke has nearby finite evidence, compatible direction, and continuous source ink to that corner. General endpoint snapping tolerances are unchanged.
+- Clustered line proposals with less than half their finite run supported by source ink no longer enter the observed crease graph.
+
 ### Added
 - Construction-search v2 foundation: candidate construction DAG, multiple provenance per node, beam search, route-level scoring, and a cAMV scoring hook.
 - Formal project versioning with a canonical `VERSION` file.

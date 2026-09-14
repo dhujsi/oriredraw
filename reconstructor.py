@@ -432,10 +432,13 @@ def _paper_bbox(image: np.ndarray) -> tuple[int, int, int, int]:
         weights = np.maximum(response[selected], 1e-6)
         return float(np.average(positions[selected], weights=weights))
 
-    left_positions = np.arange(x0, min(x1 + 1, x0 + search + 1))
-    right_positions = np.arange(max(x0, x1 - search), x1 + 1)
-    top_positions = np.arange(y0, min(y1 + 1, y0 + search + 1))
-    bottom_positions = np.arange(max(y0, y1 - search), y1 + 1)
+    # Dark surrounding texture can disconnect the thin paper frame from the
+    # crease component. Its box then starts INSIDE the frame. Search both sides
+    # of the component edge; an inward-only search clips genuine corner rays.
+    left_positions = np.arange(max(0, x0 - search), min(x1 + 1, x0 + search + 1))
+    right_positions = np.arange(max(x0, x1 - search), min(image.shape[1], x1 + search + 1))
+    top_positions = np.arange(max(0, y0 - search), min(y1 + 1, y0 + search + 1))
+    bottom_positions = np.arange(max(y0, y1 - search), min(image.shape[0], y1 + search + 1))
     left = weighted_peak(
         left_positions,
         np.array(

@@ -24,6 +24,7 @@ from reconstructor import ALLOWED_ANGLES, _boundary_hits
 
 _BOUNDARY_SIDE = {"上": "top", "右": "right", "下": "bottom", "左": "left"}
 _CANDIDATE_PRIORITY = {
+    "source_verified_corner": -1,
     "line_intersection": 0,
     "source_verified_endpoint_intersection": 0,
     "boundary_contact": 1,
@@ -226,6 +227,9 @@ def _topology_candidates(
     incidence_margin: float,
     boundary_margin: float,
     endpoint_connection_evidence: list[Mapping[str, Any]] | None = None,
+    corner_connection_evidence: list[Mapping[str, Any]] | None = None,
+    corner_endpoint_margin: float = 8.0,
+    corner_residual_tolerance: float = 1.75,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     maximum = float(size - 1)
     candidates: list[dict[str, Any]] = []
@@ -266,6 +270,38 @@ def _topology_candidates(
             stats["finite_evidence_intersections"] += 1
 
     line_by_raw_id = {str(line["raw_id"]): line for line in lines}
+    for evidence in corner_connection_evidence or []:
+        if evidence.get("source") != "source_image_continuous_corner_evidence":
+            continue
+        point = np.asarray(evidence.get("point_px", []), dtype=float)
+        if point.shape != (2,) or not all(value in {0.0, maximum} for value in point):
+            continue
+        gaps: dict[int, float] = {}
+        for support in evidence.get("lines") or []:
+            if not isinstance(support, Mapping):
+                continue
+            line = line_by_raw_id.get(str(support.get("line_id") or ""))
+            if line is None or line["orientation"] in {0, 4}:
+                continue
+            value = float(line["direction"] @ point)
+            gap = min(abs(t - value) for interval in line["intervals"] for t in interval)
+            residual = abs(float(line["normal"] @ point) - float(line["offset"]))
+            if (
+                gap > corner_endpoint_margin
+                or residual > corner_residual_tolerance
+                or float(support.get("bridge_coverage", 0.0)) < 0.80
+                or float(support.get("bridge_mean_confidence", 0.0)) < 0.16
+            ):
+                continue
+            gaps[int(line["target_id"])] = gap
+        if gaps:
+            candidates.append(_candidate(
+                "source_verified_corner", point, set(gaps),
+                boundary_sides={"left" if point[0] == 0.0 else "right",
+                                "top" if point[1] == 0.0 else "bottom"},
+                interval_gaps=gaps, evidence=evidence,
+            ))
+            stats["source_verified_corner_contacts"] += 1
     for evidence in endpoint_connection_evidence or []:
         if evidence.get("source") != "source_image_continuous_endpoint_evidence":
             stats["invalid_endpoint_connection_evidence"] += 1
@@ -604,8 +640,9 @@ def _point_records(
                 (
                     float(item.get("interval_gaps", {}).get(target_id, 0.0))
                     for item in candidates
-                    if item.get("kind")
-                    == "source_verified_endpoint_intersection"
+                    if item.get("kind") in {
+                        "source_verified_endpoint_intersection", "source_verified_corner",
+                    }
                     and target_id in item.get("line_ids", ())
                 ),
                 default=0.0,
@@ -650,7 +687,9 @@ def _point_records(
                 "observations": [
                     {
                         "source": (
-                            "source_image_continuous_endpoint_evidence"
+                            "source_image_continuous_corner_evidence"
+                            if item["kind"] == "source_verified_corner"
+                            else "source_image_continuous_endpoint_evidence"
                             if item["kind"]
                             == "source_verified_endpoint_intersection"
                             else "raw_image_finite_line_evidence"
@@ -669,7 +708,13 @@ def _point_records(
                             if int(line_id) in line_index
                         },
                         **(
-                            {"endpoint_connection_evidence": dict(item["evidence"])}
+                            {
+                                (
+                                    "corner_connection_evidence"
+                                    if item["kind"] == "source_verified_corner"
+                                    else "endpoint_connection_evidence"
+                                ): dict(item["evidence"])
+                            }
                             if item.get("evidence")
                             else {}
                         ),
@@ -902,6 +947,12 @@ def build_raw_crease_topology_graph(
             for item in list(raw_report.get("endpoint_connection_evidence") or [])
             if isinstance(item, Mapping)
         ],
+        corner_connection_evidence=[
+            item for item in raw_report.get("corner_connection_evidence") or []
+            if isinstance(item, Mapping)
+        ],
+        corner_endpoint_margin=float(np.clip(evidence_distance * 6.0, 8.0, 14.0)),
+        corner_residual_tolerance=min(2.2, max(0.85, evidence_distance)),
     )
     clusters, rejected_merges = _cluster_candidates(
         candidates,

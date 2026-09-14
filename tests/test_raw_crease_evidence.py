@@ -5,7 +5,9 @@ import cv2
 import numpy as np
 
 from raw_crease_evidence import (
+    _cluster_finite_segments,
     _source_verified_collinear_gaps,
+    _source_verified_corner_connections,
     _source_verified_endpoint_connections,
     classify_topology_segment_line_types,
     detect_raw_crease_entities_from_square,
@@ -18,6 +20,73 @@ def _white_square(size: int = 121) -> np.ndarray:
 
 
 class RawCreaseEvidenceTest(unittest.TestCase):
+    def test_clustered_line_requires_source_support_not_detector_length(self):
+        confidence = np.zeros((101, 101), dtype=np.float32)
+        cv2.line(confidence, (10, 40), (90, 40), 0.3, 2)
+        cv2.line(confidence, (48, 50), (52, 50), 1.0, 1)
+        proposals = [
+            {
+                "channel": "gray", "orientation": 0, "offset": y,
+                "length": 80.0, "start": np.array([10.0, y]),
+                "end": np.array([90.0, y]), "angle_error_deg": 0.0,
+            }
+            for y in (40.0, 50.0)
+        ]
+        lines = _cluster_finite_segments(
+            proposals, 101, confidence, Settings(), diffuse_input=False,
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertAlmostEqual(lines[0]["observed_offset_px"], 40.0)
+        self.assertGreater(lines[0]["support_fraction"], 0.95)
+
+    @staticmethod
+    def _corner_line(orientation=2, offset=0.0, start=9.0):
+        angle = math.radians(orientation * 22.5)
+        return {
+            "id": f"corner-{orientation}", "orientation": orientation,
+            "direction": [math.cos(angle), math.sin(angle)],
+            "normal": [-math.sin(angle), math.cos(angle)],
+            "observed_offset_px": offset,
+            "evidence_intervals_px": [[start, 70.0]],
+        }
+
+    def test_corner_connection_requires_ink_for_each_truncated_stroke(self):
+        lines = [self._corner_line(orientation) for orientation in (1, 2, 3)]
+        confidence = np.zeros((101, 101), dtype=np.float32)
+        for line in (lines[0], lines[2]):
+            end = tuple(np.rint(np.array(line["direction"]) * 70).astype(int))
+            cv2.line(confidence, (0, 0), end, 1.0, 1)
+        records = _source_verified_corner_connections(lines, confidence, 1.75)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["point_px"], [0.0, 0.0])
+        self.assertEqual(
+            {line["line_id"] for line in records[0]["lines"]},
+            {"corner-1", "corner-3"},
+        )
+
+    def test_paper_frame_cannot_supply_missing_corner_crease_evidence(self):
+        confidence = np.zeros((101, 101), dtype=np.float32)
+        cv2.rectangle(confidence, (0, 0), (100, 100), 1.0, 1)
+        cv2.line(confidence, (7, 7), (50, 50), 1.0, 1)
+        self.assertEqual(
+            _source_verified_corner_connections(
+                [self._corner_line()], confidence, 1.75,
+            ), [],
+        )
+
+    def test_corner_connection_rejects_distant_or_misaligned_stroke(self):
+        confidence = np.ones((101, 101), dtype=np.float32)
+        for line in (
+            self._corner_line(offset=4.0),
+            self._corner_line(start=20.0),
+            self._corner_line(orientation=0),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(
+                    _source_verified_corner_connections([line], confidence, 1.75),
+                    [],
+                )
+
     def test_collinear_gap_requires_continuous_source_ink(self):
         entities = [
             {

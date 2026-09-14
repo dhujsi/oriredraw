@@ -1,6 +1,7 @@
 import math
 import unittest
 from collections import Counter
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -13,6 +14,7 @@ from reconstructor import (
     _color_geometry_masks,
     _close_internal_lineheads,
     _observed_proxy_support,
+    _paper_bbox,
     _reconstruct_lsd_rays,
     edges_to_cp,
     prepare_paper_square,
@@ -22,6 +24,20 @@ from reconstructor import (
 
 
 class ReconstructionSmokeTest(unittest.TestCase):
+    def test_paper_frame_search_can_reach_outside_crease_component(self):
+        # Thresholding lost the thin frame but retained an inset crease
+        # component. The unthresholded image still supports the true frame.
+        ink = np.zeros((200, 200), dtype=np.uint8)
+        cv2.rectangle(ink, (23, 23), (176, 176), 255, 1)
+        confidence = ink.astype(np.float32) / 2550.0
+        cv2.rectangle(confidence, (20, 20), (179, 179), 1.0, 1)
+        with patch(
+            "reconstructor._adaptive_geometry_evidence",
+            return_value=(ink, confidence, {"estimated_stroke_radius_px": 1.0}),
+        ):
+            bounds = _paper_bbox(np.zeros((200, 200, 3), dtype=np.uint8))
+        self.assertEqual(bounds, (20, 20, 179, 179))
+
     def test_observed_proxy_support_recovers_only_the_recorded_raster_ray(self):
         ink = np.zeros((100, 100), np.uint8)
         cv2.line(ink, (10, 55), (90, 55), 255, 1)

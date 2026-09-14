@@ -80,6 +80,53 @@ def _point_near(graph, expected, tolerance=0.5):
 
 
 class RawCreaseTopologyTest(unittest.TestCase):
+    def test_corner_joins_only_individually_source_verified_strokes(self):
+        raw = _report([
+            _line("shallow", 1, 0.0, [[9.0, 70.0]]),
+            _line("steep", 3, 0.0, [[9.0, 70.0]]),
+            _line("unverified-diagonal", 2, 0.0, [[9.0, 70.0]]),
+        ])
+        raw["corner_connection_evidence"] = [{
+            "source": "source_image_continuous_corner_evidence",
+            "point_px": [0.0, 0.0],
+            "lines": [
+                {"line_id": name, "bridge_coverage": 1.0,
+                 "bridge_mean_confidence": 0.9}
+                for name in ("shallow", "steep")
+            ],
+        }]
+        graph, _, topology = build_raw_crease_topology_graph(raw)
+        corner = _point_near(graph, [0.0, 0.0], 1e-6)
+        self.assertEqual(
+            set(corner.observed_geometry["boundary_sides"]), {"left", "top"},
+        )
+        creases = [
+            item for item in graph.incident_entities(corner.id)
+            if item.kind == "crease"
+        ]
+        self.assertEqual(len(creases), 2)
+        self.assertEqual(topology["crease_count"], 3)
+        self.assertEqual(
+            topology["candidate_stats"]["source_verified_corner_contacts"], 1,
+        )
+
+    def test_corner_evidence_does_not_override_finite_distance_or_alignment(self):
+        for offset, start, coverage in ((5.0, 9.0, 1.0), (0.0, 30.0, 1.0),
+                                        (0.0, 9.0, 0.1)):
+            with self.subTest(offset=offset, start=start, coverage=coverage):
+                raw = _report([_line("crease", 2, offset, [[start, 70.0]])])
+                raw["corner_connection_evidence"] = [{
+                    "source": "source_image_continuous_corner_evidence",
+                    "point_px": [0.0, 0.0],
+                    "lines": [{"line_id": "crease", "bridge_coverage": coverage,
+                               "bridge_mean_confidence": 1.0}],
+                }]
+                _, _, topology = build_raw_crease_topology_graph(raw)
+                self.assertEqual(
+                    topology["candidate_stats"].get("source_verified_corner_contacts", 0),
+                    0,
+                )
+
     def test_verified_collinear_gap_creates_only_the_segment_between_intersections(self):
         raw = _report(
             [

@@ -563,6 +563,11 @@ def _cluster_finite_segments(
         mean_confidence = (
             float(np.mean(evidence_samples)) if len(evidence_samples) else 0.0
         )
+        # Clustering changes the measured line offset. Recheck the resulting
+        # centerline against the source: a long detector proposal alone cannot
+        # turn a mostly blank parallel run into an observed crease.
+        if support_fraction < 0.5:
+            continue
         source_count = max(1, int(item["source_segment_count"]))
         total_length = sum(
             segment["length_px"] for segment in visible_segments
@@ -731,6 +736,67 @@ def _bridge_confidence(
         "mean_confidence": float(np.mean(strongest)),
         "minimum_confidence": float(np.min(strongest)),
     }
+
+
+def _source_verified_corner_connections(
+    entities: list[dict[str, Any]],
+    confidence: np.ndarray,
+    evidence_distance_px: float,
+) -> list[dict[str, Any]]:
+    """Verify detector-truncated strokes against the four known paper corners.
+
+    A paper corner is already fixed by the frame. Every attached crease must
+    have its own finite endpoint and continuous ink up to that corner; another
+    nearby stroke or the intersection of two extensions supplies no evidence.
+    """
+    maximum = float(confidence.shape[0] - 1)
+    # These distances are in the normalized analysis square, not source pixels.
+    maximum_gap = float(np.clip(evidence_distance_px * 6.0, 8.0, 14.0))
+    residual_limit = min(2.2, max(0.85, evidence_distance_px))
+    band_radius = min(1.25, max(0.6, evidence_distance_px * 0.5))
+    records: list[dict[str, Any]] = []
+    for x, y in ((0.0, 0.0), (maximum, 0.0), (0.0, maximum), (maximum, maximum)):
+        corner = np.array([x, y])
+        supported = []
+        for line in entities:
+            if int(line["orientation"]) in {0, 4}:
+                continue  # These directions through a corner are paper edges.
+            normal = np.asarray(line["normal"], dtype=float)
+            direction = np.asarray(line["direction"], dtype=float)
+            residual = abs(float(normal @ corner) - float(line["observed_offset_px"]))
+            if residual > residual_limit:
+                continue
+            value = float(direction @ corner)
+            endpoints = [
+                float(t)
+                for interval in line["evidence_intervals_px"]
+                for t in interval
+            ]
+            if not endpoints:
+                continue
+            endpoint = min(endpoints, key=lambda t: abs(t - value))
+            gap = abs(endpoint - value)
+            if gap > maximum_gap:
+                continue
+            evidence = _bridge_confidence(
+                confidence, line, endpoint, value, band_radius=band_radius,
+            )
+            if evidence["coverage"] < 0.80 or evidence["mean_confidence"] < 0.16:
+                continue
+            supported.append({
+                "line_id": str(line["id"]),
+                "endpoint_gap_px": round(gap, 6),
+                "corner_residual_px": round(residual, 6),
+                "bridge_coverage": round(evidence["coverage"], 6),
+                "bridge_mean_confidence": round(evidence["mean_confidence"], 6),
+            })
+        if supported:
+            records.append({
+                "source": "source_image_continuous_corner_evidence",
+                "point_px": [x, y],
+                "lines": supported,
+            })
+    return records
 
 
 def _source_verified_endpoint_connections(
@@ -1096,6 +1162,9 @@ def detect_raw_crease_entities_from_square(
         confidence,
         effective_settings.evidence_distance_px,
     )
+    corner_connections = _source_verified_corner_connections(
+        entities, confidence, effective_settings.evidence_distance_px,
+    )
     orientation_counts = {
         str(orientation): sum(
             int(entity["orientation"]) == orientation for entity in entities
@@ -1124,6 +1193,7 @@ def detect_raw_crease_entities_from_square(
             int(key) for key in sorted(orientation_counts, key=int)
         ],
         "lines": entities,
+        "corner_connection_evidence": corner_connections,
         "endpoint_connection_evidence": endpoint_connections,
         "endpoint_connection_count": len(endpoint_connections),
         "collinear_gap_evidence": collinear_gaps,
