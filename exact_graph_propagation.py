@@ -480,6 +480,154 @@ def _side_length_from_graph(graph: ConstructionGraph) -> Qsqrt2 | None:
     return next(iter(values.values())) if len(values) == 1 else None
 
 
+def exactify_anchored_boundary_divisions(
+    graph: ConstructionGraph, *, maximum: float,
+) -> dict[str, Any]:
+    """Confirm a complete, two-sided parallel run between already exact bounds.
+
+    No free coordinate is fitted. The number of divisions is the number of
+    observed intervals; every intermediate line must exist on BOTH paper edges.
+    A missing member, an extra member, or nonuniform spacing rejects the run.
+    """
+    side_length = _side_length_from_graph(graph)
+    report: dict[str, Any] = {"enabled": True, "applied_point_count": 0, "runs": []}
+    if side_length is None or maximum <= 0:
+        return report
+    zero = Qsqrt2()
+    opposite = {"left": "right", "right": "left", "top": "bottom", "bottom": "top"}
+    contacts: dict[str, list[dict[str, Any]]] = {}
+    anchors: dict[str, list[dict[str, Any]]] = {}
+    for side in opposite:
+        axis = 1 if side in {"left", "right"} else 0
+        fixed = zero if side in {"left", "top"} else side_length
+        anchors_by_coordinate = {
+            qsqrt2_canonical_coefficients(value): {
+                "value": value, "id": f"paper_boundary:{side}:{end}",
+            }
+            for value, end in ((zero, "start"), (side_length, "end"))
+        }
+        contacts[side] = []
+        for point in graph.geometry_entities.values():
+            if point.kind != "point":
+                continue
+            coordinate = _entity_exact_point(point)
+            if (
+                coordinate is not None and coordinate[1 - axis] == fixed
+                and point.exact_geometry.get("source") not in _FIT_ONLY_POINT_SOURCES
+            ):
+                anchors_by_coordinate.setdefault(
+                    qsqrt2_canonical_coefficients(coordinate[axis]),
+                    {"value": coordinate[axis], "id": str(point.id)},
+                )
+            observed = _observed_point(point)
+            if (
+                coordinate is not None or observed is None
+                or side not in point.observed_geometry.get("boundary_sides", [])
+            ):
+                continue
+            incident = [e for e in graph.incident_entities(point.id) if e.kind == "crease"]
+            perpendicular = [
+                e for e in incident
+                if e.observed_geometry.get("direction_index") == (0 if axis == 1 else 4)
+                and _entity_exact_line(e) is None
+                and float(e.observed_geometry.get("support_fraction", 0.0)) >= 0.8
+                and sum(b - a for a, b in _evidence_intervals(e)) >= maximum * 0.85
+            ]
+            contacts[side].append({
+                "point": point, "observed": observed,
+                "crease": perpendicular[0] if len(perpendicular) == 1 else None,
+            })
+        contacts[side].sort(key=lambda item: item["observed"][axis])
+        anchors[side] = sorted(anchors_by_coordinate.values(), key=lambda a: float(a["value"]))
+
+    candidates: list[dict[str, Any]] = []
+    for side in ("left", "top"):  # Each opposite-edge pair is checked once.
+        other = opposite[side]
+        axis = 1 if side == "left" else 0
+        for start, end in zip(anchors[side], anchors[side][1:]):
+            low, high = (float(a["value"] / side_length) * maximum for a in (start, end))
+            opposite_bounds = [
+                next((a for a in anchors[other] if a["value"] == bound["value"]), None)
+                for bound in (start, end)
+            ]
+            if any(bound is None for bound in opposite_bounds):
+                continue
+            # At least one end on each edge must descend from the selected
+            # construction. Do not independently choose a new full-paper grid.
+            if any(
+                all(bound["id"].startswith("paper_boundary:") for bound in bounds)
+                for bounds in ((start, end), opposite_bounds)
+            ):
+                continue
+            members = {
+                edge: [c for c in contacts[edge] if low + 1e-6 < c["observed"][axis] < high - 1e-6]
+                for edge in (side, other)
+            }
+            count = len(members[side])
+            if not 2 <= count <= 7 or len(members[other]) != count:
+                continue
+            divisions = count + 1
+            tolerance = min(1.25, (high - low) / divisions * 0.05)
+            if tolerance < 0.25:
+                continue
+            staged = []
+            for index, (first, second) in enumerate(zip(members[side], members[other]), 1):
+                if (
+                    first["crease"] is None or second["crease"] is None
+                    or first["crease"].id != second["crease"].id
+                ):
+                    break
+                value = start["value"] + (end["value"] - start["value"]) * Qsqrt2(index) / Qsqrt2(divisions)
+                pixel = float(value / side_length) * maximum
+                if any(abs(item["observed"][axis] - pixel) > tolerance for item in (first, second)):
+                    break
+                for edge, member, bounds in (
+                    (side, first, (start, end)), (other, second, opposite_bounds),
+                ):
+                    coordinate = (zero, value) if axis == 1 else (value, zero)
+                    if edge == other:
+                        coordinate = (side_length, value) if axis == 1 else (value, side_length)
+                    staged.append({
+                        "point": member["point"], "coordinate": coordinate,
+                        "parents": [bound["id"] for bound in bounds],
+                        "index": index, "divisions": divisions,
+                        "residual_px": abs(member["observed"][axis] - pixel),
+                    })
+            if len(staged) != count * 2:
+                continue
+            run = {
+                "sides": [side, other], "division_count": divisions,
+                "bounds": [qsqrt2_to_mapping(a["value"]) for a in (start, end)],
+                "crease_entity_ids": [str(c["crease"].id) for c in members[side]],
+                "point_entity_ids": [str(c["point"].id) for c in staged],
+                "max_residual_px": max(c["residual_px"] for c in staged),
+                "verified_complete_run": True,
+            }
+            candidates.extend({**c, "run": run} for c in staged)
+            report["runs"].append(run)
+    entity_by_id = {str(e.id): e for e in graph.geometry_entities.values()}
+    for candidate in candidates:
+        if _entity_exact_point(candidate["point"]) is not None:
+            continue
+        graph.exactify_geometry(candidate["point"].id, {
+            "source": "existing_anchored_boundary_division",
+            "parent_entity_ids": candidate["parents"],
+            "project_coordinate": [qsqrt2_to_mapping(v) for v in candidate["coordinate"]],
+            "side_length": qsqrt2_to_mapping(side_length),
+            "division_index": candidate["index"],
+            "division_count": candidate["divisions"],
+            "boundary_division_evidence": candidate["run"],
+            "observed_residual_px": candidate["residual_px"],
+            "exact_generation": 1 + max(
+                (int(entity_by_id[p].exact_geometry.get("exact_generation", 0) or 0)
+                 for p in candidate["parents"] if p in entity_by_id),
+                default=0,
+            ),
+        })
+        report["applied_point_count"] += 1
+    return report
+
+
 def propagate_exact_geometry(
     graph: ConstructionGraph,
     *,
@@ -712,4 +860,4 @@ def propagate_exact_geometry(
     }
 
 
-__all__ = ["propagate_exact_geometry"]
+__all__ = ["exactify_anchored_boundary_divisions", "propagate_exact_geometry"]

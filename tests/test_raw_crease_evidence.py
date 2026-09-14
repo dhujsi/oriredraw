@@ -8,6 +8,7 @@ from raw_crease_evidence import (
     _cluster_finite_segments,
     _source_verified_collinear_gaps,
     _source_verified_corner_connections,
+    _suppress_embedded_short_runs,
     _source_verified_endpoint_connections,
     classify_topology_segment_line_types,
     detect_raw_crease_entities_from_square,
@@ -20,6 +21,35 @@ def _white_square(size: int = 121) -> np.ndarray:
 
 
 class RawCreaseEvidenceTest(unittest.TestCase):
+    def test_short_detector_echo_is_not_an_independent_crease(self):
+        def line(name, orientation, point, before, after, channel="blue"):
+            angle = math.radians(orientation * 22.5)
+            direction = np.array([math.cos(angle), math.sin(angle)])
+            normal = np.array([-direction[1], direction[0]])
+            center = float(direction @ point)
+            return {
+                "id": name, "orientation": orientation,
+                "observed_offset_px": float(normal @ point),
+                "evidence_intervals_px": [[center + before, center + after]],
+                "total_visible_length_px": after - before,
+                "source_segment_count": 1, "source_channels": [channel],
+                "support_fraction": 1.0,
+            }
+        parent = line("vertical", 4, (50.0, 50.0), -40.0, 40.0)
+        echo = line("echo", 5, (50.0, 50.0), -3.5, 3.5)
+        retained, rejected = _suppress_embedded_short_runs([parent, echo], 1.75)
+        self.assertEqual([e["id"] for e in retained], ["vertical"])
+        self.assertEqual(rejected[0]["covering_line_id"], "vertical")
+        for real in (
+            line("branch", 5, (50.0, 50.0), 0.0, 7.0),
+            line("different-color", 5, (50.0, 50.0), -3.5, 3.5, "red"),
+            line("outside-finite-parent", 5, (50.0, 95.0), -3.5, 3.5),
+        ):
+            with self.subTest(real=real["id"]):
+                retained, rejected = _suppress_embedded_short_runs([parent, real], 1.75)
+                self.assertEqual(len(retained), 2)
+                self.assertEqual(rejected, [])
+
     def test_clustered_line_requires_source_support_not_detector_length(self):
         confidence = np.zeros((101, 101), dtype=np.float32)
         cv2.line(confidence, (10, 40), (90, 40), 0.3, 2)

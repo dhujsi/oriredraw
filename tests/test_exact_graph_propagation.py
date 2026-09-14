@@ -1,7 +1,8 @@
 import unittest
 
 from construction_search import ConstructionGraph, GeometryEntity
-from exact_graph_propagation import propagate_exact_geometry
+from exact_graph_propagation import exactify_anchored_boundary_divisions, propagate_exact_geometry
+from construction_proof_topology import build_construction_proof_topology
 from qsqrt2_coordinates import qsqrt2_from_coefficients, qsqrt2_to_mapping
 
 
@@ -51,6 +52,121 @@ def _crease(entity_id, direction_index, offset, *, through=None, side_length=Non
 
 
 class ExactGraphPropagationTest(unittest.TestCase):
+    @staticmethod
+    def _bounded_stripes(rows=(12.5, 25.0, 37.5), *, paired=True):
+        graph = ConstructionGraph()
+        side = qsqrt2_from_coefficients(2)
+        zero = qsqrt2_from_coefficients(0)
+        one = qsqrt2_from_coefficients(1)
+        for edge, x in (("left", zero), ("right", side)):
+            anchor = _point(f"{edge}-bound", (float(x) * 50, 50.0),
+                            exact=(x, one), side_length=side)
+            anchor.exact_geometry["source_relation_id"] = "selected-bound"
+            graph.add_geometry_entity(anchor)
+        for index, y in enumerate(rows):
+            crease = _crease(f"stripe-{index}", 0, y)
+            crease.observed_geometry.update(
+                support_fraction=1.0, evidence_intervals_px=[[0.0, 100.0]],
+            )
+            graph.add_geometry_entity(crease)
+            for edge, x in (("left", 0.0), ("right", 100.0)):
+                if edge == "right" and not paired:
+                    continue
+                point = _point(f"{edge}-{index}", (x, y))
+                point.observed_geometry["boundary_sides"] = [edge]
+                graph.add_geometry_entity(point)
+                graph.connect_incidence(point.id, crease.id)
+        return graph
+
+    def test_complete_two_sided_run_uses_exact_bounds_not_fitted_coordinates(self):
+        graph = self._bounded_stripes((12.6, 24.9, 37.6))
+        entity_count = len(graph.geometry_entities)
+        report = exactify_anchored_boundary_divisions(graph, maximum=100.0)
+        self.assertEqual(report["applied_point_count"], 6)
+        self.assertEqual(report["runs"][0]["division_count"], 4)
+        self.assertEqual(len(graph.geometry_entities), entity_count)
+        self.assertEqual(
+            graph.geometry_entity("left-0").exact_geometry["project_coordinate"],
+            _point_mapping(qsqrt2_from_coefficients(0), qsqrt2_from_coefficients(1, 0, 4)),
+        )
+        propagated = propagate_exact_geometry(graph, maximum=100.0)
+        self.assertEqual(propagated["final_exact_crease_count"], 3)
+        proof = build_construction_proof_topology(
+            graph.geometry_snapshot(), {"enabled": True, "segments": []},
+        )
+        self.assertIn("stripe-0", proof["proved_crease_ids"])
+        self.assertIn("left-0", proof["proved_point_ids"])
+
+    def test_boundary_division_rejects_missing_extra_or_nonuniform_members(self):
+        for rows in ((12.5, 37.5), (12.5, 22.0, 25.0, 37.5), (10.0, 25.0, 39.0)):
+            with self.subTest(rows=rows):
+                graph = self._bounded_stripes(rows)
+                report = exactify_anchored_boundary_divisions(graph, maximum=100.0)
+                self.assertEqual(report["applied_point_count"], 0)
+                self.assertFalse(graph.geometry_entity("stripe-0").is_exact)
+
+    def test_boundary_division_also_supports_top_bottom_contacts(self):
+        graph = self._bounded_stripes()
+        for entity in graph.geometry_entities.values():
+            observed, exact = entity.observed_geometry, entity.exact_geometry
+            if entity.kind == "point":
+                observed["point_px"].reverse()
+                observed["boundary_sides"] = [
+                    {"left": "top", "right": "bottom"}[s]
+                    for s in observed.get("boundary_sides", [])
+                ]
+                if "project_coordinate" in exact:
+                    exact["project_coordinate"].reverse()
+            else:
+                observed.update(direction_index=4, angle_deg=90.0,
+                                line_offset_px=-observed["line_offset_px"])
+        report = exactify_anchored_boundary_divisions(graph, maximum=100.0)
+        self.assertEqual(report["applied_point_count"], 6)
+        self.assertEqual(report["runs"][0]["sides"], ["top", "bottom"])
+        self.assertEqual(
+            graph.geometry_entity("left-0").exact_geometry["project_coordinate"],
+            _point_mapping(qsqrt2_from_coefficients(1, 0, 4), qsqrt2_from_coefficients(0)),
+        )
+
+    def test_boundary_division_requires_opposite_edge_and_finite_stroke_evidence(self):
+        graph = self._bounded_stripes(paired=False)
+        self.assertEqual(
+            exactify_anchored_boundary_divisions(graph, maximum=100.0)["applied_point_count"], 0,
+        )
+        for field, value in (("support_fraction", 0.2), ("evidence_intervals_px", [[20.0, 70.0]])):
+            with self.subTest(field=field):
+                graph = self._bounded_stripes()
+                graph.geometry_entity("stripe-1").observed_geometry[field] = value
+                self.assertEqual(
+                    exactify_anchored_boundary_divisions(graph, maximum=100.0)["applied_point_count"], 0,
+                )
+
+    def test_boundary_division_requires_existing_proved_bounds(self):
+        graph = self._bounded_stripes()
+        for edge in ("left", "right"):
+            graph.geometry_entity(f"{edge}-bound").exact_geometry = {
+                "side_length": qsqrt2_to_mapping(qsqrt2_from_coefficients(2)),
+            }
+        self.assertEqual(
+            exactify_anchored_boundary_divisions(graph, maximum=100.0)["applied_point_count"], 0,
+        )
+
+    def test_boundary_division_evidence_cannot_bypass_an_unproved_parent(self):
+        graph = self._bounded_stripes()
+        exactify_anchored_boundary_divisions(graph, maximum=100.0)
+        parent = graph.geometry_entity("left-bound")
+        parent.exact_geometry.pop("source_relation_id")
+        parent.exact_geometry["source"] = "guided_automatic_topology_point"
+        proof = build_construction_proof_topology(
+            graph.geometry_snapshot(), {"enabled": True, "segments": []},
+        )
+        self.assertNotIn("left-0", proof["proved_point_ids"])
+        graph.geometry_entity("right-0").exact_geometry["boundary_division_evidence"] = {}
+        proof = build_construction_proof_topology(
+            graph.geometry_snapshot(), {"enabled": True, "segments": []},
+        )
+        self.assertNotIn("right-0", proof["proved_point_ids"])
+
     def test_exact_crease_intersection_then_exact_point_propagates_to_existing_child(self):
         graph = ConstructionGraph()
         side_length = qsqrt2_from_coefficients(2)

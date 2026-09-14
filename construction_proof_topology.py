@@ -50,7 +50,7 @@ def _derived_parents(
     if source == "existing_crease_intersection":
         parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
         return source, parents, False
-    if source == "existing_crease_paper_boundary_intersection":
+    if source in {"existing_crease_paper_boundary_intersection", "existing_anchored_boundary_division"}:
         raw_parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
         parents = [item for item in raw_parents if not item.startswith("paper_boundary:")]
         has_boundary = any(item.startswith("paper_boundary:") for item in raw_parents)
@@ -165,6 +165,7 @@ def build_construction_proof_topology(
                 "existing_canonical_crease_endpoint_from_exact_point",
                 "existing_crease_paper_boundary_intersection",
                 _SINGLE_CORE_REFERENCE_SOURCE,
+                "existing_anchored_boundary_division",
             } else 2 if source == "existing_crease_intersection" else 0
             exact = entities[entity_id].get("exact_geometry")
             core_parameter_is_valid = (
@@ -174,12 +175,22 @@ def build_construction_proof_topology(
                     and int(exact.get("independent_parameter_count", 0) or 0) == 1
                 )
             )
+            division_is_valid = (
+                source != "existing_anchored_boundary_division"
+                or (
+                    isinstance(exact, Mapping)
+                    and 0 < int(exact.get("division_index", 0)) < int(exact.get("division_count", 0))
+                    and exact.get("boundary_division_evidence", {}).get("verified_complete_run", False)
+                    and len(parents) + int(has_boundary) >= 2
+                )
+            )
             if (
                 expected_parent_count
                 and len(parents) >= expected_parent_count
                 and all(parent in proved for parent in parents)
                 and (source != "existing_crease_paper_boundary_intersection" or has_boundary)
                 and core_parameter_is_valid
+                and division_is_valid
             ):
                 proved.add(entity_id)
                 statuses[entity_id] = {
@@ -203,6 +214,7 @@ def build_construction_proof_topology(
             "existing_crease_intersection",
             "existing_crease_paper_boundary_intersection",
             _SINGLE_CORE_REFERENCE_SOURCE,
+            "existing_anchored_boundary_division",
         }
         statuses[entity_id] = {
             "id": entity_id,

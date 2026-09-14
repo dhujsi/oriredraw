@@ -5,6 +5,9 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 ## [Unreleased]
 
 ### Fixed
+- Complete parallel runs between proved boundary anchors can now supply exact interval divisions after propagation stalls. Every intermediate stroke must be present on both opposite paper edges; missing, extra, uneven, or weak members are rejected. No new crease or unconstrained coordinate is generated.
+- Short detector echoes entirely contained within a stronger same-color finite stroke are excluded from construction and retained in the observation audit.
+- The second September photo's top-edge start now exports 170 internal segments with exact endpoints, correct diamond/stripe colors, and no built-in cAMV violations. Other starts are not yet guaranteed equivalent; candidate ranking remains follow-up work.
 - Paper-frame detection now searches both sides of the detected crease component, avoiding inward clipping when a photograph's dark background disconnects the thin frame.
 - Detector-truncated corner strokes can share the known paper corner only when each stroke has nearby finite evidence, compatible direction, and continuous source ink to that corner. General endpoint snapping tolerances are unchanged.
 - Clustered line proposals with less than half their finite run supported by source ink no longer enter the observed crease graph.

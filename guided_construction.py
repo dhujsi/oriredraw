@@ -24,7 +24,7 @@ from construction_search import (
     ConstructionOperation,
     GeometryEntity,
 )
-from exact_graph_propagation import propagate_exact_geometry
+from exact_graph_propagation import exactify_anchored_boundary_divisions, propagate_exact_geometry
 from finite_endpoint_closure import build_finite_endpoint_closed_topology
 from guided_cp_output import build_guided_cp_output_contract
 from exact_qsqrt2 import Qsqrt2
@@ -2853,6 +2853,9 @@ def build_guided_boundary_report(
             core_reference_history.append(core_history)
         if core_propagation is not None:
             propagation_reports.append(core_propagation)
+    boundary_divisions = exactify_anchored_boundary_divisions(graph, maximum=maximum)
+    if boundary_divisions["applied_point_count"]:
+        propagation_reports.append(propagate_exact_geometry(graph, maximum=maximum))
     emit_progress(78, "正在整理传播结果和检查未解释线段…")
     geometry_propagation = _combine_propagation_reports(propagation_reports)
     relation_summaries = [
@@ -3081,6 +3084,7 @@ def build_guided_boundary_report(
         "automatic_guided_point_operations": automatic_point_summaries,
         "single_core_reference_operations": core_reference_summaries,
         "geometry_propagation": geometry_propagation,
+        "anchored_boundary_divisions": boundary_divisions,
         "geometry_graph": geometry_snapshot,
         "construction_proof_topology": construction_proof_topology,
         "topology_layers": {

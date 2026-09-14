@@ -902,6 +902,56 @@ def _source_verified_endpoint_connections(
     return records
 
 
+def _suppress_embedded_short_runs(
+    entities: list[dict[str, Any]], evidence_distance_px: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Discard short oblique detector echoes entirely inside a longer stroke.
+
+    Retain the rejected observation for audit. This does not remove a real
+    branch leaving the parent's stroke width, a different-color crease, or
+    anything outside the parent's measured finite interval.
+    """
+    stroke_radius = max(0.75, evidence_distance_px - 0.75)
+    width = min(2.0, stroke_radius + 0.75)
+    retained, rejected = [], []
+    for line in entities:
+        length = float(line["total_visible_length_px"])
+        parent = None
+        if length <= max(8.0, stroke_radius * 8.0) and line["source_segment_count"] == 1:
+            direction, normal = _line_basis(int(line["orientation"]))
+            samples = np.concatenate([
+                normal * float(line["observed_offset_px"])
+                + np.linspace(a, b, max(3, int(math.ceil(b - a)) + 1))[:, None] * direction
+                for a, b in line["evidence_intervals_px"]
+            ])
+            for other in entities:
+                if (
+                    other["orientation"] == line["orientation"]
+                    or float(other["total_visible_length_px"]) < length * 4.0
+                    or float(other["support_fraction"]) < 0.8
+                    or not set(line["source_channels"]) <= set(other["source_channels"])
+                ):
+                    continue
+                other_direction, other_normal = _line_basis(int(other["orientation"]))
+                residuals = np.abs(samples @ other_normal - float(other["observed_offset_px"]))
+                values = samples @ other_direction
+                if np.max(residuals) > width:
+                    continue
+                if not all(any(a <= t <= b for a, b in other["evidence_intervals_px"]) for t in values):
+                    continue
+                parent = other
+                break
+        if parent is None:
+            retained.append(line)
+        else:
+            rejected.append({
+                "reason": "short_run_inside_stronger_observed_stroke",
+                "line": line, "covering_line_id": parent["id"],
+                "stroke_half_width_px": width,
+            })
+    return retained, rejected
+
+
 def _source_verified_collinear_gaps(
     entities: list[dict[str, Any]],
     confidence: np.ndarray,
@@ -1152,6 +1202,9 @@ def detect_raw_crease_entities_from_square(
         effective_settings,
         diffuse_input=bool(detector_stats["diffuse_input"]),
     )
+    entities, embedded_runs = _suppress_embedded_short_runs(
+        entities, effective_settings.evidence_distance_px,
+    )
     endpoint_connections = _source_verified_endpoint_connections(
         entities,
         confidence,
@@ -1193,6 +1246,7 @@ def detect_raw_crease_entities_from_square(
             int(key) for key in sorted(orientation_counts, key=int)
         ],
         "lines": entities,
+        "suppressed_embedded_runs": embedded_runs,
         "corner_connection_evidence": corner_connections,
         "endpoint_connection_evidence": endpoint_connections,
         "endpoint_connection_count": len(endpoint_connections),
