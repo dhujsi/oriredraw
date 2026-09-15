@@ -25,3 +25,8 @@ jobs:
           python -m pip install -r requirements.txt pytest
       - name: Run test suite
         run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test recommended start selection
+        run: node --test tests/start-recommendation.test.mjs

@@ -7,9 +7,9 @@ const language = preferredLanguage || (navigator.language?.toLowerCase().startsW
 const messages = {
   zh: {
     pageTitle: 'Oriredraw · CP 重绘',
-    pageDescription: '在浏览器中读取 CP 原图。先点一个绿色点，再选一种开始方式。',
+    pageDescription: '在浏览器中读取 CP 原图，使用推荐起点或自行选点重绘。',
     heroTitle: '将图片 CP 重绘为<br><span>.cp 文件</span>',
-    heroIntro: '先看原图中的线。点图上的一个绿色点，再选一种开始方式，程序就会继续。',
+    heroIntro: '分析图片后，使用推荐起点开始重绘；也可以自己点击图上的绿色点。',
     privacy: '图片仅在你的浏览器中处理，不会上传服务器。',
     start: '分析原图并选起点',
     upload: '选择、拖入或粘贴 CP 图片',
@@ -74,9 +74,9 @@ const messages = {
   },
   en: {
     pageTitle: 'Oriredraw · CP Redraw',
-    pageDescription: 'Read a CP image in your browser. Click one green point, then choose one way to start.',
+    pageDescription: 'Read a CP image in your browser. Use a recommended start or choose your own point.',
     heroTitle: 'Redraw CP images as<br><span>.cp files</span>',
-    heroIntro: 'First show the lines in the image. Click one green point, then choose one way to start.',
+    heroIntro: 'Analyze the image, then use the recommended start to redraw it, or click another green point.',
     privacy: 'Images are processed only in your browser and are never uploaded.',
     start: 'Analyze image and choose a start',
     upload: 'Choose, drop, or paste a CP image',
@@ -175,6 +175,17 @@ function applyStaticTranslations() {
 }
 
 const exactEnglish = new Map(Object.entries({
+  '可以使用推荐起点，也可以直接点击图上的绿色点开始重绘。': 'Use the recommended start, or click another green point to redraw.',
+  '正在检查起点…': 'Checking starting points…',
+  '用推荐点重绘': 'Redraw from recommended point',
+  '用此点重绘': 'Redraw from this point',
+  '暂无可用推荐': 'No recommendation available',
+  '有限次试算未得到可用结果；你仍可手动选择其他点。': 'The bounded trials found no usable result. You can still choose a point manually.',
+  '推荐起点已通过检查': 'Recommended start passed checks',
+  '推荐起点': 'Recommended start',
+  '★ 标记处：折痕、端点和 cAMV 检查通过。也可选择其他点。': '★ marks the start that passed crease, endpoint and cAMV checks. Other points remain selectable.',
+  '★ 标记处：几何检查通过；原图未明确峰谷，仍需确认。': '★ marks the start that passed geometry checks. Unspecified source mountain/valley assignments still need review.',
+  '建议先试这个点': 'Suggested point to try',
   '正在准备浏览器识别引擎…': 'Preparing the browser recognition engine…',
   '正在加载 Python 运行环境…': 'Loading the Python runtime…',
   '正在加载 NumPy 与 OpenCV…': 'Loading NumPy and OpenCV…',
@@ -317,7 +328,11 @@ const exactEnglish = new Map(Object.entries({
 function translateEnglish(text) {
   if (exactEnglish.has(text)) return exactEnglish.get(text);
 
-  let match = text.match(/^第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。$/);
+  let match = text.match(/^正在试算第 (\d+) 个候选；仍可直接点图选点。$/);
+  if (match) return `Trying candidate ${match[1]}; you can still click a point manually.`;
+  match = text.match(/^试算仍有 (\d+) 项待确认；可以撤销并改选。$/);
+  if (match) return `The trial still has ${match[1]} items to review. You can undo and choose again.`;
+  match = text.match(/^第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。$/);
   if (match) return 'Step 1: click one green point. A start option will appear beside it; choose one.';
   match = text.match(/^已经补上 (\d+) 条线。当前 \.cp 可以下载；也可以继续补充。$/);
   if (match) return `${match[1]} lines were added. The current .cp can be downloaded, or you can continue.`;

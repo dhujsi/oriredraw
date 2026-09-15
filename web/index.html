@@ -6,7 +6,7 @@
   <meta name="description" content="在浏览器中把 22.5° 系 CP 图片重绘为 Oriedita .cp 文件。">
   <title>Oriredraw · CP 重绘</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=20260915-recommended-start-v1">
   <style>
     .shell { padding-bottom: 18px; }
     .workspace { min-height: min(680px, calc(100dvh - 270px)); }
@@ -79,7 +79,7 @@
         <h1 data-i18n-html="heroTitle">将图片 CP 重绘为<br><span>.cp 文件</span></h1>
       </div>
       <div class="intro-block">
-        <p class="intro" data-i18n-html="heroIntro">先看原图中的线。点图上的一个绿色点，再选一种开始方式，程序就会继续。</p>
+        <p class="intro" data-i18n-html="heroIntro">分析图片后，使用推荐起点开始重绘；也可以自己点击图上的绿色点。</p>
         <p class="privacy" data-i18n="privacy">图片仅在你的浏览器中处理，不会上传服务器。</p>
       </div>
     </header>
@@ -236,6 +236,10 @@
             </div>
           </div>
 
+          <section class="start-recommendation hidden" id="start-recommendation" aria-live="polite" aria-busy="false" aria-label="推荐起点">
+            <div><strong id="start-recommendation-title">正在检查起点…</strong><p id="start-recommendation-note"></p></div>
+            <button type="button" id="use-recommended-start" disabled>用推荐点重绘</button>
+          </section>
           <fieldset class="layer-toggles" aria-label="显示图层">
             <legend data-i18n="layerLegend">显示</legend>
             <label><input type="checkbox" id="layer-redraw" checked><span data-i18n="layerRedraw">重绘</span></label>
@@ -326,8 +330,8 @@
     </div>
   </dialog>
 
-  <script type="module" src="./i18n.js?v=20260907-result-tabs-v1"></script>
-  <script src="./playback.js?v=20260907-result-tabs-v1"></script>
-  <script type="module" src="./app.js?v=20260907-result-tabs-v1"></script>
+  <script type="module" src="./i18n.js?v=20260915-recommended-start-v1"></script>
+  <script src="./playback.js?v=20260915-recommended-start-v1"></script>
+  <script type="module" src="./app.js?v=20260915-recommended-start-v1"></script>
 </body>
 </html>

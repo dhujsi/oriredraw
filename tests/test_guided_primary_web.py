@@ -110,8 +110,9 @@ def test_guided_boundary_reports_progress_while_calculating_after_start_selectio
     assert "formatProgressDuration" in app
     assert "预计剩余" in app
     assert "data.stage === 'guided-boundary'" in app
-    assert "async function guidedBoundaryInBrowser(result, selection, id)" in worker
-    assert "announce('guided-boundary'" in worker
+    assert "async function guidedBoundaryInBrowser(result, selection, id, stage = 'guided-boundary')" in worker
+    assert "announce(stage," in worker
+    assert "data.stage === 'recommend-start'" in app
     assert "_oriredraw_guided_progress" in worker
     assert "grid-template-columns: minmax(180px, 1fr) max-content" in style
     assert ".guided-progress .progress-block b" in style
@@ -257,7 +258,7 @@ def test_guided_copy_states_the_current_action_and_keeps_optional_steps_optional
     html = _source("web/index.html")
 
     assert "第一步：点一个绿色点。点旁边会出现开始方式，选一个就行。" in app
-    assert "点一个绿色点，在点旁边选择开始方式。" in app
+    assert "可以使用推荐起点，也可以直接点击图上的绿色点开始重绘。" in app
     assert "请直接点图上的绿色点；开始方式会出现在点旁边。" not in app
     assert "唯一的起点" in app
     assert "不再要求选择第二个起点" in app

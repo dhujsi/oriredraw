@@ -1,3 +1,5 @@
+import { createTrialCache, evaluateStartCandidates, shortlistStarts } from './start-recommendation.mjs?v=20260915-recommended-start-v1';
+
 const uploadForm = document.querySelector('#upload-form');
 const input = document.querySelector('#image-input');
 const fileName = document.querySelector('#file-name');
@@ -78,9 +80,14 @@ const corePointCoordinate = document.querySelector('#core-point-coordinate');
 const anchorDetails = document.querySelector('#anchor-details');
 const resultEyebrow = document.querySelector('#result-eyebrow');
 const resultTitle = document.querySelector('#result-title');
+const startRecommendation = document.querySelector('#start-recommendation');
+const startRecommendationTitle = document.querySelector('#start-recommendation-title');
+const startRecommendationNote = document.querySelector('#start-recommendation-note');
+const useRecommendedStart = document.querySelector('#use-recommended-start');
+const startRecommendations = new WeakMap();
 const previewFigure = preview.closest('.preview');
 
-const WEB_ENGINE_VERSION = '20260907-result-tabs-v1';
+const WEB_ENGINE_VERSION = '20260915-recommended-start-v1';
 const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
@@ -111,6 +118,7 @@ function callWorker(type, payload = {}, transfer = []) {
 worker.addEventListener('message', event => {
   const data = event.data;
   if (data.type === 'status') {
+    if (data.stage === 'recommend-start') return;
     if (data.stage === 'analyze-raw') {
       updateProgress(Number(data.percent ?? 0), data.message);
       return;
@@ -649,6 +657,8 @@ function endImageFlow() {
 
 async function runImageFlow() {
   if (!input.files.length || !engineReady) return;
+  const oldRecommendation = currentResult && startRecommendations.get(currentResult);
+  if (oldRecommendation) oldRecommendation.active = false;
   beginImageFlow();
 
   try {
@@ -657,6 +667,7 @@ async function runImageFlow() {
     const data = await callWorker('analyze-raw', { buffer, settings: readSettings() }, [buffer]);
     currentResult = data;
     renderResult(data);
+    void prepareRecommendedStart(data);
   } catch (error) {
     showError(error.message || '识别失败');
   } finally {
@@ -706,7 +717,7 @@ function renderRawPrimaryStats(data) {
 
 function rawPrimaryWarnings(data) {
   const warnings = [
-    '现在显示的是原图。点一个绿色点，再在点旁边选择开始方式。',
+    '可以使用推荐起点，也可以直接点击图上的绿色点开始重绘。',
     '选择开始方式后即可下载当前 .cp 草稿；通过全部检查后会标记为已验证。',
   ];
   const candidates = data?.shadow_search?.boundary_relation_candidates;
@@ -1623,10 +1634,10 @@ function renderTopologyPointOverlay(
     marker.type = 'button';
     marker.className = `topology-point-marker${isBoundaryPoint ? ' boundary-relation-point' : ''}${isStartPoint ? ' topology-point-start' : ''}`;
     marker.dataset.pointId = String(candidate.id || '');
+    marker.dataset.pointKey = observedPointKey(point);
     marker.style.left = `${Math.max(0, Math.min(100, Number(point[0]) / maximum * 100))}%`;
     marker.style.top = `${Math.max(0, Math.min(100, Number(point[1]) / maximum * 100))}%`;
     if (isBoundaryPoint) {
-      marker.setAttribute('aria-haspopup', 'dialog');
       marker.setAttribute(
         'aria-label',
         '绿色起点，点击后自动开始',
@@ -1636,6 +1647,13 @@ function renderTopologyPointOverlay(
       marker.setAttribute('aria-label', `${candidate.label || '黄色补充点'}，点击查看是否要继续`);
     }
     bindGuidedPointTooltip(marker, candidate, report, root);
+    marker.dataset.baseLabel = marker.getAttribute('aria-label');
+    marker.addEventListener('click', event => {
+      if (!marker.classList.contains('recommended')) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      applyRecommendedStart();
+    });
     if (isBoundaryPoint) {
       marker.addEventListener('click', event => {
         event.preventDefault();
@@ -1766,6 +1784,7 @@ function renderBoundaryRelations(root) {
     retainedTopologyPoints,
   );
   renderGuidedMvOverlay(root, guided);
+  renderStartRecommendation(root);
   if (!allCandidates.length && !selectedSteps.length) {
     boundaryRelationList.replaceChildren();
     boundaryRelationStatus.textContent = '';
@@ -1793,7 +1812,7 @@ function renderBoundaryRelations(root) {
       boundaryRelationIntro.textContent = '';
     } else {
       boundaryRelationIntro.textContent = isRawPrimaryResult(root)
-        ? '点一个绿色点，在点旁边选择开始方式。'
+        ? '可以使用推荐起点，也可以直接点击图上的绿色点开始重绘。'
         : '下面是可能的开始方式。优先级只是建议，也可以直接点图上的绿色点。';
     }
   }
@@ -1858,6 +1877,90 @@ function renderBoundaryRelations(root) {
   }
 }
 
+async function prepareRecommendedStart(root) {
+  if (!isRawPrimaryResult(root) || guidedSelectionSteps(root.shadow_search?.guided_boundary).length) return;
+  const previous = startRecommendations.get(root);
+  if (previous?.phase === 'ready' || previous?.active) {
+    renderStartRecommendation(root);
+    return;
+  }
+  const cache = previous?.cache || createTrialCache(selectionSteps => callWorker('recommend-start', {
+    result: {
+      stats: root.stats || {}, playback_trace: root.playback_trace || [],
+      raw_crease_evidence: root.shadow_search?.raw_crease_evidence || null,
+      boundary_relation_candidates: root.shadow_search?.boundary_relation_candidates || [],
+      topology_point_start_candidates: root.shadow_search?.topology_point_start_candidates || [],
+    },
+    selection: { selection_steps: selectionSteps, segment_line_types: {} },
+  }));
+  const state = { cache, active: true, phase: 'checking', tried: 0, best: null };
+  startRecommendations.set(root, state);
+  const active = () => state.active && currentResult === root
+    && startRecommendations.get(root) === state;
+  renderStartRecommendation(root);
+  const best = await evaluateStartCandidates(shortlistStarts(root), cache.run, active, count => {
+    state.tried = count;
+    renderStartRecommendation(root);
+  }, root);
+  if (!active()) return;
+  state.best = best;
+  state.phase = 'ready';
+  state.active = false;
+  root.shadow_search.start_recommendation = {
+    mode: 'bounded_verified_start_v1', tested_count: state.tried,
+    status: best?.quality.status || 'unavailable',
+    choice: best?.choice || null, automatic_selection: false,
+  };
+  renderStartRecommendation(root);
+}
+
+function renderStartRecommendation(root) {
+  if (!startRecommendation) return;
+  const state = root && startRecommendations.get(root);
+  const selected = guidedSelectionSteps(root?.shadow_search?.guided_boundary).length > 0;
+  const busy = boundaryRelationList?.dataset.busy === 'true';
+  const hidden = !state || selected || busy || (!state.active && state.phase === 'checking');
+  startRecommendation.classList.toggle('hidden', hidden);
+  startRecommendation.setAttribute('aria-busy', !hidden && state.phase === 'checking' ? 'true' : 'false');
+  const best = !hidden ? state.best : null;
+  const key = best ? observedPointKey(best.choice.point) : '';
+  topologyPointLayer?.querySelectorAll('.topology-point-marker').forEach(marker => {
+    const recommended = Boolean(key) && marker.dataset.pointKey === key;
+    marker.classList.toggle('recommended', recommended);
+    marker.textContent = recommended ? '★' : '';
+    marker.setAttribute('aria-label', recommended
+      ? '推荐起点，点击开始重绘' : marker.dataset.baseLabel || '');
+  });
+  if (hidden) return;
+  useRecommendedStart.disabled = !best;
+  useRecommendedStart.textContent = best?.quality.status === 'provisional' ? '用此点重绘' : '用推荐点重绘';
+  if (state.phase === 'checking') {
+    startRecommendationTitle.textContent = '正在检查起点…';
+    startRecommendationNote.textContent = `正在试算第 ${state.tried || 1} 个候选；仍可直接点图选点。`;
+  } else if (!best) {
+    startRecommendationTitle.textContent = '暂无可用推荐';
+    startRecommendationNote.textContent = '有限次试算未得到可用结果；你仍可手动选择其他点。';
+  } else if (best.quality.status === 'verified') {
+    startRecommendationTitle.textContent = '推荐起点已通过检查';
+    startRecommendationNote.textContent = '★ 标记处：折痕、端点和 cAMV 检查通过。也可选择其他点。';
+  } else if (best.quality.status === 'geometry_only') {
+    startRecommendationTitle.textContent = '推荐起点';
+    startRecommendationNote.textContent = '★ 标记处：几何检查通过；原图未明确峰谷，仍需确认。';
+  } else {
+    startRecommendationTitle.textContent = '建议先试这个点';
+    startRecommendationNote.textContent = `试算仍有 ${best.quality.blockers} 项待确认；可以撤销并改选。`;
+  }
+}
+
+function applyRecommendedStart() {
+  const state = currentResult && startRecommendations.get(currentResult);
+  if (!state?.best || guidedSelectionSteps(currentResult.shadow_search?.guided_boundary).length) return;
+  const { kind, id } = state.best.choice;
+  return requestGuidedBoundary([{ kind, id }]);
+}
+
+useRecommendedStart?.addEventListener('click', applyRecommendedStart);
+
 function setBoundaryRelationBusy(busy) {
   if (!boundaryRelationList) return;
   boundaryRelationList.dataset.busy = busy ? 'true' : 'false';
@@ -1892,11 +1995,16 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
   const assignments = segmentLineTypes === null
     ? guidedMvAssignments(root)
     : normalizeGuidedMvAssignments(segmentLineTypes);
+  const recommendation = startRecommendations.get(root);
+  if (recommendation) recommendation.active = false;
   setBoundaryRelationBusy(true);
+  renderStartRecommendation(root);
   beginGuidedProgress();
   boundaryRelationStatus.textContent = '正在根据你的选择更新结果，请稍候…';
   try {
-    const report = await callWorker('guided-boundary', {
+    const cachedTrial = Object.keys(assignments).length === 0
+      ? recommendation?.cache.get(selectionSteps) : null;
+    const report = await (cachedTrial || callWorker('guided-boundary', {
       result: {
         stats: root.stats || {},
         playback_trace: root.playback_trace || [],
@@ -1908,7 +2016,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
         selection_steps: selectionSteps,
         segment_line_types: assignments,
       },
-    });
+    }));
     if (!report?.enabled) throw new Error(guidedReportError(report));
     if (currentResult === root) {
       root.shadow_search = root.shadow_search || {};
@@ -1929,6 +2037,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
     endGuidedProgress();
     if (currentResult === root) {
       setBoundaryRelationBusy(false);
+      renderStartRecommendation(root);
       window.scrollTo(0, previousScrollY);
     }
   }
@@ -1976,6 +2085,7 @@ async function undoGuidedBoundary() {
     root.phase = 'awaiting_boundary_relation';
     invalidateGuidedOutput(root);
     renderBoundaryRelations(root);
+    void prepareRecommendedStart(root);
     return;
   }
   await requestGuidedBoundary(previousSteps);

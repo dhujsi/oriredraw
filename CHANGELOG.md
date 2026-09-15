@@ -13,6 +13,7 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 - Clustered line proposals with less than half their finite run supported by source ink no longer enter the observed crease graph.
 
 ### Added
+- One highlighted starting-point recommendation, based on at most three diverse trial starts. Geometry, endpoint, coverage, and cAMV failures outrank segment count; incomplete suggestions remain explicitly unverified. Trials stop after a passing result and their output is reused on selection. Manual selection and undo remain available; automatic selection is not enabled.
 - Construction-search v2 foundation: candidate construction DAG, multiple provenance per node, beam search, route-level scoring, and a cAMV scoring hook.
 - Formal project versioning with a canonical `VERSION` file.
 - Browser shadow-search adapter: the current reconstruction is translated into a construction DAG, scored by v2, and returned as diagnostics without changing the exported `.cp`.

@@ -37,7 +37,7 @@ const SOURCE_FILES = [
   'shadow_variant_v6.py',
   'shadow_bridge.py',
 ];
-const WEB_ENGINE_VERSION = '20260907-result-tabs-v1';
+const WEB_ENGINE_VERSION = '20260915-recommended-start-v1';
 
 let pyodide;
 let readyPromise;
@@ -127,13 +127,13 @@ analyze_raw_primary_json(Path("${inputPath}").read_bytes(), _oriredraw_raw_setti
   }
 }
 
-async function guidedBoundaryInBrowser(result, selection, id) {
+async function guidedBoundaryInBrowser(result, selection, id, stage = 'guided-boundary') {
   await ensureReady();
-  announce('guided-boundary', '正在准备本次起点推导…', 0, id, false);
+  announce(stage, '正在准备本次起点推导…', 0, id, false);
   pyodide.globals.set('_oriredraw_guided_result_json', JSON.stringify(result));
   pyodide.globals.set('_oriredraw_guided_selection_json', JSON.stringify(selection));
   pyodide.globals.set('_oriredraw_guided_progress', (percent, message) => {
-    announce('guided-boundary', String(message), Number(percent), id, false);
+    announce(stage, String(message), Number(percent), id, false);
   });
   try {
     const json = pyodide.runPython(`
@@ -143,7 +143,7 @@ build_guided_boundary_report_json(
     _oriredraw_guided_progress,
 )
     `);
-    announce('guided-boundary', '正在整理推导结果…', 96, id, false);
+    announce(stage, '正在整理推导结果…', 96, id, false);
     return json;
   } finally {
     pyodide.globals.delete('_oriredraw_guided_result_json');
@@ -175,8 +175,8 @@ self.onmessage = async event => {
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
       return;
     }
-    if (type === 'guided-boundary') {
-      const json = await guidedBoundaryInBrowser(event.data.result, event.data.selection, id);
+    if (type === 'guided-boundary' || type === 'recommend-start') {
+      const json = await guidedBoundaryInBrowser(event.data.result, event.data.selection, id, type);
       self.postMessage({ type: 'result', id, payload: JSON.parse(json) });
       return;
     }
