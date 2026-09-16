@@ -5,9 +5,10 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 ## [Unreleased]
 
 ### Fixed
+- Selected boundary seeds now use uniquely solvable Q(√2) incidence and division equations before pixel-derived coordinate guesses. A stalled frontier reuses a uniquely proved point on its exact parent instead of fitting a new scalar. Free variables are not fitted; inconsistent or source-incompatible solutions are rejected. The second September photo's top, left, and right starts now export the same 170 internal CP segments with no built-in cAMV violations.
 - Complete parallel runs between proved boundary anchors can now supply exact interval divisions after propagation stalls. Every intermediate stroke must be present on both opposite paper edges; missing, extra, uneven, or weak members are rejected. No new crease or unconstrained coordinate is generated.
 - Short detector echoes entirely contained within a stronger same-color finite stroke are excluded from construction and retained in the observation audit.
-- The second September photo's top-edge start now exports 170 internal segments with exact endpoints, correct diamond/stripe colors, and no built-in cAMV violations. Other starts are not yet guaranteed equivalent; candidate ranking remains follow-up work.
+- The second September photo's top diamonds and horizontal stripes retain exact endpoints and source-supported mountain/valley colors.
 - Paper-frame detection now searches both sides of the detected crease component, avoiding inward clipping when a photograph's dark background disconnects the thin frame.
 - Detector-truncated corner strokes can share the known paper corner only when each stroke has nearby finite evidence, compatible direction, and continuous source ink to that corner. General endpoint snapping tolerances are unchanged.
 - Clustered line proposals with less than half their finite run supported by source ink no longer enter the observed crease graph.

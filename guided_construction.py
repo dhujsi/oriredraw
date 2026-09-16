@@ -17,6 +17,7 @@ import math
 from typing import Any, Callable, Hashable, Iterable, Mapping
 
 from boundary_relations import detect_boundary_ratio_relations
+from boundary_seed_constraints import resolve_boundary_seed_constraints
 from constrained_angle_candidates import build_constrained_angle_candidates
 from construction_proof_topology import build_construction_proof_topology
 from construction_search import (
@@ -70,6 +71,7 @@ _RADICAL_DENOMINATORS = (1, 2, 3, 4, 6, 8, 12)
 _MAX_FREE_POINT_COMPLEXITY = 28
 _MAX_LINE_CONSTRAINED_POINT_COMPLEXITY = 48
 _SINGLE_CORE_REFERENCE_SOURCE = "guided_single_qsqrt2_core_reference"
+_INCIDENCE_REFERENCE_SOURCE = "existing_incidence_constraint_point"
 _MIN_SINGLE_CORE_REFERENCE_GAIN = 3
 _MAX_PARENT_RAY_ENDPOINT_GAP_PX = 3.2
 
@@ -1004,6 +1006,84 @@ def _point_exact_geometry_is_compatible(
     )
 
 
+def _relation_with_proved_seed_coordinates(
+    relation: Mapping[str, Any],
+    coordinates: Mapping[str, Any],
+    maximum: float,
+) -> dict[str, Any]:
+    updated = copy.deepcopy(relation)
+    parameters = []
+    normalized = {}
+    side = str(updated["side"])
+    for point in updated["points"]:
+        point_id = str(point["id"])
+        x, y = (qsqrt2_from_mapping(v) for v in coordinates[point_id])
+        normalized[point_id] = (x, y)
+        parameter = {"top": x, "right": y, "bottom": 1 - x, "left": 1 - y}[side]
+        role = point["relation_role"]
+        parameters.append({"id": point_id, "role": role, "parameter": qsqrt2_to_mapping(parameter)})
+        fitted = [float(x) * maximum, float(y) * maximum]
+        observed = point.get("observed_point_px", point["point_px"])
+        point.update({
+            "observed_point_px": list(observed),
+            "point_px": [round(v, 6) for v in fitted],
+            "normalized_coordinate": [float(2 * v - 1) for v in (x, y)],
+            "coordinate_expression": [qsqrt2_expression(2 * v - 1) for v in (x, y)],
+            "fitted_side_coordinate_px": round(float(parameter) * maximum, 6),
+            "image_residual_px": round(math.dist(fitted, observed), 6),
+            "algebraic_residual_px": 0.0,
+            "algebraic_complexity": sum(qsqrt2_complexity(2 * v - 1) for v in (x, y)),
+            "coordinate_provenance": "observed_incidence_and_selected_division",
+        })
+
+    def update_gauge(original: Mapping[str, Any]) -> dict[str, Any]:
+        gauge = copy.deepcopy(original)
+        scale = qsqrt2_from_mapping(gauge["side_length"])
+        gauge["points"] = [{
+            "id": p["id"], "role": p["role"], "edge_parameter": p["parameter"],
+            "edge_distance": qsqrt2_to_mapping(qsqrt2_from_mapping(p["parameter"]) * scale),
+            "coordinate": [qsqrt2_to_mapping(v * scale) for v in normalized[p["id"]]],
+        } for p in parameters]
+        gauge["point_complexity"] = sum(
+            qsqrt2_complexity(qsqrt2_from_mapping(p["edge_distance"])) for p in gauge["points"]
+        )
+        _, b, _ = qsqrt2_canonical_coefficients(scale)
+        gauge["score"] = round(gauge["point_complexity"] + .35 * qsqrt2_complexity(scale) + 2 * max(0, -b), 6)
+        return gauge
+
+    gauge = update_gauge(updated["recommended_coordinate_gauge"])
+    updated["recommended_coordinate_gauge"] = gauge
+    updated["coordinate_gauge_candidates"] = [
+        update_gauge(g) for g in updated.get("coordinate_gauge_candidates", [])
+    ]
+    project_points = {p["id"]: p for p in gauge["points"]}
+    scale = qsqrt2_from_mapping(gauge["side_length"])
+    for point in updated["points"]:
+        exact = project_points[str(point["id"])]
+        point["project_coordinate"] = exact["coordinate"]
+        point["edge_parameter"] = exact["edge_parameter"]
+        point["edge_distance"] = exact["edge_distance"]
+        point["cross_segment_lengths"] = _cross_segment_lengths(
+            exact["coordinate"], scale, boundary_sides=[side],
+        )
+    updated.update({
+        "edge_parameters": parameters,
+        "geometry_mode": "incidence_proved_qsqrt2_boundary_relation",
+        "fitted_endpoint_coordinates": [
+            p["fitted_side_coordinate_px"] for p in updated["points"]
+            if p["relation_role"] in ("start", "end")
+        ],
+        "fitted_geometry_max_residual_px": max(p["image_residual_px"] for p in updated["points"]),
+        "algebraic_max_residual_px": 0.0,
+        "endpoint_algebraic_snap_residual_px": [0.0, 0.0],
+        "endpoint_algebraic_complexity": [
+            p["algebraic_complexity"] for p in updated["points"]
+            if p["relation_role"] in ("start", "end")
+        ],
+    })
+    return updated
+
+
 def _add_guided_relation_operations(
     graph: ConstructionGraph,
     anchors: Mapping[int, Mapping[str, Any]],
@@ -1122,6 +1202,8 @@ def _add_guided_relation_operations(
             "origin": "top_left",
             "side": relation.get("side"),
         }
+        if point.get("coordinate_provenance"):
+            exact_geometry["coordinate_provenance"] = point["coordinate_provenance"]
         if isinstance(project_coordinate, (list, tuple)) and len(project_coordinate) == 2:
             exact_geometry["project_coordinate"] = list(project_coordinate)
         if isinstance(point.get("edge_parameter"), Mapping):
@@ -1677,12 +1759,66 @@ def _fit_topology_point(
     }
 
 
+def _proved_incidence_frontier_point(
+    entity: GeometryEntity,
+    graph: ConstructionGraph,
+    side_length: Qsqrt2,
+    maximum: float,
+    solution: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if solution.get("status") != "resolved":
+        return None
+    normalized = solution.get("determined_point_coordinates", {}).get(str(entity.id))
+    if normalized is None:
+        return None
+    coordinate = tuple(qsqrt2_from_mapping(v) * side_length for v in normalized)
+    parents = [
+        e for e in graph.incident_entities(entity.id)
+        if e.kind == "crease" and e.exact_geometry.get("through_point_project")
+    ]
+    if len(parents) != 1:
+        return None
+    parent = parents[0]
+    through = tuple(qsqrt2_from_mapping(v) for v in parent.exact_geometry["through_point_project"])
+    dx, dy = _guided_direction_vector(parent.exact_geometry["direction_index"])
+    delta = (coordinate[0] - through[0], coordinate[1] - through[1])
+    if delta[0] * dy != delta[1] * dx:
+        return None
+    observed = entity.observed_geometry["point_px"]
+    projected = [float(v / side_length) * maximum for v in coordinate]
+    mappings = [qsqrt2_to_mapping(v) for v in coordinate]
+    return {
+        "observed_point_px": list(observed),
+        "fitted_point_px": [round(v, 6) for v in projected],
+        "project_coordinate": mappings,
+        "coordinate_expression": [v["expression"] for v in mappings],
+        "cross_segment_lengths": _cross_segment_lengths(mappings, side_length),
+        "fit_residual_px": round(math.dist(projected, observed), 6),
+        "algebraic_complexity": sum(qsqrt2_complexity(v) for v in coordinate),
+        "fit_is_selectable": True,
+        "fit_block_reason": None,
+        "fit_constraint": "existing_exact_incident_crease",
+        "fit_constraint_crease_id": str(parent.id),
+        "fit_parameter": qsqrt2_to_mapping(delta[0] / dx if dx != Qsqrt2() else delta[1] / dy),
+        "coordinate_provenance": _INCIDENCE_REFERENCE_SOURCE,
+        "incidence_constraint_proof": {
+            "mode": solution["mode"],
+            "unique_solution": True,
+            "pixel_coordinates_used_as_equations": False,
+            "free_variables_fitted": False,
+            "relation_ids": list(solution["relation_ids"]),
+            "constraint_point_ids": list(solution["constraint_point_ids"]),
+        },
+    }
+
+
 def _rank_next_topology_point_candidates(
     graph: ConstructionGraph,
     propagation: Mapping[str, Any],
     side_length: Qsqrt2,
     *,
     maximum: float,
+    incidence_solution: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Expose only existing internal points touching unresolved creases.
 
@@ -1711,7 +1847,10 @@ def _rank_next_topology_point_candidates(
         ]
         if not incident_unresolved:
             continue
-        fitted = _fit_topology_point(
+        fitted = _proved_incidence_frontier_point(
+            entity, graph, side_length, maximum, incidence_solution,
+        ) if incidence_solution is not None else None
+        fitted = fitted or _fit_topology_point(
             entity,
             side_length,
             maximum,
@@ -2001,6 +2140,7 @@ def _apply_single_core_reference(
     side_length: Qsqrt2,
     *,
     maximum: float,
+    incidence_solution: Mapping[str, Any] | None = None,
 ) -> tuple[
     ConstructionGraph,
     dict[Hashable, dict[str, Any]],
@@ -2009,11 +2149,12 @@ def _apply_single_core_reference(
     Mapping[str, Any] | None,
     dict[str, Any],
 ]:
-    """Use at most one exact scalar to start a stalled observed component.
+    """Use at most one frontier reference to start a stalled observed component.
 
     The point must already be a source-observed high-degree node at the finite
     endpoint of one proved exact crease.  Its only independent value is the
-    position along that parent crease.  Once selected, ordinary point-first
+    position along that parent crease, unless incidence equations already prove
+    it uniquely (then there is no independent parameter). Ordinary point-first
     propagation may activate only the legal observed creases incident there.
     """
 
@@ -2029,6 +2170,7 @@ def _apply_single_core_reference(
         propagation,
         side_length,
         maximum=maximum,
+        incidence_solution=incidence_solution,
     )
     eligible: list[tuple[dict[str, Any], dict[str, Any]]] = []
     rejection_counts: Counter[str] = Counter()
@@ -2056,6 +2198,7 @@ def _apply_single_core_reference(
     candidate, endpoint_evidence = min(
         eligible,
         key=lambda item: (
+            item[0].get("coordinate_provenance") != _INCIDENCE_REFERENCE_SOURCE,
             -int(item[0].get("projected_new_crease_count", 0) or 0),
             -int(item[0].get("incident_unresolved_crease_count", 0) or 0),
             float(item[0].get("fit_residual_px", math.inf)),
@@ -2076,9 +2219,12 @@ def _apply_single_core_reference(
         if entity.kind == "crease"
         and str(entity.id) == str(endpoint_evidence["parent_crease_id"])
     )
+    incidence_proof = candidate.get("incidence_constraint_proof")
+    source = _INCIDENCE_REFERENCE_SOURCE if incidence_proof else _SINGLE_CORE_REFERENCE_SOURCE
+    parameter_count = 0 if incidence_proof else 1
     point_entity.add_exact_geometry(
         {
-            "source": _SINGLE_CORE_REFERENCE_SOURCE,
+            "source": source,
             "parent_entity_ids": [str(parent_entity.id)],
             "project_coordinate": list(candidate["project_coordinate"]),
             "side_length": qsqrt2_to_mapping(side_length),
@@ -2088,22 +2234,23 @@ def _apply_single_core_reference(
             + 1,
             "observed_residual_px": candidate["fit_residual_px"],
             "fit_parameter": candidate.get("fit_parameter"),
-            "independent_parameter_count": 1,
+            "independent_parameter_count": parameter_count,
+            **({"incidence_constraint_proof": incidence_proof} if incidence_proof else {}),
             **endpoint_evidence,
         }
     )
     operation = ConstructionOperation(
-        id=(_SINGLE_CORE_REFERENCE_SOURCE, str(point_entity.id)),
-        kind=_SINGLE_CORE_REFERENCE_SOURCE,
+        id=(source, str(point_entity.id)),
+        kind=source,
         parents=(parent_entity.id,),
         outputs=(point_entity.id,),
         residual=float(candidate["fit_residual_px"]),
         generation=int(point_entity.exact_geometry["exact_generation"]),
-        independent_parameters=1,
+        independent_parameters=parameter_count,
     )
     trial_graph.add_operation(operation)
     trial_details[operation.id] = {
-        "provenance": _SINGLE_CORE_REFERENCE_SOURCE,
+        "provenance": source,
         "topology_point_id": str(point_entity.id),
         "parent_crease_id": str(parent_entity.id),
         "observed_point_px": list(candidate["observed_point_px"]),
@@ -2111,7 +2258,8 @@ def _apply_single_core_reference(
         "coordinate_expression": list(candidate["coordinate_expression"]),
         "cross_segment_lengths": dict(candidate.get("cross_segment_lengths") or {}),
         "fit_residual_px": candidate["fit_residual_px"],
-        "independent_parameter_count": 1,
+        "independent_parameter_count": parameter_count,
+        **({"incidence_constraint_proof": incidence_proof} if incidence_proof else {}),
         **endpoint_evidence,
     }
     trial_report = propagate_exact_geometry(trial_graph, maximum=maximum)
@@ -2128,7 +2276,8 @@ def _apply_single_core_reference(
         }
     history = {
         "id": str(point_entity.id),
-        "kind": "single_qsqrt2_core_reference",
+        "kind": "incidence_proved_frontier_reference" if incidence_proof else "single_qsqrt2_core_reference",
+        "independent_parameter_count": parameter_count,
         "parent_crease_id": str(parent_entity.id),
         "observed_point_px": list(candidate["observed_point_px"]),
         "fitted_point_px": list(candidate["fitted_point_px"]),
@@ -2642,8 +2791,21 @@ def build_guided_boundary_report(
         graph, _, anchors, details = _legacy_trace_graph(trace)
         graph, suppressed_roots = _constrain_initial_sources(graph, details)
         observed_graph_source = "playback_trace"
-    emit_progress(32, "原图拓扑已建立，开始应用起点关系…")
     maximum = float(_analysis_size(result) - 1)
+    seed_constraints = {"status": "not_applicable", "resolved_points": {}}
+    if raw_available and selected_relations:
+        seed_constraints = resolve_boundary_seed_constraints(
+            graph, selected_relations, maximum=maximum,
+        )
+        if seed_constraints["status"] == "resolved":
+            replacements = {
+                str(r["id"]): _relation_with_proved_seed_coordinates(
+                    r, seed_constraints["resolved_points"], maximum,
+                ) for r in selected_relations
+            }
+            catalog = [replacements.get(str(r["id"]), r) for r in catalog]
+            selected_relations = [replacements[str(r["id"])] for r in selected_relations]
+    emit_progress(32, "原图拓扑已建立，开始应用起点关系…")
     relation_index = {str(item.get("id") or ""): item for item in catalog}
     relation_operations: list[ConstructionOperation] = []
     relation_history_records: list[dict[str, Any]] = []
@@ -2846,6 +3008,7 @@ def build_guided_boundary_report(
             initial_propagation,
             exact_side_length,
             maximum=maximum,
+            incidence_solution=seed_constraints,
         )
         if core_operation is not None:
             core_reference_operations.append(core_operation)
@@ -2918,6 +3081,9 @@ def build_guided_boundary_report(
         for relation in selected_relations
     }
     evidence_note = (
+        "起点由原图已有折痕的共点关系、合法方向、纸边和所选等分关系唯一确定；像素只验证贴合程度，不参与精确坐标方程。"
+        if seed_constraints["status"] == "resolved"
+        else
         "候选关系来自原图有限折痕拓扑或独立边界扫描；像素接触只作证据，所选坐标已整体拟合到 Q(√2) 精确关系。"
         if evidence_sources
         & {"raw_image_directional_scan", "raw_image_finite_topology"}
@@ -3085,6 +3251,7 @@ def build_guided_boundary_report(
         "single_core_reference_operations": core_reference_summaries,
         "geometry_propagation": geometry_propagation,
         "anchored_boundary_divisions": boundary_divisions,
+        "boundary_seed_constraints": seed_constraints,
         "geometry_graph": geometry_snapshot,
         "construction_proof_topology": construction_proof_topology,
         "topology_layers": {

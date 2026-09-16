@@ -11,6 +11,7 @@ def test_pages_packages_every_shadow_worker_module():
     required = [
         "shadow_search.py",
         "boundary_relations.py",
+        "boundary_seed_constraints.py",
         "exact_qsqrt2.py",
         "qsqrt2_coordinates.py",
         "exact_graph_propagation.py",

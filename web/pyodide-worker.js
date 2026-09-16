@@ -5,6 +5,7 @@ const SOURCE_FILES = [
   'web_bridge.py',
   'construction_search.py',
   'boundary_relations.py',
+  'boundary_seed_constraints.py',
   'exact_qsqrt2.py',
   'qsqrt2_coordinates.py',
   'exact_graph_propagation.py',

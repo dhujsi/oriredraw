@@ -88,7 +88,8 @@ const startRecommendations = new WeakMap();
 const previewFigure = preview.closest('.preview');
 
 const WEB_ENGINE_VERSION = '20260915-recommended-start-v1';
-const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}`, { type: 'module' });
+// Source bundles can change while the published application version stays put.
+const worker = new Worker(`./pyodide-worker.js?v=${WEB_ENGINE_VERSION}&sources=20260916-incidence-seeds-v1`, { type: 'module' });
 const pending = new Map();
 let requestId = 0;
 let currentResult = null;

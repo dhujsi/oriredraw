@@ -16,6 +16,7 @@ from typing import Any, Mapping
 
 _MODE = "construction_proof_topology_v1"
 _SINGLE_CORE_REFERENCE_SOURCE = "guided_single_qsqrt2_core_reference"
+_INCIDENCE_REFERENCE_SOURCE = "existing_incidence_constraint_point"
 _FIT_ONLY_SOURCES = {
     "guided_internal_topology_point",
     "guided_automatic_topology_point",
@@ -44,7 +45,7 @@ def _derived_parents(
     if source == "existing_canonical_crease_endpoint_from_exact_point":
         parent = str(exact.get("source_point_id") or "")
         return source, ([parent] if parent else []), False
-    if source == _SINGLE_CORE_REFERENCE_SOURCE:
+    if source in {_SINGLE_CORE_REFERENCE_SOURCE, _INCIDENCE_REFERENCE_SOURCE}:
         parents = [str(item) for item in exact.get("parent_entity_ids", []) if str(item)]
         return source, parents, False
     if source == "existing_crease_intersection":
@@ -165,6 +166,7 @@ def build_construction_proof_topology(
                 "existing_canonical_crease_endpoint_from_exact_point",
                 "existing_crease_paper_boundary_intersection",
                 _SINGLE_CORE_REFERENCE_SOURCE,
+                _INCIDENCE_REFERENCE_SOURCE,
                 "existing_anchored_boundary_division",
             } else 2 if source == "existing_crease_intersection" else 0
             exact = entities[entity_id].get("exact_geometry")
@@ -184,6 +186,17 @@ def build_construction_proof_topology(
                     and len(parents) + int(has_boundary) >= 2
                 )
             )
+            incidence_is_valid = source != _INCIDENCE_REFERENCE_SOURCE or (
+                isinstance(exact, Mapping)
+                and exact.get("independent_parameter_count") == 0
+                and isinstance(exact.get("incidence_constraint_proof"), Mapping)
+                and exact["incidence_constraint_proof"].get("mode") == "exact_boundary_seed_incidence_v1"
+                and exact["incidence_constraint_proof"].get("unique_solution") is True
+                and exact["incidence_constraint_proof"].get("pixel_coordinates_used_as_equations") is False
+                and exact["incidence_constraint_proof"].get("free_variables_fitted") is False
+                and bool(exact["incidence_constraint_proof"].get("relation_ids"))
+                and bool(exact["incidence_constraint_proof"].get("constraint_point_ids"))
+            )
             if (
                 expected_parent_count
                 and len(parents) >= expected_parent_count
@@ -191,6 +204,7 @@ def build_construction_proof_topology(
                 and (source != "existing_crease_paper_boundary_intersection" or has_boundary)
                 and core_parameter_is_valid
                 and division_is_valid
+                and incidence_is_valid
             ):
                 proved.add(entity_id)
                 statuses[entity_id] = {
@@ -214,6 +228,7 @@ def build_construction_proof_topology(
             "existing_crease_intersection",
             "existing_crease_paper_boundary_intersection",
             _SINGLE_CORE_REFERENCE_SOURCE,
+            _INCIDENCE_REFERENCE_SOURCE,
             "existing_anchored_boundary_division",
         }
         statuses[entity_id] = {
