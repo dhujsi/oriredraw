@@ -1,5 +1,13 @@
-// Start selection is advisory. It never changes the current CP or user choice.
+// Recommendation remains advisory unless the complete trial is verified; only
+// that verified case may advance the current result automatically.
 export const MAX_START_TRIALS = 3;
+
+// Automatic selection is deliberately narrower than recommendation.  A
+// geometry-only result may still have uncertain mountain/valley evidence, and
+// a provisional result still has unresolved structure; both require a human.
+export function shouldAutoApplyStart(candidate) {
+  return candidate?.quality?.status === 'verified';
+}
 
 function pointOnRelation(relation, maximum) {
   return (relation.points || []).find(point => {

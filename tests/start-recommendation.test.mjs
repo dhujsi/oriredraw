@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assessStartReport, createTrialCache, evaluateStartCandidates, shortlistStarts } from '../web/start-recommendation.mjs';
+import { assessStartReport, createTrialCache, evaluateStartCandidates, shouldAutoApplyStart, shortlistStarts } from '../web/start-recommendation.mjs';
 
 const report = (overrides = {}) => ({
   enabled: true, checks_passed: true, cp_available: true, cp: '2 0 0 1 1',
@@ -88,6 +88,13 @@ test('unknown source MV can yield geometry-only recommendation, never full verif
   assert.equal(assessStartReport(mv, { stats: { raw_mv_default_mountain_segment_count: 18 } }).status, 'geometry_only');
   mv.cp_output_contract.blockers[0].violations[0].rule = 'number_of_folds';
   assert.equal(assessStartReport(mv, { stats: { raw_mv_default_mountain_segment_count: 18 } }).status, 'provisional');
+});
+
+test('only a fully verified recommendation may start automatically', () => {
+  assert.equal(shouldAutoApplyStart({ quality: { status: 'verified' } }), true);
+  assert.equal(shouldAutoApplyStart({ quality: { status: 'geometry_only' } }), false);
+  assert.equal(shouldAutoApplyStart({ quality: { status: 'provisional' } }), false);
+  assert.equal(shouldAutoApplyStart(null), false);
 });
 
 test('shortlist avoids repeated sides, selects an actual non-corner point, and supports interior starts', () => {

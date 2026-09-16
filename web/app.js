@@ -1,4 +1,9 @@
-import { createTrialCache, evaluateStartCandidates, shortlistStarts } from './start-recommendation.mjs?v=20260915-recommended-start-v1';
+import {
+  createTrialCache,
+  evaluateStartCandidates,
+  shouldAutoApplyStart,
+  shortlistStarts,
+} from './start-recommendation.mjs?v=20260917-auto-start-v1';
 
 const uploadForm = document.querySelector('#upload-form');
 const input = document.querySelector('#image-input');
@@ -1913,6 +1918,22 @@ async function prepareRecommendedStart(root) {
     choice: best?.choice || null, automatic_selection: false,
   };
   renderStartRecommendation(root);
+  if (shouldAutoApplyStart(best)) {
+    state.phase = 'applying';
+    state.autoSelection = true;
+    root.shadow_search.start_recommendation.automatic_selection = true;
+    renderStartRecommendation(root);
+    const applied = await requestGuidedBoundary([
+      { kind: best.choice.kind, id: best.choice.id },
+    ]);
+    if (applied?.enabled) return;
+    // A failed automatic application must fall back to the same manual choice
+    // instead of leaving the user with no way to continue.
+    state.autoSelection = false;
+    state.phase = 'ready';
+    root.shadow_search.start_recommendation.automatic_selection = false;
+    renderStartRecommendation(root);
+  }
 }
 
 function renderStartRecommendation(root) {
@@ -1938,6 +1959,9 @@ function renderStartRecommendation(root) {
   if (state.phase === 'checking') {
     startRecommendationTitle.textContent = '正在检查起点…';
     startRecommendationNote.textContent = `正在试算第 ${state.tried || 1} 个候选；仍可直接点图选点。`;
+  } else if (state.phase === 'applying') {
+    startRecommendationTitle.textContent = '推荐起点已通过检查';
+    startRecommendationNote.textContent = '正在自动从这个起点开始重绘…';
   } else if (!best) {
     startRecommendationTitle.textContent = '暂无可用推荐';
     startRecommendationNote.textContent = '有限次试算未得到可用结果；你仍可手动选择其他点。';
@@ -1990,13 +2014,14 @@ function guidedReportError(report) {
 }
 
 async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
-  if (!currentResult || boundaryRelationList.dataset.busy === 'true') return;
+  if (!currentResult || boundaryRelationList.dataset.busy === 'true') return null;
   const root = currentResult;
   const previousScrollY = window.scrollY;
   const assignments = segmentLineTypes === null
     ? guidedMvAssignments(root)
     : normalizeGuidedMvAssignments(segmentLineTypes);
   const recommendation = startRecommendations.get(root);
+  let appliedReport = null;
   if (recommendation) recommendation.active = false;
   setBoundaryRelationBusy(true);
   renderStartRecommendation(root);
@@ -2019,6 +2044,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
       },
     }));
     if (!report?.enabled) throw new Error(guidedReportError(report));
+    appliedReport = report;
     if (currentResult === root) {
       root.shadow_search = root.shadow_search || {};
       root.shadow_search.guided_boundary = report;
@@ -2042,6 +2068,7 @@ async function requestGuidedBoundary(selectionSteps, segmentLineTypes = null) {
       window.scrollTo(0, previousScrollY);
     }
   }
+  return appliedReport;
 }
 
 async function evaluateBoundaryRelation(relationId) {

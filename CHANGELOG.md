@@ -5,6 +5,7 @@ All notable Oriredraw changes are recorded here. Versions follow Semantic Versio
 ## [Unreleased]
 
 ### Fixed
+- A start recommendation is now applied automatically only when the trial passes every required check; geometry-only and provisional recommendations remain manual choices.
 - Selected boundary seeds now use uniquely solvable Q(√2) incidence and division equations before pixel-derived coordinate guesses. A stalled frontier reuses a uniquely proved point on its exact parent instead of fitting a new scalar. Free variables are not fitted; inconsistent or source-incompatible solutions are rejected. The second September photo's top, left, and right starts now export the same 170 internal CP segments with no built-in cAMV violations.
 - Complete parallel runs between proved boundary anchors can now supply exact interval divisions after propagation stalls. Every intermediate stroke must be present on both opposite paper edges; missing, extra, uneven, or weak members are rejected. No new crease or unconstrained coordinate is generated.
 - Short detector echoes entirely contained within a stronger same-color finite stroke are excluded from construction and retained in the observation audit.

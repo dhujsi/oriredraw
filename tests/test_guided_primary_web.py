@@ -95,6 +95,18 @@ def test_guided_boundary_ui_stops_after_one_reversible_initial_relation():
     assert 'id="boundary-relation-undo"' in html
 
 
+def test_only_fully_verified_start_recommendations_are_applied_automatically():
+    app = _source("web/app.js")
+    recommendation = _source("web/start-recommendation.mjs")
+
+    assert "shouldAutoApplyStart(best)" in app
+    assert "requestGuidedBoundary([" in app
+    assert "start_recommendation.automatic_selection = true" in app
+    assert "candidate?.quality?.status === 'verified'" in recommendation
+    assert "geometry_only" in recommendation
+    assert "provisional" in recommendation
+
+
 def test_guided_boundary_reports_progress_while_calculating_after_start_selection():
     app = _source("web/app.js")
     html = _source("web/index.html")
